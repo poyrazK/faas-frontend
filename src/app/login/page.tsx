@@ -25,7 +25,7 @@ export default function LoginPage() {
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password.trim()) return;
+    if (!email.trim()) return;
 
     if (mode === 'signup') {
       if (!fullName.trim()) {
@@ -33,7 +33,7 @@ export default function LoginPage() {
         setFeedbackMsg('Please enter your full name');
         return;
       }
-      if (password !== confirmPassword) {
+      if (password.trim() && password !== confirmPassword) {
         setStatus('error');
         setFeedbackMsg('Passwords do not match. Please re-enter.');
         return;
@@ -46,23 +46,37 @@ export default function LoginPage() {
     }
 
     setStatus('submitting');
-    
-    // Simulate login / signup verification & set token
-    setTimeout(() => {
-      setAuthToken(`token_${Math.random().toString(36).substring(2)}`);
-      setStatus('success');
-      setFeedbackMsg(mode === 'signin' ? '✓ Welcome back! Redirecting to Console...' : `✓ Welcome ${fullName || 'Developer'}! Free account created. Redirecting...`);
-      setTimeout(() => {
-        router.push('/');
-      }, 1000);
-    }, 600);
+
+    try {
+      // POST to the backend's magic-link endpoint (proxied through Vercel rewrite)
+      const res = await fetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ email: email.trim() }).toString(),
+        credentials: 'include',
+        redirect: 'follow',
+      });
+      
+      if (res.ok || res.redirected) {
+        setStatus('success');
+        setFeedbackMsg('✓ Magic login link sent! Check your inbox for a sign-in link.');
+      } else {
+        const text = await res.text();
+        setStatus('error');
+        setFeedbackMsg(`Login failed: ${text || `HTTP ${res.status}`}`);
+      }
+    } catch (err: any) {
+      setStatus('error');
+      setFeedbackMsg(`Connection error: ${err.message}`);
+    }
   };
 
   const handleSocialAuth = (provider: 'github' | 'google') => {
     setStatus('submitting');
-    setAuthToken(`token_${provider}_${Math.random().toString(36).substring(2)}`);
+    // Redirect through the Vercel proxy rewrite — /v1/auth/google proxies
+    // to the backend which redirects to Google's consent screen
     if (provider === 'github') {
-      window.location.href = '/v1/auth/github';
+      window.location.href = '/oauth/callback';
     } else {
       window.location.href = '/v1/auth/google';
     }
