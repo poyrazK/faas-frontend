@@ -95,8 +95,8 @@ export interface UsageRollupModel {
 }
 
 let currentApiUrl = typeof window !== 'undefined' 
-  ? localStorage.getItem('gregale_apid_url') || process.env.NEXT_PUBLIC_APID_URL || 'http://localhost:8080'
-  : process.env.NEXT_PUBLIC_APID_URL || 'http://localhost:8080';
+  ? localStorage.getItem('gregale_apid_url') || process.env.NEXT_PUBLIC_APID_URL || ''
+  : process.env.NEXT_PUBLIC_APID_URL || '';
 
 let currentAuthToken = typeof window !== 'undefined'
   ? localStorage.getItem('gregale_auth_token') || ''
