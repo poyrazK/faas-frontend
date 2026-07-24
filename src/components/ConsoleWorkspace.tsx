@@ -10,6 +10,7 @@ import {
   parkApp,
   deleteApp,
   getApiUrl,
+  getAuthToken,
   getAccount,
   changePlan,
   exportAccountData,
@@ -355,6 +356,25 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
     f.runtime.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  if (typeof window !== 'undefined' && !getAuthToken()) {
+    return (
+      <main className="console-workspace" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '65vh', textAlign: 'center' }}>
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-dim)', borderRadius: '16px', padding: '3rem 2rem', maxWidth: '460px', width: '100%', boxShadow: '0 20px 40px rgba(0,0,0,0.3)' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🔒</div>
+          <h2 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '0.75rem', color: 'var(--text-primary)' }}>
+            Authentication Required
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', marginBottom: '1.75rem', lineHeight: '1.5' }}>
+            You must be signed in to your Gregale FaaS account to view active functions, cluster telemetry, and manage your microVM infrastructure.
+          </p>
+          <a href="/login" className="btn btn-gregale" style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', fontSize: '0.95rem' }}>
+            Sign In to Access Console
+          </a>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="console-workspace">
       {/* DigitalOcean / Local Control Plane Connector */}
@@ -433,20 +453,20 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
 
             <div className="stat-card">
               <div className="stat-card-label">p50 Cold Wake</div>
-              <div className="stat-card-val">184 ms</div>
+              <div className="stat-card-val">{functions.length > 0 ? functions[0].p50Wake : '--'}</div>
               <div className="stat-card-sub">&lt;350ms SLA budget</div>
             </div>
 
             <div className="stat-card">
               <div className="stat-card-label">Monthly Metering</div>
-              <div className="stat-card-val">2.8 GB-h</div>
-              <div className="stat-card-sub">5 GB-h included on Free</div>
+              <div className="stat-card-val">{accountInfo ? `${accountInfo.usage_gb_hours || 0} GB-h` : '0 GB-h'}</div>
+              <div className="stat-card-sub">{accountInfo?.limits?.included_gb_hours || 5} GB-h included on {accountInfo?.plan || 'Free'}</div>
             </div>
 
             <div className="stat-card">
               <div className="stat-card-label">Host Health</div>
               <div className="stat-card-val" style={{ color: 'var(--accent-green)' }}>100%</div>
-              <div className="stat-card-sub">UID Jails 20000–29999</div>
+              <div className="stat-card-sub">DigitalOcean Production Droplet</div>
             </div>
           </div>
 
@@ -1045,19 +1065,19 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
 
             <div className="stat-card">
               <div className="stat-card-label">Usage This Month</div>
-              <div className="stat-card-val">2.8 GB-h</div>
-              <div className="stat-card-sub">56% of included tier used</div>
+              <div className="stat-card-val">{accountInfo ? `${accountInfo.usage_gb_hours || 0} GB-h` : '0 GB-h'}</div>
+              <div className="stat-card-sub">{accountInfo?.limits?.included_gb_hours || 5} GB-hours included</div>
             </div>
 
             <div className="stat-card">
               <div className="stat-card-label">Total Invocations</div>
-              <div className="stat-card-val">14,210</div>
-              <div className="stat-card-sub">Average runtime: 12ms</div>
+              <div className="stat-card-val">{functions.length} deployed</div>
+              <div className="stat-card-sub">Active MicroVM workloads</div>
             </div>
 
             <div className="stat-card">
               <div className="stat-card-label">P99 Cold-Wake</div>
-              <div className="stat-card-val">210 ms</div>
+              <div className="stat-card-val">{functions.length > 0 ? functions[0].p50Wake : '--'}</div>
               <div className="stat-card-sub">&lt;350ms SLA guaranteed</div>
             </div>
           </div>

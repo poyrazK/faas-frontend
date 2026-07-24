@@ -171,7 +171,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
         </div>
         <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
           <span style={{ width: '8px', height: '8px', background: 'var(--accent-green)', borderRadius: '50%' }}></span>
-          hetzner-fsn1-ex44
+          digitalocean-droplet
         </div>
       </div>
     </aside>
