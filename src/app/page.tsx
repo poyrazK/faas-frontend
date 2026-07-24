@@ -16,18 +16,8 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<'landing' | 'console'>('landing');
   const [activeConsoleTab, setActiveConsoleTab] = useState<ConsoleTab>('overview');
 
-  const [functions, setFunctions] = useState<MicroVMFunction[]>([
-    { id: 'f-1', name: 'api-gateway', runtime: 'Go 1.23', status: 'PARKED ON DISK', ram: '256 MB', p50Wake: '184 ms', region: 'hetzner-fsn1', lastExecuted: '2 mins ago' },
-    { id: 'f-2', name: 'auth-service', runtime: 'Node.js 22', status: 'COLD RESTORED', ram: '128 MB', p50Wake: '142 ms', region: 'hetzner-fsn1', lastExecuted: 'Just now' },
-    { id: 'f-3', name: 'stripe-webhook', runtime: 'Python 3.12', status: 'PARKED ON DISK', ram: '256 MB', p50Wake: '196 ms', region: 'hetzner-fsn1', lastExecuted: '12 mins ago' },
-    { id: 'f-4', name: 'image-resizer', runtime: 'Rust 1.80', status: 'PARKED ON DISK', ram: '512 MB', p50Wake: '210 ms', region: 'hetzner-fsn1', lastExecuted: '1 hr ago' },
-  ]);
-
-  const [secrets, setSecrets] = useState<SecretItem[]>([
-    { id: 's-1', key: 'DATABASE_URL', val: 'postgres://gregale:secret@db.gregale.dev/prod', target: 'Global (All Functions)', isMasked: true },
-    { id: 's-2', key: 'STRIPE_SECRET_KEY', val: 'sk_live_941a82f0412b5912c41d99', target: 'stripe-webhook', isMasked: true },
-    { id: 's-3', key: 'JWT_SECRET', val: 'jwt_super_secret_key_8819', target: 'auth-service', isMasked: true },
-  ]);
+  const [functions, setFunctions] = useState<MicroVMFunction[]>([]);
+  const [secrets, setSecrets] = useState<SecretItem[]>([]);
 
   const [isNewFuncModalOpen, setIsNewFuncModalOpen] = useState(false);
   const [isAddSecretModalOpen, setIsAddSecretModalOpen] = useState(false);
