@@ -201,9 +201,7 @@ export async function loginWithApiKey(keyOrToken: string, baseUrl?: string): Pro
     }
     return { success: false, error: 'Invalid or revoked API key' };
   } catch (err: any) {
-    // If backend is local dev mode without strict auth middleware check
-    setAuthToken(trimmed);
-    return { success: true, account: { id: 'acct-dev', email: 'developer@gregale.dev', plan: 'pro', status: 'active', limits: { plan: 'pro', ram_mb: 512, max_concurrency: 5, deployed_apps: 25, included_gb_hours: 250, app_layer_max_mb: 1024 }, usage_gb_hours: 2.8, app_count: 4, github_install_id: 'gh-101' } };
+    return { success: false, error: `Connection failed to DigitalOcean backend: ${err.message}` };
   }
 }
 
