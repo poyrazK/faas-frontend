@@ -1,654 +1,362 @@
 /* ==========================================================================
-   Gregale - Complete OpenAPI 3.1 REST API Client for apid Backend (/v1/*)
+   Gregale — typed REST client for the apid control plane (/v1/*)
+
+   Contract source of truth: faas/api/openapi.yaml. Every path, method and
+   response shape below is verified against the live backend, not guessed.
+
+   Auth model: the web console authenticates with the HttpOnly `faas_sid`
+   session cookie set by POST /login (and the OAuth flows). All requests go
+   out same-origin (Vercel rewrites proxy /v1/* to the DO backend) with
+   credentials:'include', so the cookie rides along automatically. We never
+   store the raw API key in the browser.
    ========================================================================== */
 
-export interface AccountModel {
+/* ────────────────────────────── Models ─────────────────────────────────── */
+
+export type Plan = 'free' | 'hobby' | 'pro' | 'scale';
+export type AccountStatus = 'active' | 'past_due' | 'suspended' | 'deleted_pending';
+
+export interface AccountLimits {
+  plan: Plan;
+  ram_mb: number;
+  max_concurrency: number;
+  deployed_apps: number;
+  included_gb_hours: number;
+  app_layer_max_mb: number;
+}
+
+export interface Account {
   id: string;
   email: string;
-  plan: 'free' | 'hobby' | 'pro' | 'scale';
-  status: string;
-  limits: {
-    plan: string;
-    ram_mb: number;
-    max_concurrency: number;
-    deployed_apps: number;
-    included_gb_hours: number;
-    app_layer_max_mb: number;
-  };
+  plan: Plan;
+  status: AccountStatus;
+  limits: AccountLimits;
   usage_gb_hours: number;
   app_count: number;
   github_install_id: string | null;
 }
 
-export interface AppModel {
+export type AppType = 'app' | 'function';
+export type Runtime = 'node22' | 'python312';
+
+export interface AppManifest {
+  entrypoint: string[];
+  env?: Record<string, string>;
+  working_dir?: string | null;
+  port?: number | null;
+  healthz?: string | null;
+  user?: string | null;
+}
+
+export interface App {
   id: string;
   slug: string;
-  name: string;
-  type: 'app' | 'function';
-  runtime: string;
-  status: 'PARKED ON DISK' | 'COLD RESTORED';
+  type: AppType;
+  runtime?: Runtime;
   ram_mb: number;
   max_concurrency: number;
-  p50_wake_ms: number;
-  region: string;
-  created_at: string;
-  last_executed: string;
-}
-
-export interface DeploymentModel {
-  id: string;
-  app_slug: string;
-  status: 'QUEUED' | 'BUILDING' | 'DEPLOYED' | 'FAILED';
-  snapshot_size_mb: number;
-  build_duration_s: number;
-  created_at: string;
-}
-
-export interface InstanceModel {
-  id: string;
-  app_slug: string;
-  host_node: string;
-  jailed_uid: number;
-  tap_device: string;
-  ip_address: string;
-  state: 'RUNNING' | 'PARKED';
-  started_at: string;
-}
-
-export interface SecretModel {
-  id: string;
-  key: string;
-  val: string;
-  target: string;
-  is_masked: boolean;
-}
-
-export interface CronModel {
-  id: string;
-  schedule: string;
-  target_func: string;
+  idle_timeout_s?: number | null;
+  min_instances: number;
   status: string;
-  last_run: string;
+  url: string;
+  manifest: AppManifest;
 }
 
-export interface DomainModel {
+export interface Deployment {
   id: string;
-  domain: string;
-  target_func: string;
-  ssl_status: string;
-}
-
-export interface ApiKeyModel {
-  id: string;
-  name: string;
-  prefix: string;
+  app_id: string;
+  build_id?: string | null;
+  image_digest: string;
+  kind: string;
+  status: string;
+  error?: string | null;
+  error_code?: string | null;
   created_at: string;
 }
 
-export interface UsageRollupModel {
-  plan: string;
-  included_gbh: number;
-  used_gbh: number;
-  total_invocations: number;
-  p50_latency_ms: number;
-  p99_latency_ms: number;
+export interface DeploymentList {
+  items: Deployment[];
+  next_before: string | null;
 }
 
-let currentApiUrl = typeof window !== 'undefined' 
-  ? (localStorage.getItem('gregale_apid_url')?.includes('localhost') ? '' : localStorage.getItem('gregale_apid_url')) || process.env.NEXT_PUBLIC_APID_URL || ''
-  : process.env.NEXT_PUBLIC_APID_URL || '';
-
-let currentAuthToken = typeof window !== 'undefined'
-  ? localStorage.getItem('gregale_auth_token') || ''
-  : '';
-
-export function getApiUrl(): string {
-  if (typeof window !== 'undefined' && localStorage.getItem('gregale_apid_url')?.includes('localhost')) {
-    localStorage.removeItem('gregale_apid_url');
-  }
-  return currentApiUrl;
+export interface Instance {
+  id: string;
+  app_id: string;
+  deployment_id: string;
+  state: string;
+  host_ip?: string | null;
+  ram_mb: number;
+  wake_id?: string;
+  started_at?: string | null;
+  last_request_at?: string | null;
+  parked_at?: string | null;
 }
 
-export function setApiUrl(url: string): string {
-  let formatted = url.trim();
-  if (formatted.includes('localhost')) {
-    formatted = '';
-  } else if (formatted && !formatted.startsWith('http://') && !formatted.startsWith('https://')) {
-    formatted = `http://${formatted}`;
+export interface CustomDomain {
+  domain: string;
+  app_id: string;
+  challenge_token?: string | null;
+  verified: boolean;
+  verified_at?: string | null;
+  txt_record?: string | null;
+}
+
+export interface Cron {
+  id: string;
+  app_id: string;
+  schedule: string;
+  path: string;
+  enabled: boolean;
+  created_at: string;
+  last_fired_at?: string | null;
+}
+
+export interface ApiKey {
+  id: string;
+  prefix: string;
+  label: string | null;
+  last_used_at?: string | null;
+  created_at: string;
+  /** Present ONLY in the POST /v1/keys response; never returned again. */
+  plaintext?: string | null;
+}
+
+export interface UsageSummary {
+  month: string;
+  used_gb_hours: number;
+  included_gb_hours: number;
+  overage_gb_hours: number;
+  overage_cents: number;
+}
+
+export interface AppSecret {
+  key: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppSecretList {
+  secrets: AppSecret[];
+  quota_max: number;
+  count: number;
+}
+
+/** RFC 7807 problem envelope returned by the backend on errors. */
+export interface Problem {
+  type?: string;
+  title: string;
+  status: number;
+  code: string;
+  detail?: string;
+  limit?: number | null;
+  observed?: number | null;
+  docs_url?: string;
+  billing_portal_url?: string;
+}
+
+/** Thrown by every client call on a non-2xx response. */
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  problem: Problem | null;
+  constructor(problem: Problem | null, status: number, fallback: string) {
+    super(problem?.detail || problem?.title || fallback);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = problem?.code || 'unknown';
+    this.problem = problem;
   }
-  currentApiUrl = formatted;
-  if (typeof window !== 'undefined') {
-    if (currentApiUrl) {
-      localStorage.setItem('gregale_apid_url', currentApiUrl);
-    } else {
-      localStorage.removeItem('gregale_apid_url');
+}
+
+/* ────────────────────────────── Transport ──────────────────────────────── */
+
+/**
+ * All calls are relative and same-origin. In production the Vercel rewrites
+ * in next.config.ts proxy /v1/* (and /login, /auth/*, /logout, /oauth/*) to
+ * the DO backend, so the browser sees one origin and the session cookie is
+ * first-party.
+ */
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  parse: 'json' | 'none' = 'json',
+): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.headers as Record<string, string>),
+      },
+    });
+  } catch (err) {
+    throw new ApiError(null, 0, `Network error: could not reach the control plane (${(err as Error).message})`);
+  }
+
+  if (!res.ok) {
+    let problem: Problem | null = null;
+    try {
+      problem = (await res.json()) as Problem;
+    } catch {
+      /* non-JSON error body (e.g. rate-limit plain text) */
     }
+    throw new ApiError(problem, res.status, `Request failed (HTTP ${res.status})`);
   }
-  return currentApiUrl;
+
+  if (parse === 'none' || res.status === 204) return undefined as T;
+  return (await res.json()) as T;
 }
 
-export function getAuthToken(): string {
-  return currentAuthToken;
+/* ─────────────────────────────── Auth ──────────────────────────────────── */
+
+export interface LoginResult {
+  status: string;
+  account: unknown;
 }
 
-export function setAuthToken(token: string): string {
-  currentAuthToken = token.trim();
-  if (typeof window !== 'undefined') {
-    if (currentAuthToken) {
-      localStorage.setItem('gregale_auth_token', currentAuthToken);
-    } else {
-      localStorage.removeItem('gregale_auth_token');
-    }
-  }
-  return currentAuthToken;
-}
-
-export function clearAuthToken(): void {
-  currentAuthToken = '';
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('gregale_auth_token');
-  }
-}
-
-export function getAuthHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Accept': 'application/json',
-    ...extraHeaders,
-  };
-  if (currentAuthToken) {
-    headers['Authorization'] = `Bearer ${currentAuthToken}`;
-  }
-  return headers;
-}
-
-export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  const headers = getAuthHeaders((options.headers as Record<string, string>) || {});
-  return fetch(url, {
-    ...options,
-    headers,
+/**
+ * POST /login — the backend upserts the account, sets the HttpOnly faas_sid
+ * cookie, emails a magic link, and returns JSON. We deliberately ignore the
+ * api_key it echoes back and rely on the cookie for session auth.
+ */
+export async function login(email: string): Promise<LoginResult> {
+  const res = await fetch('/login', {
+    method: 'POST',
     credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({ email }).toString(),
   });
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   1. TAG: ACCOUNT & AUTH (/v1/account, /v1/auth)
-   ────────────────────────────────────────────────────────────────────────── */
-
-export async function requestMagicLink(email: string, baseUrl?: string): Promise<{ success: boolean; message: string }> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await fetch(`${targetUrl}/v1/auth/magic-link`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    if (res.ok) {
-      return { success: true, message: 'Magic login link dispatched to your inbox!' };
-    }
-    const errData = await res.json().catch(() => ({}));
-    return { success: false, message: errData.detail || errData.title || `HTTP ${res.status}` };
-  } catch (err: any) {
-    return { success: false, message: 'Magic link dispatched! (Development mode token ready)' };
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new ApiError(null, res.status, text || `Sign-in failed (HTTP ${res.status})`);
   }
+  return (await res.json().catch(() => ({ status: 'ok', account: null }))) as LoginResult;
 }
 
-export async function loginWithApiKey(keyOrToken: string, baseUrl?: string): Promise<{ success: boolean; account?: AccountModel; error?: string }> {
-  const targetUrl = baseUrl || getApiUrl();
-  const trimmed = keyOrToken.trim();
-  if (!trimmed) return { success: false, error: 'Please enter a valid API key or Bearer token' };
-
-  try {
-    const res = await fetch(`${targetUrl}/v1/account`, {
-      headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${trimmed}` },
-    });
-    if (res.ok) {
-      const acct = await res.json();
-      setAuthToken(trimmed);
-      return { success: true, account: acct };
-    }
-    return { success: false, error: 'Invalid or revoked API key' };
-  } catch (err: any) {
-    return { success: false, error: `Connection failed to DigitalOcean backend: ${err.message}` };
-  }
+export async function logout(): Promise<void> {
+  await fetch('/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
 }
 
-export async function checkBackendHealth(customUrl?: string): Promise<{ online: boolean; url: string }> {
-  const targetUrl = customUrl ? setApiUrl(customUrl) : getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/account`, {
-      cache: 'no-store',
-    });
-    // Status 200, 401, 403, or 404 means apid server is online and responding!
-    const isOnline = res.status > 0 && res.status < 500;
-    return { online: isOnline, url: targetUrl };
-  } catch (err) {
-    return { online: false, url: targetUrl };
-  }
+export const googleAuthUrl = '/v1/auth/google';
+/** GitHub App install / OAuth callback entry point (see next.config rewrites). */
+export const githubAuthUrl = '/oauth/callback';
+
+/* ────────────────────────────── Account ────────────────────────────────── */
+
+export const getAccount = () => request<Account>('/v1/account', { cache: 'no-store' });
+
+export const changePlan = (plan: Plan) =>
+  request<Account>('/v1/account/plan', { method: 'PATCH', body: JSON.stringify({ plan }) });
+
+export const exportAccount = () => request<unknown>('/v1/account/export');
+
+export const deleteAccount = () => request<unknown>('/v1/account', { method: 'DELETE' });
+
+export const restoreAccount = () => request<Account>('/v1/account/restore', { method: 'POST' });
+
+/* ──────────────────────────────── Apps ─────────────────────────────────── */
+
+export const listApps = () => request<App[]>('/v1/apps', { cache: 'no-store' });
+
+export const getApp = (slug: string) => request<App>(`/v1/apps/${slug}`);
+
+export interface CreateAppInput {
+  slug: string;
+  type?: AppType;
+  runtime?: Runtime;
+  ram_mb?: number;
+  max_concurrency?: number;
+  idle_timeout_s?: number;
 }
+export const createApp = (input: CreateAppInput) =>
+  request<App>('/v1/apps', { method: 'POST', body: JSON.stringify(input) });
 
-export async function getAccount(baseUrl?: string): Promise<AccountModel | null> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/account`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    return null;
-  }
+export interface UpdateAppInput {
+  ram_mb?: number;
+  idle_timeout_s?: number;
+  max_concurrency?: number;
+  min_instances?: number;
 }
+export const updateApp = (slug: string, input: UpdateAppInput) =>
+  request<App>(`/v1/apps/${slug}`, { method: 'PATCH', body: JSON.stringify(input) });
 
-export async function changePlan(newPlan: 'free' | 'hobby' | 'pro' | 'scale', baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/account/plan`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: newPlan }),
-    });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
+export const deleteApp = (slug: string) =>
+  request<void>(`/v1/apps/${slug}`, { method: 'DELETE' }, 'none');
+
+export const renameApp = (slug: string, newSlug: string) =>
+  request<App>(`/v1/apps/${slug}/rename`, { method: 'POST', body: JSON.stringify({ new_slug: newSlug }) });
+
+export const parkApp = (slug: string) =>
+  request<void>(`/v1/apps/${slug}/park`, { method: 'POST' }, 'none');
+
+export const wakeApp = (slug: string) =>
+  request<Instance>(`/v1/apps/${slug}/wake`, { method: 'POST' });
+
+export const rollbackApp = (slug: string) =>
+  request<Deployment>(`/v1/apps/${slug}/rollback`, { method: 'POST' });
+
+export const listInstances = (slug: string) =>
+  request<Instance[]>(`/v1/apps/${slug}/instances`, { cache: 'no-store' });
+
+/* ────────────────────────────── Deployments ────────────────────────────── */
+
+export const listDeployments = () => request<DeploymentList>('/v1/deployments', { cache: 'no-store' });
+
+export const getDeployment = (id: string) => request<Deployment>(`/v1/deployments/${id}`);
+
+/* ─────────────────────────── Per-app secrets ───────────────────────────── */
+
+export const listSecrets = (slug: string) => request<AppSecretList>(`/v1/apps/${slug}/secrets`);
+
+/** key must match ^[A-Z][A-Z0-9_]*$. Body carries the plaintext value. */
+export const setSecret = (slug: string, key: string, value: string) =>
+  request<void>(`/v1/apps/${slug}/secrets/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }, 'none');
+
+export const deleteSecret = (slug: string, key: string) =>
+  request<void>(`/v1/apps/${slug}/secrets/${key}`, { method: 'DELETE' }, 'none');
+
+/* ───────────────────────────────── Domains ─────────────────────────────── */
+
+export const listDomains = () => request<CustomDomain[]>('/v1/domains', { cache: 'no-store' });
+
+export const createDomain = (domain: string, appId: string) =>
+  request<CustomDomain>('/v1/domains', { method: 'POST', body: JSON.stringify({ domain, app_id: appId }) });
+
+export const deleteDomain = (domain: string) =>
+  request<void>(`/v1/domains/${domain}`, { method: 'DELETE' }, 'none');
+
+/* ────────────────────────────────── Crons ──────────────────────────────── */
+
+export const listCrons = () => request<Cron[]>('/v1/crons', { cache: 'no-store' });
+
+export interface CreateCronInput {
+  app_id: string;
+  schedule: string;
+  path?: string;
+  enabled?: boolean;
 }
+export const createCron = (input: CreateCronInput) =>
+  request<Cron>('/v1/crons', { method: 'POST', body: JSON.stringify(input) });
 
-export async function exportAccountData(includeSecrets = true, baseUrl?: string): Promise<any> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/account/export?include_secrets=${includeSecrets}`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    return null;
-  }
-}
+export const updateCron = (id: string, input: Partial<Pick<Cron, 'schedule' | 'path' | 'enabled'>>) =>
+  request<Cron>(`/v1/crons/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
 
-export async function deleteAccount(baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/account`, { method: 'DELETE' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
+export const deleteCron = (id: string) =>
+  request<void>(`/v1/crons/${id}`, { method: 'DELETE' }, 'none');
 
-export async function restoreAccount(baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/account/restore`, { method: 'POST' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
+/* ────────────────────────────────── Keys ───────────────────────────────── */
 
-/* ──────────────────────────────────────────────────────────────────────────
-   2. TAG: APPS (/v1/apps)
-   ────────────────────────────────────────────────────────────────────────── */
+export const listKeys = () => request<ApiKey[]>('/v1/keys', { cache: 'no-store' });
 
-export async function fetchApps(baseUrl?: string): Promise<AppModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/apps`, {
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return data.map((item: any) => ({
-      id: item.id || `app-${item.slug}`,
-      slug: item.slug,
-      name: item.slug,
-      type: item.type || 'function',
-      runtime: item.runtime || 'Go 1.23',
-      status: item.status || 'PARKED ON DISK',
-      ram_mb: item.ram_mb || 256,
-      max_concurrency: item.max_concurrency || 2,
-      p50_wake_ms: item.p50_wake_ms || 184,
-      region: item.region || 'digitalocean-droplet',
-      created_at: item.created_at || new Date().toISOString(),
-      last_executed: item.last_executed || '2 mins ago',
-    }));
-  } catch (err) {
-    return [];
-  }
-}
+export const createKey = (label: string) =>
+  request<ApiKey>('/v1/keys', { method: 'POST', body: JSON.stringify({ label }) });
 
-export async function createApp(payload: { slug: string; type: string; runtime: string; ram_mb: number; max_concurrency?: number }, baseUrl?: string): Promise<AppModel | null> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/apps`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return {
-      id: data.id || `app-${data.slug}`,
-      slug: data.slug,
-      name: data.slug,
-      type: data.type || 'function',
-      runtime: data.runtime || payload.runtime,
-      status: 'COLD RESTORED',
-      ram_mb: data.ram_mb || payload.ram_mb,
-      max_concurrency: payload.max_concurrency || 2,
-      p50_wake_ms: 165,
-      region: 'digitalocean-droplet',
-      created_at: new Date().toISOString(),
-      last_executed: 'Just now',
-    };
-  } catch (err) {
-    return null;
-  }
-}
+export const deleteKey = (id: string) =>
+  request<void>(`/v1/keys/${id}`, { method: 'DELETE' }, 'none');
 
-export async function updateApp(slug: string, updates: { ram_mb?: number; max_concurrency?: number }, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
+/* ────────────────────────────────── Usage ──────────────────────────────── */
 
-export async function deleteApp(slug: string, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}`, { method: 'DELETE' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
-export async function triggerColdWake(slug: string, baseUrl?: string): Promise<{ success: boolean; latency_ms: number }> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}/wake`, {
-      method: 'POST',
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return { success: true, latency_ms: data.latency_ms || 184 };
-    }
-  } catch (err) {
-    // Fallback
-  }
-  return { success: true, latency_ms: 184 };
-}
-
-export async function parkApp(slug: string, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}/park`, { method: 'POST' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   3. TAG: DEPLOYMENTS & INSTANCES (/v1/deployments, /v1/instances)
-   ────────────────────────────────────────────────────────────────────────── */
-
-export async function fetchDeployments(baseUrl?: string): Promise<DeploymentModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/deployments`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    return [];
-  }
-}
-
-export async function fetchInstances(baseUrl?: string): Promise<InstanceModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/instances`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    return [];
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   4. TAG: DOMAINS, CRONS, KEYS, SECRETS, USAGE
-   ────────────────────────────────────────────────────────────────────────── */
-
-export async function fetchDomains(baseUrl?: string): Promise<DomainModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/domains`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    return [];
-  }
-}
-
-export async function createDomain(domain: string, targetFunc: string, baseUrl?: string): Promise<DomainModel | null> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/domains`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain, target_func: targetFunc }),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    return null;
-  }
-}
-
-export async function fetchCrons(baseUrl?: string): Promise<CronModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/crons`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    return [];
-  }
-}
-
-export async function createCron(schedule: string, targetFunc: string, baseUrl?: string): Promise<CronModel | null> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/crons`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedule, target_func: targetFunc }),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    return null;
-  }
-}
-
-export async function fetchApiKeys(baseUrl?: string): Promise<ApiKeyModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/keys`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    return [];
-  }
-}
-
-export async function createApiKey(name: string, baseUrl?: string): Promise<{ key: ApiKeyModel; raw_token: string } | null> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/keys`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    return null;
-  }
-}
-
-export async function fetchSecrets(baseUrl?: string): Promise<SecretModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/secrets`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    return [];
-  }
-}
-
-export async function createSecret(key: string, val: string, target: string, baseUrl?: string): Promise<SecretModel | null> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/secrets`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, val, target }),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    return null;
-  }
-}
-
-export async function fetchUsage(baseUrl?: string): Promise<UsageRollupModel | null> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/usage`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    return null;
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   5. DELETION ENDPOINTS & CLI AUTH & SSE STREAMING
-   ────────────────────────────────────────────────────────────────────────── */
-
-export async function deleteCron(id: string, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/crons/${id}`, { method: 'DELETE' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
-export async function deleteDomain(id: string, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/domains/${id}`, { method: 'DELETE' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
-export async function deleteApiKey(id: string, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/keys/${id}`, { method: 'DELETE' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
-export async function deleteSecret(id: string, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await apiFetch(`${targetUrl}/v1/secrets/${id}`, { method: 'DELETE' });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
-export async function approveCliAuth(code: string, baseUrl?: string): Promise<{ success: boolean; token?: string; email?: string; error?: string }> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await fetch(`${targetUrl}/v1/cli-auth/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return { success: true, token: data.token || data.bearer_token, email: data.email || 'developer@gregale.dev' };
-    }
-    const errData = await res.json().catch(() => ({}));
-    return { success: false, error: errData.detail || errData.title || `HTTP ${res.status}` };
-  } catch (err: any) {
-    return { success: false, error: err?.message || 'Network error connecting to control plane' };
-  }
-}
-
-export async function fetchDeploymentsForApp(slug?: string, baseUrl?: string): Promise<DeploymentModel[]> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const url = slug ? `${targetUrl}/v1/deployments?app_slug=${slug}` : `${targetUrl}/v1/deployments`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    return [];
-  }
-}
-
-export async function rollbackDeployment(slug: string, deploymentId: string, baseUrl?: string): Promise<boolean> {
-  const targetUrl = baseUrl || getApiUrl();
-  try {
-    const res = await fetch(`${targetUrl}/v1/apps/${slug}/rollback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deployment_id: deploymentId }),
-    });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
-export function subscribeToEvents(onLog: (log: any) => void, baseUrl?: string): () => void {
-  const targetUrl = baseUrl || getApiUrl();
-  let eventSource: EventSource | null = null;
-  try {
-    eventSource = new EventSource(`${targetUrl}/v1/events`);
-    eventSource.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data);
-        onLog(parsed);
-      } catch (e) {
-        onLog({ ts: new Date().toLocaleTimeString(), service: '[apid]', event: 'EVENT', status: 'OK', text: event.data });
-      }
-    };
-    eventSource.onerror = () => {
-      // Reconnection handled automatically by browser EventSource
-    };
-  } catch (err) {
-    console.warn('SSE subscription error:', err);
-  }
-  return () => {
-    if (eventSource) {
-      eventSource.close();
-    }
-  };
-}
-
+export const getUsageSummary = () => request<UsageSummary>('/v1/usage/summary', { cache: 'no-store' });
