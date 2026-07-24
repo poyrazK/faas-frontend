@@ -143,6 +143,13 @@ export function setAuthToken(token: string): string {
   return currentAuthToken;
 }
 
+export function clearAuthToken(): void {
+  currentAuthToken = '';
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('gregale_auth_token');
+  }
+}
+
 export function getAuthHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
   const headers: Record<string, string> = {
     'Accept': 'application/json',
