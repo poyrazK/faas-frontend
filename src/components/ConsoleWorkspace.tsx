@@ -93,8 +93,8 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
   openAddSecretModal,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [targetUrlInput, setTargetUrlInput] = useState('http://localhost:8080');
-  const [backendStatus, setBackendStatus] = useState<{ online: boolean; url: string }>({ online: false, url: 'http://localhost:8080' });
+  const [targetUrlInput, setTargetUrlInput] = useState('');
+  const [backendStatus, setBackendStatus] = useState<{ online: boolean; url: string }>({ online: false, url: '' });
   const [accountInfo, setAccountInfo] = useState<AccountModel | null>(null);
 
   // Selected Function for Detail Drawer

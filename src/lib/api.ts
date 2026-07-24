@@ -196,7 +196,9 @@ export async function checkBackendHealth(customUrl?: string): Promise<{ online: 
       headers: getAuthHeaders(),
       cache: 'no-store',
     });
-    return { online: res.ok, url: targetUrl };
+    // Status 200, 401, 403, or 404 means apid server is online and responding!
+    const isOnline = res.status > 0 && res.status < 500;
+    return { online: isOnline, url: targetUrl };
   } catch (err) {
     return { online: false, url: targetUrl };
   }
