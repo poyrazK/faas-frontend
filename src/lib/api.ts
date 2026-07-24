@@ -154,6 +154,15 @@ export function getAuthHeaders(extraHeaders: Record<string, string> = {}): Recor
   return headers;
 }
 
+export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const headers = getAuthHeaders((options.headers as Record<string, string>) || {});
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    1. TAG: ACCOUNT & AUTH (/v1/account, /v1/auth)
    ────────────────────────────────────────────────────────────────────────── */
@@ -201,8 +210,7 @@ export async function loginWithApiKey(keyOrToken: string, baseUrl?: string): Pro
 export async function checkBackendHealth(customUrl?: string): Promise<{ online: boolean; url: string }> {
   const targetUrl = customUrl ? setApiUrl(customUrl) : getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/account`, {
-      headers: getAuthHeaders(),
+    const res = await apiFetch(`${targetUrl}/v1/account`, {
       cache: 'no-store',
     });
     // Status 200, 401, 403, or 404 means apid server is online and responding!
@@ -216,9 +224,7 @@ export async function checkBackendHealth(customUrl?: string): Promise<{ online: 
 export async function getAccount(baseUrl?: string): Promise<AccountModel | null> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/account`, {
-      headers: getAuthHeaders(),
-    });
+    const res = await apiFetch(`${targetUrl}/v1/account`);
     if (!res.ok) return null;
     return await res.json();
   } catch (err) {
@@ -229,7 +235,7 @@ export async function getAccount(baseUrl?: string): Promise<AccountModel | null>
 export async function changePlan(newPlan: 'free' | 'hobby' | 'pro' | 'scale', baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/account/plan`, {
+    const res = await apiFetch(`${targetUrl}/v1/account/plan`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ plan: newPlan }),
@@ -243,7 +249,7 @@ export async function changePlan(newPlan: 'free' | 'hobby' | 'pro' | 'scale', ba
 export async function exportAccountData(includeSecrets = true, baseUrl?: string): Promise<any> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/account/export?include_secrets=${includeSecrets}`);
+    const res = await apiFetch(`${targetUrl}/v1/account/export?include_secrets=${includeSecrets}`);
     if (!res.ok) return null;
     return await res.json();
   } catch (err) {
@@ -254,7 +260,7 @@ export async function exportAccountData(includeSecrets = true, baseUrl?: string)
 export async function deleteAccount(baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/account`, { method: 'DELETE' });
+    const res = await apiFetch(`${targetUrl}/v1/account`, { method: 'DELETE' });
     return res.ok;
   } catch (err) {
     return false;
@@ -264,7 +270,7 @@ export async function deleteAccount(baseUrl?: string): Promise<boolean> {
 export async function restoreAccount(baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/account/restore`, { method: 'POST' });
+    const res = await apiFetch(`${targetUrl}/v1/account/restore`, { method: 'POST' });
     return res.ok;
   } catch (err) {
     return false;
@@ -278,8 +284,7 @@ export async function restoreAccount(baseUrl?: string): Promise<boolean> {
 export async function fetchApps(baseUrl?: string): Promise<AppModel[]> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/apps`, {
-      headers: { 'Accept': 'application/json' },
+    const res = await apiFetch(`${targetUrl}/v1/apps`, {
       cache: 'no-store',
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -306,7 +311,7 @@ export async function fetchApps(baseUrl?: string): Promise<AppModel[]> {
 export async function createApp(payload: { slug: string; type: string; runtime: string; ram_mb: number; max_concurrency?: number }, baseUrl?: string): Promise<AppModel | null> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/apps`, {
+    const res = await apiFetch(`${targetUrl}/v1/apps`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -335,7 +340,7 @@ export async function createApp(payload: { slug: string; type: string; runtime: 
 export async function updateApp(slug: string, updates: { ram_mb?: number; max_concurrency?: number }, baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/apps/${slug}`, {
+    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -349,7 +354,7 @@ export async function updateApp(slug: string, updates: { ram_mb?: number; max_co
 export async function deleteApp(slug: string, baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/apps/${slug}`, { method: 'DELETE' });
+    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}`, { method: 'DELETE' });
     return res.ok;
   } catch (err) {
     return false;
@@ -359,9 +364,8 @@ export async function deleteApp(slug: string, baseUrl?: string): Promise<boolean
 export async function triggerColdWake(slug: string, baseUrl?: string): Promise<{ success: boolean; latency_ms: number }> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/apps/${slug}/wake`, {
+    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}/wake`, {
       method: 'POST',
-      headers: { 'Accept': 'application/json' },
     });
     if (res.ok) {
       const data = await res.json();
@@ -376,7 +380,7 @@ export async function triggerColdWake(slug: string, baseUrl?: string): Promise<{
 export async function parkApp(slug: string, baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/apps/${slug}/park`, { method: 'POST' });
+    const res = await apiFetch(`${targetUrl}/v1/apps/${slug}/park`, { method: 'POST' });
     return res.ok;
   } catch (err) {
     return false;
@@ -390,7 +394,7 @@ export async function parkApp(slug: string, baseUrl?: string): Promise<boolean> 
 export async function fetchDeployments(baseUrl?: string): Promise<DeploymentModel[]> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/deployments`);
+    const res = await apiFetch(`${targetUrl}/v1/deployments`);
     if (!res.ok) return [];
     return await res.json();
   } catch (err) {
@@ -401,7 +405,7 @@ export async function fetchDeployments(baseUrl?: string): Promise<DeploymentMode
 export async function fetchInstances(baseUrl?: string): Promise<InstanceModel[]> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/instances`);
+    const res = await apiFetch(`${targetUrl}/v1/instances`);
     if (!res.ok) return [];
     return await res.json();
   } catch (err) {
@@ -416,7 +420,7 @@ export async function fetchInstances(baseUrl?: string): Promise<InstanceModel[]>
 export async function fetchDomains(baseUrl?: string): Promise<DomainModel[]> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/domains`);
+    const res = await apiFetch(`${targetUrl}/v1/domains`);
     if (!res.ok) return [];
     return await res.json();
   } catch (err) {
@@ -427,7 +431,7 @@ export async function fetchDomains(baseUrl?: string): Promise<DomainModel[]> {
 export async function createDomain(domain: string, targetFunc: string, baseUrl?: string): Promise<DomainModel | null> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/domains`, {
+    const res = await apiFetch(`${targetUrl}/v1/domains`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ domain, target_func: targetFunc }),
@@ -442,7 +446,7 @@ export async function createDomain(domain: string, targetFunc: string, baseUrl?:
 export async function fetchCrons(baseUrl?: string): Promise<CronModel[]> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/crons`);
+    const res = await apiFetch(`${targetUrl}/v1/crons`);
     if (!res.ok) return [];
     return await res.json();
   } catch (err) {
@@ -453,7 +457,7 @@ export async function fetchCrons(baseUrl?: string): Promise<CronModel[]> {
 export async function createCron(schedule: string, targetFunc: string, baseUrl?: string): Promise<CronModel | null> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/crons`, {
+    const res = await apiFetch(`${targetUrl}/v1/crons`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ schedule, target_func: targetFunc }),
@@ -468,7 +472,7 @@ export async function createCron(schedule: string, targetFunc: string, baseUrl?:
 export async function fetchApiKeys(baseUrl?: string): Promise<ApiKeyModel[]> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/keys`);
+    const res = await apiFetch(`${targetUrl}/v1/keys`);
     if (!res.ok) return [];
     return await res.json();
   } catch (err) {
@@ -479,7 +483,7 @@ export async function fetchApiKeys(baseUrl?: string): Promise<ApiKeyModel[]> {
 export async function createApiKey(name: string, baseUrl?: string): Promise<{ key: ApiKeyModel; raw_token: string } | null> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/keys`, {
+    const res = await apiFetch(`${targetUrl}/v1/keys`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -494,7 +498,7 @@ export async function createApiKey(name: string, baseUrl?: string): Promise<{ ke
 export async function fetchSecrets(baseUrl?: string): Promise<SecretModel[]> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/secrets`);
+    const res = await apiFetch(`${targetUrl}/v1/secrets`);
     if (!res.ok) return [];
     return await res.json();
   } catch (err) {
@@ -505,7 +509,7 @@ export async function fetchSecrets(baseUrl?: string): Promise<SecretModel[]> {
 export async function createSecret(key: string, val: string, target: string, baseUrl?: string): Promise<SecretModel | null> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/secrets`, {
+    const res = await apiFetch(`${targetUrl}/v1/secrets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, val, target }),
@@ -520,7 +524,7 @@ export async function createSecret(key: string, val: string, target: string, bas
 export async function fetchUsage(baseUrl?: string): Promise<UsageRollupModel | null> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/usage`);
+    const res = await apiFetch(`${targetUrl}/v1/usage`);
     if (!res.ok) return null;
     return await res.json();
   } catch (err) {
@@ -535,7 +539,7 @@ export async function fetchUsage(baseUrl?: string): Promise<UsageRollupModel | n
 export async function deleteCron(id: string, baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/crons/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`${targetUrl}/v1/crons/${id}`, { method: 'DELETE' });
     return res.ok;
   } catch (err) {
     return false;
@@ -545,7 +549,7 @@ export async function deleteCron(id: string, baseUrl?: string): Promise<boolean>
 export async function deleteDomain(id: string, baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/domains/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`${targetUrl}/v1/domains/${id}`, { method: 'DELETE' });
     return res.ok;
   } catch (err) {
     return false;
@@ -555,7 +559,7 @@ export async function deleteDomain(id: string, baseUrl?: string): Promise<boolea
 export async function deleteApiKey(id: string, baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/keys/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`${targetUrl}/v1/keys/${id}`, { method: 'DELETE' });
     return res.ok;
   } catch (err) {
     return false;
@@ -565,7 +569,7 @@ export async function deleteApiKey(id: string, baseUrl?: string): Promise<boolea
 export async function deleteSecret(id: string, baseUrl?: string): Promise<boolean> {
   const targetUrl = baseUrl || getApiUrl();
   try {
-    const res = await fetch(`${targetUrl}/v1/secrets/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`${targetUrl}/v1/secrets/${id}`, { method: 'DELETE' });
     return res.ok;
   } catch (err) {
     return false;
