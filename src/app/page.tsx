@@ -11,6 +11,7 @@ import { ConsoleWorkspace, MicroVMFunction, SecretItem } from '@/components/Cons
 import { NewFunctionModal } from '@/components/NewFunctionModal';
 import { AddSecretModal } from '@/components/AddSecretModal';
 import { Footer } from '@/components/Footer';
+import { getAuthToken } from '@/lib/api';
 
 export default function Home() {
   const [viewMode, setViewMode] = useState<'landing' | 'console'>('landing');
@@ -50,7 +51,13 @@ export default function Home() {
               </p>
 
               <div className="hero-actions">
-                <button className="btn btn-gregale" onClick={() => setViewMode('console')}>
+                <button className="btn btn-gregale" onClick={() => {
+                  if (!getAuthToken()) {
+                    window.location.href = '/login';
+                  } else {
+                    setViewMode('console');
+                  }
+                }}>
                   Launch Console
                 </button>
                 <a href="#architecture" className="btn btn-secondary">Explore Architecture</a>
@@ -73,7 +80,13 @@ export default function Home() {
           <ColdWakeBenchmark />
 
           {/* Pricing Matrix & Calculator */}
-          <UsageEstimator onSelectPlan={() => setViewMode('console')} />
+          <UsageEstimator onSelectPlan={() => {
+            if (!getAuthToken()) {
+              window.location.href = '/login';
+            } else {
+              setViewMode('console');
+            }
+          }} />
 
           {/* Footer */}
           <Footer />

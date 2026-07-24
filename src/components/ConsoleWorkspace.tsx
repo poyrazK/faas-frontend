@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { ConsoleTab } from './ConsoleSidebar';
 import { 
   checkBackendHealth, 
@@ -128,6 +129,14 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
 
   const [selectedFuncDeployments, setSelectedFuncDeployments] = useState<DeploymentModel[]>([]);
   const [accountDeletionStatus, setAccountDeletionStatus] = useState<string | null>(null);
+
+  const router = useRouter();
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !getAuthToken()) {
+      router.push('/login');
+    }
+  }, [router]);
 
   useEffect(() => {
     const savedUrl = getApiUrl();

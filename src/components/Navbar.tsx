@@ -65,7 +65,14 @@ export const Navbar: React.FC<NavbarProps> = ({ viewMode, setViewMode }) => {
                 href="#console" 
                 className="nav-link" 
                 style={{ color: 'var(--gregale-green)', fontWeight: 700 }}
-                onClick={(e) => { e.preventDefault(); setViewMode('console'); }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!getAuthToken()) {
+                    window.location.href = '/login';
+                  } else {
+                    setViewMode('console');
+                  }
+                }}
               >
                 Console
               </a>
@@ -182,7 +189,13 @@ export const Navbar: React.FC<NavbarProps> = ({ viewMode, setViewMode }) => {
                 </a>
                 <button 
                   className="btn btn-gregale" 
-                  onClick={() => setViewMode(viewMode === 'landing' ? 'console' : 'landing')}
+                  onClick={() => {
+                    if (!getAuthToken()) {
+                      window.location.href = '/login';
+                    } else {
+                      setViewMode(viewMode === 'landing' ? 'console' : 'landing');
+                    }
+                  }}
                 >
                   {viewMode === 'landing' ? 'Open Console' : 'View Landing Page'}
                 </button>
