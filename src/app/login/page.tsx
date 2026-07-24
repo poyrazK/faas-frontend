@@ -48,8 +48,8 @@ export default function LoginPage() {
     setStatus('submitting');
 
     try {
-      // POST to the backend's magic-link endpoint (proxied through Vercel rewrite)
-      const res = await fetch('/login', {
+      // POST to the backend's magic-link route handler
+      const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ email: email.trim() }).toString(),
