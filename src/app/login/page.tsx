@@ -48,14 +48,28 @@ export default function LoginPage() {
     setStatus('submitting');
 
     try {
-      // Store session authentication token
-      setAuthToken(`token_${Math.random().toString(36).substring(2)}`);
-      setStatus('success');
-      setFeedbackMsg(mode === 'signin' ? '✓ Welcome back! Account verified. Redirecting to Console...' : `✓ Account created for ${fullName || email}! Redirecting to Console...`);
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ email: email.trim() }).toString(),
+        credentials: 'include',
+      });
 
-      setTimeout(() => {
-        router.push('/');
-      }, 700);
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.api_key) {
+          setAuthToken(data.api_key);
+        }
+        setStatus('success');
+        setFeedbackMsg(mode === 'signin' ? `✓ Welcome back ${email}! Redirecting to Console...` : `✓ Account created for ${fullName || email}! Redirecting to Console...`);
+        setTimeout(() => {
+          router.push('/');
+        }, 700);
+      } else {
+        const errText = await res.text();
+        setStatus('error');
+        setFeedbackMsg(`Sign-in failed: ${errText || `HTTP ${res.status}`}`);
+      }
     } catch (err: any) {
       setStatus('error');
       setFeedbackMsg(`Sign-in error: ${err.message}`);
