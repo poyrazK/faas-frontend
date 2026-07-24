@@ -164,16 +164,6 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
           </ul>
         </div>
       </div>
-
-      <div style={{ paddingTop: '1rem', borderTop: '1px solid var(--border-dim)' }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
-          REGIONAL CLUSTER
-        </div>
-        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <span style={{ width: '8px', height: '8px', background: 'var(--accent-green)', borderRadius: '50%' }}></span>
-          digitalocean-droplet
-        </div>
-      </div>
     </aside>
   );
 };

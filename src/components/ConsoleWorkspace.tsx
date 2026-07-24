@@ -377,66 +377,13 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
 
   return (
     <main className="console-workspace">
-      {/* DigitalOcean / Local Control Plane Connector */}
-      <div style={{
-        background: '#F0FDF4',
-        border: '1px solid #86EFAC',
-        borderRadius: 'var(--radius-md)',
-        padding: '0.85rem 1.25rem',
-        marginBottom: '1.5rem',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '1rem',
-        fontSize: '0.88rem',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-          <span style={{ 
-            width: '10px', 
-            height: '10px', 
-            borderRadius: '50%', 
-            background: '#16A34A' 
-          }}></span>
-          <div>
-            <strong>Control Plane Host:</strong>{' '}
-            <span style={{ color: '#15803D', fontWeight: 600 }}>
-              Connected to DigitalOcean Production Cluster ({backendStatus.url || '146.190.210.124:8080'})
-            </span>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <input 
-            type="text" 
-            placeholder="DigitalOcean IP (e.g. 159.203.x.x:8080)" 
-            value={targetUrlInput}
-            onChange={(e) => setTargetUrlInput(e.target.value)}
-            style={{
-              padding: '0.35rem 0.65rem',
-              borderRadius: '4px',
-              border: '1px solid var(--border-dim)',
-              fontSize: '0.82rem',
-              fontFamily: 'var(--font-mono)',
-              width: '280px',
-            }}
-          />
-          <button 
-            className="btn btn-gregale btn-sm"
-            onClick={() => testConnection(targetUrlInput)}
-          >
-            Connect CP
-          </button>
-        </div>
-      </div>
-
       {/* Tab 1: Overview */}
       {activeTab === 'overview' && (
         <div>
           <div className="console-page-header">
             <div>
               <h2 className="console-page-title">Cluster Overview</h2>
-              <p className="console-page-subtitle">Real-time status of your Firecracker microVM workloads on {backendStatus.url}.</p>
+              <p className="console-page-subtitle">Real-time status of your Firecracker microVM workloads.</p>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button className="btn btn-secondary btn-sm" onClick={handleExportData}>GDPR Export</button>
@@ -448,7 +395,6 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
             <div className="stat-card">
               <div className="stat-card-label">Active MicroVMs</div>
               <div className="stat-card-val" style={{ color: 'var(--gregale-green)' }}>{functions.length}</div>
-              <div className="stat-card-sub">0 MB resident RAM when parked</div>
             </div>
 
             <div className="stat-card">
@@ -461,12 +407,6 @@ export const ConsoleWorkspace: React.FC<ConsoleWorkspaceProps> = ({
               <div className="stat-card-label">Monthly Metering</div>
               <div className="stat-card-val">{accountInfo ? `${accountInfo.usage_gb_hours || 0} GB-h` : '0 GB-h'}</div>
               <div className="stat-card-sub">{accountInfo?.limits?.included_gb_hours || 5} GB-h included on {accountInfo?.plan || 'Free'}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-card-label">Host Health</div>
-              <div className="stat-card-val" style={{ color: 'var(--accent-green)' }}>100%</div>
-              <div className="stat-card-sub">DigitalOcean Production Droplet</div>
             </div>
           </div>
 
