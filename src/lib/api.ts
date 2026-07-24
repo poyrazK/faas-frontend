@@ -223,7 +223,7 @@ export interface LoginResult {
  * api_key it echoes back and rely on the cookie for session auth.
  */
 export async function login(email: string): Promise<LoginResult> {
-  const res = await fetch('/login', {
+  const res = await fetch('/api/auth/login', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },

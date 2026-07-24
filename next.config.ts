@@ -14,9 +14,12 @@ const nextConfig: NextConfig = {
         source: "/oauth/:path*",
         destination: `${backendUrl}/oauth/:path*`,
       },
-      // Magic-link auth flow: POST /login, GET /auth/verify, POST /logout
+      // Auth: POST the login form to the backend /login. We proxy via a
+      // dedicated alias because /login is ALSO a Next.js page (the sign-in
+      // UI); afterFiles rewrites lose to filesystem routes, so a rewrite on
+      // "/login" itself would be shadowed by the page and POSTs would 405.
       {
-        source: "/login",
+        source: "/api/auth/login",
         destination: `${backendUrl}/login`,
       },
       {
