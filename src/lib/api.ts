@@ -95,7 +95,7 @@ export interface UsageRollupModel {
 }
 
 let currentApiUrl = typeof window !== 'undefined' 
-  ? localStorage.getItem('gregale_apid_url') || process.env.NEXT_PUBLIC_APID_URL || ''
+  ? (localStorage.getItem('gregale_apid_url')?.includes('localhost') ? '' : localStorage.getItem('gregale_apid_url')) || process.env.NEXT_PUBLIC_APID_URL || ''
   : process.env.NEXT_PUBLIC_APID_URL || '';
 
 let currentAuthToken = typeof window !== 'undefined'
@@ -103,17 +103,26 @@ let currentAuthToken = typeof window !== 'undefined'
   : '';
 
 export function getApiUrl(): string {
+  if (typeof window !== 'undefined' && localStorage.getItem('gregale_apid_url')?.includes('localhost')) {
+    localStorage.removeItem('gregale_apid_url');
+  }
   return currentApiUrl;
 }
 
 export function setApiUrl(url: string): string {
   let formatted = url.trim();
-  if (formatted && !formatted.startsWith('http://') && !formatted.startsWith('https://')) {
+  if (formatted.includes('localhost')) {
+    formatted = '';
+  } else if (formatted && !formatted.startsWith('http://') && !formatted.startsWith('https://')) {
     formatted = `http://${formatted}`;
   }
-  currentApiUrl = formatted || 'http://localhost:8080';
+  currentApiUrl = formatted;
   if (typeof window !== 'undefined') {
-    localStorage.setItem('gregale_apid_url', currentApiUrl);
+    if (currentApiUrl) {
+      localStorage.setItem('gregale_apid_url', currentApiUrl);
+    } else {
+      localStorage.removeItem('gregale_apid_url');
+    }
   }
   return currentApiUrl;
 }
