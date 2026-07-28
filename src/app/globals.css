@@ -2,7 +2,11 @@
 
 /* ==========================================================================
    Gregale design system — Tailwind v4 theme.
-   Brand: bottle green (#107C41), slate ink, clean light surfaces.
+
+   Converted to the console template: warm neutral surfaces, hairline borders,
+   dense data tables, soft cards. Brand green is the logo colour (#107c41 —
+   the exact fill of public/gregale-logo-green-trans.png), so the mark and the
+   UI stay in one family. Swap --color-brand below to re-tone the whole app.
    ========================================================================== */
 
 @theme {
@@ -11,33 +15,44 @@
 
   /* Brand */
   --color-brand: #107c41;
-  --color-brand-hover: #0e6b37;
+  --color-brand-hover: #0d6836;
   --color-brand-bright: #15803d;
-  --color-brand-soft: #ecfdf3;
-  --color-brand-ring: rgba(16, 124, 65, 0.35);
+  --color-brand-soft: #edf6ef;
+  --color-brand-softer: #f5faf6;
+  --color-brand-line: #cfe6d6;
+  --color-brand-ring: rgba(16, 124, 65, 0.28);
 
-  /* Ink */
-  --color-ink: #0f172a;
-  --color-ink-soft: #475569;
-  --color-ink-muted: #64748b;
+  /* Ink — warm near-black, matching the template's text tone */
+  --color-ink: #1a1c19;
+  --color-ink-soft: #55584f;
+  --color-ink-muted: #8b8d84;
+  --color-ink-faint: #a8aaa1;
 
-  /* Surfaces */
+  /* Surfaces — warm neutrals, not blue-grey */
   --color-surface: #ffffff;
-  --color-surface-subtle: #f8fafc;
-  --color-surface-code: #0f172a;
-  --color-line: #e2e8f0;
-  --color-line-strong: #cbd5e1;
+  --color-surface-subtle: #f7f7f4;
+  --color-surface-sunken: #fafaf8;
+  --color-surface-code: #17190f;
+  --color-line: #e8e8e2;
+  --color-line-strong: #d5d5cd;
 
   /* Status */
   --color-ok: #16a34a;
   --color-info: #0284c7;
-  --color-warn: #d97706;
+  --color-warn: #c2760a;
   --color-danger: #dc2626;
 
-  --radius-card: 14px;
+  /* Chart tones */
+  --color-chart: #4e8f5b;
+  --color-chart-fill: rgba(78, 143, 91, 0.14);
+  --color-chart-alt: #d97a7a;
+  --color-grid: #eeeee8;
 
-  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 10px 15px -3px rgb(0 0 0 / 0.04);
-  --shadow-pop: 0 20px 25px -5px rgb(0 0 0 / 0.15), 0 10px 10px -5px rgb(0 0 0 / 0.04);
+  --radius-card: 12px;
+
+  --shadow-card: 0 1px 2px 0 rgb(26 28 25 / 0.04), 0 1px 3px 0 rgb(26 28 25 / 0.03);
+  --shadow-raised: 0 1px 2px 0 rgb(26 28 25 / 0.05), 0 4px 12px -2px rgb(26 28 25 / 0.06);
+  --shadow-pop: 0 10px 15px -3px rgb(26 28 25 / 0.10), 0 20px 40px -12px rgb(26 28 25 / 0.18);
 }
 
 @layer base {
@@ -54,7 +69,7 @@
     color: var(--color-ink);
   }
   h1, h2, h3, h4 {
-    letter-spacing: -0.02em;
+    letter-spacing: -0.021em;
     font-weight: 700;
     color: var(--color-ink);
   }
@@ -62,20 +77,25 @@
     font-family: var(--font-mono);
   }
   ::selection {
-    background: rgba(16, 124, 65, 0.75);
+    background: rgba(16, 124, 65, 0.72);
     color: #fff;
   }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--color-line-strong); border-radius: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
-  /* Buttons */
+  /* ── Buttons ─────────────────────────────────────────────────────────── */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium
            transition-colors duration-150 select-none disabled:opacity-50 disabled:pointer-events-none
-           px-4 py-2 cursor-pointer whitespace-nowrap;
+           px-3.5 py-2 cursor-pointer whitespace-nowrap;
   }
   .btn-primary {
     background: var(--color-brand);
@@ -90,59 +110,187 @@
   .btn-secondary:hover { background: var(--color-surface-subtle); border-color: var(--color-line-strong); }
   .btn-ghost { background: transparent; color: var(--color-ink-soft); }
   .btn-ghost:hover { background: var(--color-surface-subtle); color: var(--color-ink); }
+  .btn-dark { background: var(--color-ink); color: #fff; }
+  .btn-dark:hover { background: #2c2f28; }
   .btn-danger { background: var(--color-danger); color: #fff; }
   .btn-danger:hover { filter: brightness(0.94); }
-  .btn-sm { @apply px-3 py-1.5 text-xs; }
+  .btn-sm { @apply px-2.5 py-1.5 text-xs gap-1; }
 
-  /* Surfaces */
+  /* Square icon button (bell, help, refresh) */
+  .btn-icon {
+    @apply inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer;
+    width: 34px;
+    height: 34px;
+    color: var(--color-ink-muted);
+    border: 1px solid transparent;
+  }
+  .btn-icon:hover { background: var(--color-surface-subtle); color: var(--color-ink); }
+  .btn-icon-bordered { border-color: var(--color-line); background: var(--color-surface); }
+
+  /* ── Surfaces ────────────────────────────────────────────────────────── */
   .card {
     background: var(--color-surface);
     border: 1px solid var(--color-line);
     border-radius: var(--radius-card);
     box-shadow: var(--shadow-card);
   }
+  /* Header strip inside a card: title left, actions right. */
+  .card-head {
+    @apply flex flex-wrap items-center justify-between gap-3 px-5 py-4;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .card-title { @apply text-sm font-semibold; color: var(--color-ink); }
 
-  /* Inputs */
+  /* ── Inputs ──────────────────────────────────────────────────────────── */
   .field {
     @apply w-full rounded-lg px-3 py-2 text-sm outline-none transition;
     background: var(--color-surface);
     border: 1px solid var(--color-line);
     color: var(--color-ink);
   }
+  .field::placeholder { color: var(--color-ink-faint); }
   .field:focus {
     border-color: var(--color-brand);
     box-shadow: 0 0 0 3px var(--color-brand-ring);
+    outline: none;
   }
+  .field-sm { @apply px-2.5 py-1.5 text-xs; }
   .label { @apply block text-xs font-semibold mb-1.5; color: var(--color-ink-soft); }
 
-  /* Badges */
-  .badge {
-    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold;
+  /* Search input with a leading magnifier slot. */
+  .search-wrap { @apply relative; }
+  .search-wrap .field { padding-left: 2.1rem; }
+  .search-wrap svg {
+    @apply pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2;
+    color: var(--color-ink-faint);
   }
-  .badge-brand { background: var(--color-brand-soft); color: var(--color-brand-bright); }
-  .badge-muted { background: var(--color-surface-subtle); color: var(--color-ink-muted); border: 1px solid var(--color-line); }
-  .badge-warn  { background: #fffbeb; color: #b45309; }
-  .badge-danger{ background: #fef2f2; color: #b91c1c; }
 
-  /* Data table */
+  /* ── Badges ──────────────────────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-brand  { background: var(--color-brand-soft); color: var(--color-brand-bright); border: 1px solid var(--color-brand-line); }
+  .badge-muted  { background: var(--color-surface-subtle); color: var(--color-ink-muted); border: 1px solid var(--color-line); }
+  .badge-warn   { background: #fdf6e7; color: #a1650b; border: 1px solid #f2e2bd; }
+  .badge-danger { background: #fdf1f1; color: #b91c1c; border: 1px solid #f5d5d5; }
+  .badge-info   { background: #eef6fb; color: #0369a1; border: 1px solid #cfe4f2; }
+
+  /* ── Data table ──────────────────────────────────────────────────────── */
   .dtable { @apply w-full text-left text-sm; border-collapse: collapse; }
   .dtable th {
-    @apply px-4 py-3 text-xs font-semibold uppercase tracking-wide;
+    @apply px-5 py-3 text-xs font-medium whitespace-nowrap;
     color: var(--color-ink-muted);
+    background: var(--color-surface-sunken);
     border-bottom: 1px solid var(--color-line);
   }
   .dtable td {
-    @apply px-4 py-3;
+    @apply px-5 py-3.5;
     color: var(--color-ink-soft);
     border-bottom: 1px solid var(--color-line);
+    vertical-align: middle;
   }
-  .dtable tr:last-child td { border-bottom: 0; }
-  .dtable tbody tr:hover td { background: var(--color-surface-subtle); }
+  .dtable tbody tr:last-child td { border-bottom: 0; }
+  .dtable tbody tr:hover td { background: var(--color-surface-sunken); }
+  .dtable .cell-primary { @apply font-medium; color: var(--color-ink); }
+
+  /* Pagination / count strip under a table. */
+  .table-foot {
+    @apply flex items-center justify-between gap-3 px-5 py-3 text-xs;
+    color: var(--color-ink-muted);
+    border-top: 1px solid var(--color-line);
+  }
+
+  /* ── Sidebar nav ─────────────────────────────────────────────────────── */
+  .nav-group {
+    @apply px-3 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.09em] uppercase;
+    color: var(--color-ink-faint);
+  }
+  .nav-item {
+    @apply flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors;
+    color: var(--color-ink-soft);
+  }
+  .nav-item:hover { background: var(--color-surface-subtle); color: var(--color-ink); }
+  .nav-item-active {
+    background: var(--color-brand-soft);
+    color: var(--color-brand-bright);
+  }
+  .nav-item-active:hover { background: var(--color-brand-soft); color: var(--color-brand-bright); }
+  .nav-item svg { flex: none; }
+
+  /* ── Misc ────────────────────────────────────────────────────────────── */
+  /* Inline segmented control (chart mode switches, range pickers). */
+  .seg {
+    @apply inline-flex items-center rounded-lg p-0.5;
+    background: var(--color-surface-subtle);
+    border: 1px solid var(--color-line);
+  }
+  .seg button {
+    @apply rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer;
+    color: var(--color-ink-muted);
+  }
+  .seg button[data-active='true'] {
+    background: var(--color-surface);
+    color: var(--color-ink);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Horizontal meter used for region/plan/usage bars. */
+  .meter {
+    @apply h-1.5 w-full overflow-hidden rounded-full;
+    background: var(--color-surface-subtle);
+  }
+  .meter > span {
+    @apply block h-full rounded-full;
+    background: var(--color-brand);
+  }
+
+  /* Landing-page section rhythm. */
+  .section { @apply mx-auto w-full max-w-6xl px-5 md:px-8; }
+
+  /*
+   * Hairlines between cells of a responsive grid. Tailwind's `divide-*` walks
+   * DOM siblings, which is wrong once cells wrap into rows, so the separators
+   * are placed per breakpoint: stacked cells divide horizontally, side-by-side
+   * cells divide vertically.
+   */
+  .grid-hairline > * + * { border-top: 1px solid var(--color-line); }
+
+  /*
+   * The per-breakpoint overrides below all carry one pseudo-class so they
+   * match the specificity of the `nth-child` rules they replace — a media
+   * query alone does not outrank a more specific selector.
+   */
+
+  /* 1 → 2 → 4 columns (feature grid). */
+  @media (min-width: 768px) {
+    .grid-hairline-124 > *:nth-child(n) { border-top: 0; }
+    .grid-hairline-124 > *:nth-child(n + 3) { border-top: 1px solid var(--color-line); }
+    .grid-hairline-124 > *:nth-child(even) { border-left: 1px solid var(--color-line); }
+  }
+  @media (min-width: 1024px) {
+    .grid-hairline-124 > *:nth-child(n) { border-top: 0; border-left: 0; }
+    .grid-hairline-124 > *:nth-child(n + 2) { border-left: 1px solid var(--color-line); }
+  }
+
+  /* 2 → 4 columns (stat strip). */
+  .grid-hairline-24 > *:nth-child(n) { border-top: 0; }
+  .grid-hairline-24 > *:nth-child(n + 3) { border-top: 1px solid var(--color-line); }
+  .grid-hairline-24 > *:nth-child(even) { border-left: 1px solid var(--color-line); }
+  @media (min-width: 1024px) {
+    .grid-hairline-24 > *:nth-child(n) { border-top: 0; border-left: 0; }
+    .grid-hairline-24 > *:nth-child(n + 2) { border-left: 1px solid var(--color-line); }
+  }
 }
 
-/* Status dot pulse for "live" indicators */
+/* Status dot pulse for "live" indicators. */
 @keyframes gg-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  50% { opacity: 0.3; }
 }
 .live-dot { animation: gg-pulse 1.6s ease-in-out infinite; }
+
+/* Dotted world-map / grid texture used behind the CTA band. */
+.dot-grid {
+  background-image: radial-gradient(var(--color-brand-line) 1px, transparent 1px);
+  background-size: 14px 14px;
+}

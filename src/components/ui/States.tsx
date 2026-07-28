@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { ApiError } from '@/lib/api';
+import { Icon, type IconName } from './Icons';
 
 export function Spinner({ size = 18 }: { size?: number }) {
   return (
@@ -23,13 +24,13 @@ export function Spinner({ size = 18 }: { size?: number }) {
 /** Skeleton rows for table loading. */
 export function SkeletonTable({ cols = 4, rows = 4 }: { cols?: number; rows?: number }) {
   return (
-    <div className="p-4 space-y-3" aria-busy>
+    <div className="space-y-3 p-5" aria-busy>
       {Array.from({ length: rows }).map((_, r) => (
         <div key={r} className="flex gap-4">
           {Array.from({ length: cols }).map((_, c) => (
             <div
               key={c}
-              className="h-4 flex-1 rounded animate-pulse"
+              className="h-4 flex-1 animate-pulse rounded"
               style={{ background: 'var(--color-surface-subtle)', opacity: 1 - r * 0.12 }}
             />
           ))}
@@ -39,22 +40,44 @@ export function SkeletonTable({ cols = 4, rows = 4 }: { cols?: number; rows?: nu
   );
 }
 
+/** Placeholder block for a loading chart or panel. */
+export function SkeletonBlock({ height = 200 }: { height?: number }) {
+  return (
+    <div
+      className="animate-pulse rounded-lg"
+      style={{ height, background: 'var(--color-surface-subtle)' }}
+      aria-busy
+    />
+  );
+}
+
 export function EmptyState({
-  icon = '📦',
+  icon = 'inbox',
   title,
   hint,
   action,
 }: {
-  icon?: string;
+  icon?: IconName;
   title: string;
   hint?: string;
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center text-center py-16 px-6">
-      <div className="text-4xl mb-3">{icon}</div>
-      <h3 className="text-base font-semibold" style={{ color: 'var(--color-ink)' }}>{title}</h3>
-      {hint && <p className="mt-1.5 text-sm max-w-sm" style={{ color: 'var(--color-ink-muted)' }}>{hint}</p>}
+    <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+      <div
+        className="flex h-11 w-11 items-center justify-center rounded-xl"
+        style={{ background: 'var(--color-surface-subtle)', color: 'var(--color-ink-muted)' }}
+      >
+        <Icon name={icon} size={20} />
+      </div>
+      <h3 className="mt-3.5 text-base font-semibold" style={{ color: 'var(--color-ink)' }}>
+        {title}
+      </h3>
+      {hint && (
+        <p className="mt-1.5 max-w-sm text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+          {hint}
+        </p>
+      )}
       {action && <div className="mt-5">{action}</div>}
     </div>
   );
@@ -64,19 +87,24 @@ export function ErrorState({ error, onRetry }: { error: Error; onRetry?: () => v
   const isApi = error instanceof ApiError;
   const title = isApi ? (error as ApiError).problem?.title || 'Something went wrong' : 'Something went wrong';
   return (
-    <div className="flex flex-col items-center justify-center text-center py-14 px-6">
+    <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
       <div
-        className="w-11 h-11 rounded-full flex items-center justify-center mb-3"
-        style={{ background: '#fef2f2', color: 'var(--color-danger)' }}
+        className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl"
+        style={{ background: '#fdf1f1', color: 'var(--color-danger)' }}
       >
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
         </svg>
       </div>
-      <h3 className="text-base font-semibold" style={{ color: 'var(--color-ink)' }}>{title}</h3>
-      <p className="mt-1.5 text-sm max-w-md" style={{ color: 'var(--color-ink-muted)' }}>{error.message}</p>
+      <h3 className="text-base font-semibold" style={{ color: 'var(--color-ink)' }}>
+        {title}
+      </h3>
+      <p className="mt-1.5 max-w-md text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+        {error.message}
+      </p>
       {onRetry && (
         <button className="btn btn-secondary btn-sm mt-5" onClick={onRetry}>
+          <Icon name="refresh" size={13} />
           Try again
         </button>
       )}

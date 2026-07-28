@@ -1,16 +1,34 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { exportAccount, deleteAccount, restoreAccount, ApiError } from '@/lib/api';
-import { PageHeader, Mono } from '@/components/ui/bits';
+import { exportAccount, deleteAccount, restoreAccount, listAuditEvents, ApiError } from '@/lib/api';
+import { useAsync } from '@/lib/useAsync';
+import { PageHeader, Mono, CopyButton } from '@/components/ui/bits';
+import { SectionCard } from '@/components/ui/Panels';
+import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
-import { PLANS } from '@/lib/format';
+import { Icon } from '@/components/ui/Icons';
+import { PLANS, relativeTime } from '@/lib/format';
+
+const KIND_LABEL: Record<string, string> = {
+  'auth.login': 'Signed in',
+  'auth.logout': 'Signed out',
+  'key.created': 'API key created',
+  'key.deleted': 'API key revoked',
+  'secret.set': 'Secret set',
+  'secret.deleted': 'Secret deleted',
+  'account.plan_changed': 'Plan changed',
+  'account.deletion_scheduled': 'Account deletion staged',
+  'account.deletion_restored': 'Account restored',
+};
 
 export default function SettingsPage() {
   const { account, refresh, signOut } = useAuth();
+  const events = useAsync(() => listAuditEvents(25), []);
   const toast = useToast();
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -18,6 +36,7 @@ export default function SettingsPage() {
 
   if (!account) return null;
   const pending = account.status === 'deleted_pending';
+  const plan = PLANS[account.plan];
 
   async function doExport() {
     setBusy('export');
@@ -42,40 +61,102 @@ export default function SettingsPage() {
     <div>
       <PageHeader title="Settings" subtitle="Account details, data export, and account lifecycle." />
 
-      <div className="card p-6">
-        <h2 className="text-sm font-semibold">Account</h2>
-        <dl className="mt-4 grid gap-4 sm:grid-cols-3 text-sm">
-          <div>
-            <dt className="text-xs font-semibold uppercase" style={{ color: 'var(--color-ink-muted)' }}>Email</dt>
-            <dd className="mt-1 font-semibold">{account.email}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-semibold uppercase" style={{ color: 'var(--color-ink-muted)' }}>Plan</dt>
-            <dd className="mt-1 font-semibold">{PLANS[account.plan].label}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-semibold uppercase" style={{ color: 'var(--color-ink-muted)' }}>Account ID</dt>
-            <dd className="mt-1"><Mono>{account.id}</Mono></dd>
+      {pending && (
+        <div
+          className="mb-4 flex items-start gap-3 rounded-lg px-4 py-3"
+          style={{ background: '#fdf6e7', border: '1px solid #f2e2bd' }}
+        >
+          <Icon name="alerts" size={16} style={{ color: '#a1650b', marginTop: 2 }} />
+          <p className="text-sm" style={{ color: '#7c4f08' }}>
+            This account is scheduled for deletion and will be purged after the 30-day grace period. Restore it below
+            to cancel.
+          </p>
+        </div>
+      )}
+
+      <SectionCard title="Account">
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 py-5 text-sm sm:grid-cols-4">
+          <Field k="Email" v={account.email} />
+          <Field k="Plan" v={<Link href="/dashboard/plans" style={{ color: 'var(--color-brand)' }}>{plan.label}</Link>} />
+          <Field k="Status" v={<span className={`badge ${pending ? 'badge-warn' : 'badge-brand'}`}>{account.status}</span>} />
+          <Field k="Workflows" v={`${account.app_count} of ${account.limits.deployed_apps}`} />
+          <div className="col-span-2 sm:col-span-4">
+            <dt className="text-xs font-medium" style={{ color: 'var(--color-ink-muted)' }}>Account ID</dt>
+            <dd className="mt-1 flex items-center gap-2">
+              <Mono>{account.id}</Mono>
+              <CopyButton value={account.id} label="Copy" />
+            </dd>
           </div>
         </dl>
-      </div>
+      </SectionCard>
 
-      <div className="card mt-6 p-6">
-        <h2 className="text-sm font-semibold">Data export (GDPR)</h2>
-        <p className="mt-1 text-sm" style={{ color: 'var(--color-ink-muted)' }}>
-          Download everything we hold about your account — apps, deployments, usage, domains, crons, keys, and sealed secret envelopes.
-        </p>
-        <button className="btn btn-secondary mt-4" onClick={doExport} disabled={busy === 'export'}>
-          {busy === 'export' ? 'Preparing…' : 'Export account data'}
-        </button>
-      </div>
+      <SectionCard className="mt-4" title="Connected sources">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5">
+          <div className="flex items-center gap-3">
+            <span
+              className="flex h-9 w-9 items-center justify-center rounded-lg"
+              style={{ background: 'var(--color-surface-subtle)' }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-ink)' }}>
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.72-4.04-1.6-4.04-1.6-.55-1.39-1.34-1.76-1.34-1.76-1.08-.75.08-.73.08-.73 1.2.09 1.83 1.24 1.83 1.24 1.07 1.83 2.8 1.3 3.49.99.1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 016 0c2.3-1.55 3.3-1.23 3.3-1.23.64 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58A12 12 0 0024 12c0-6.63-5.37-12-12-12z" />
+              </svg>
+            </span>
+            <div>
+              <div className="text-sm font-medium">GitHub</div>
+              <div className="text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                {account.github_install_id ? `App installed · id ${account.github_install_id}` : 'Not connected — deploy from the CLI instead'}
+              </div>
+            </div>
+          </div>
+          <span className={`badge ${account.github_install_id ? 'badge-brand' : 'badge-muted'}`}>
+            {account.github_install_id ? 'Connected' : 'Not connected'}
+          </span>
+        </div>
+      </SectionCard>
 
-      <div className="card mt-6 p-6" style={{ borderColor: '#fecaca' }}>
+      <SectionCard className="mt-4" title="Recent account activity">
+        <AsyncBoundary
+          state={events}
+          isEmpty={(d) => d.events.length === 0}
+          skeleton={<SkeletonTable cols={3} rows={4} />}
+          empty={<EmptyState icon="bell" title="No activity recorded" />}
+        >
+          {(d) => (
+            <table className="dtable">
+              <thead><tr><th>Event</th><th>Actor</th><th>When</th></tr></thead>
+              <tbody>
+                {d.events.map((e) => (
+                  <tr key={e.id}>
+                    <td className="cell-primary">{KIND_LABEL[e.kind] ?? e.kind}</td>
+                    <td>{e.actor}</td>
+                    <td>{relativeTime(e.at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </AsyncBoundary>
+      </SectionCard>
+
+      <SectionCard className="mt-4" title="Data export (GDPR)">
+        <div className="px-5 py-5">
+          <p className="text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+            Download everything held about your account — workflows, deployments, usage, domains, cron jobs, keys, and
+            sealed secret envelopes.
+          </p>
+          <button className="btn btn-secondary mt-4" onClick={doExport} disabled={busy === 'export'}>
+            <Icon name="deployments" size={14} style={{ transform: 'rotate(180deg)' }} />
+            {busy === 'export' ? 'Preparing…' : 'Export account data'}
+          </button>
+        </div>
+      </SectionCard>
+
+      <div className="card mt-4 p-5" style={{ borderColor: '#f3d3d3' }}>
         <h2 className="text-sm font-semibold" style={{ color: 'var(--color-danger)' }}>Danger zone</h2>
         {pending ? (
           <>
             <p className="mt-1 text-sm" style={{ color: 'var(--color-ink-soft)' }}>
-              Your account is scheduled for deletion (30-day grace period). You can restore it any time before then.
+              Your account is scheduled for deletion with a 30-day grace period. You can restore it any time before then.
             </p>
             <button
               className="btn btn-primary mt-4"
@@ -98,9 +179,12 @@ export default function SettingsPage() {
         ) : (
           <>
             <p className="mt-1 text-sm" style={{ color: 'var(--color-ink-soft)' }}>
-              Staging deletion moves your account to a <Mono>deleted_pending</Mono> state for 30 days, after which it is permanently purged.
+              Staging deletion moves your account to <Mono>deleted_pending</Mono> for 30 days, after which everything is
+              permanently purged.
             </p>
-            <button className="btn btn-danger mt-4" onClick={() => setConfirmDelete(true)}>Stage account deletion</button>
+            <button className="btn btn-danger mt-4" onClick={() => setConfirmDelete(true)}>
+              Stage account deletion
+            </button>
           </>
         )}
       </div>
@@ -134,9 +218,19 @@ export default function SettingsPage() {
         }
       >
         <p className="text-sm" style={{ color: 'var(--color-ink-soft)' }}>
-          Your account enters a 30-day grace period. During that time you can restore or export your data. After 30 days everything is permanently deleted.
+          Your account enters a 30-day grace period. During that time you can restore it or export your data. After 30
+          days every workflow, snapshot and secret is permanently deleted.
         </p>
       </Modal>
+    </div>
+  );
+}
+
+function Field({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium" style={{ color: 'var(--color-ink-muted)' }}>{k}</dt>
+      <dd className="mt-1 font-medium" style={{ color: 'var(--color-ink)' }}>{v}</dd>
     </div>
   );
 }

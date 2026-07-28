@@ -141,6 +141,58 @@ export interface AppSecretList {
   count: number;
 }
 
+/** Per-app usage row for one billing month (GET /v1/usage). */
+export interface AppUsage {
+  month?: string;
+  app_id: string;
+  mb_seconds: number;
+  requests: number;
+  included_gb_hours: number;
+  used_gb_hours?: number;
+}
+
+export type InvocationSource = 'async_invoke' | 'queue' | 'delayed_task' | 'cron';
+export type InvocationState = 'pending' | 'dispatching' | 'completed' | 'failed' | 'cancelled';
+
+/** A row from the invocations table — the console's only per-request signal. */
+export interface Invocation {
+  id: string;
+  app_id: string;
+  account_id: string;
+  source: InvocationSource;
+  state: InvocationState;
+  method?: string;
+  path?: string;
+  scheduled_at?: string | null;
+  due_at?: string;
+  created_at: string;
+  completed_at?: string | null;
+  instance_id?: string | null;
+  last_error?: string | null;
+  attempts?: number;
+  received_at?: string | null;
+  lease_expires_at?: string | null;
+}
+
+export interface InvocationList {
+  invocations: Invocation[];
+}
+
+/** Security-event timeline row (GET /v1/audit-events). */
+export interface AuditEvent {
+  id: string;
+  at: string;
+  actor: string;
+  kind: string;
+  subject?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface AuditEventList {
+  events: AuditEvent[];
+  limit: number;
+}
+
 /** RFC 7807 problem envelope returned by the backend on errors. */
 export interface Problem {
   type?: string;
@@ -307,6 +359,59 @@ export const listDeployments = () => request<DeploymentList>('/v1/deployments', 
 
 export const getDeployment = (id: string) => request<Deployment>(`/v1/deployments/${id}`);
 
+export const listAppDeployments = (slug: string) =>
+  request<DeploymentList>(`/v1/apps/${slug}/deployments`, { cache: 'no-store' });
+
+/* ───────────────────────────── Invocations ─────────────────────────────── */
+
+/**
+ * Newest-first page of invocations. This is the only per-request telemetry the
+ * control plane exposes, so it backs the Overview charts, the queue/cron run
+ * histories and the Metrics page. `limit` is capped server-side at 200.
+ */
+export const listInvocations = (limit = 100, before?: string) => {
+  const q = new URLSearchParams({ limit: String(Math.min(limit, 200)) });
+  if (before) q.set('before', before);
+  return request<InvocationList>(`/v1/invocations?${q}`, { cache: 'no-store' });
+};
+
+export const getInvocation = (id: string) => request<Invocation>(`/v1/invocations/${id}`);
+
+/* ────────────────────────── Queues & delayed tasks ─────────────────────── */
+
+export const queueSend = (slug: string, payload: Record<string, unknown>) =>
+  request<Invocation>(`/v1/apps/${slug}/queues/send`, { method: 'POST', body: JSON.stringify({ payload }) });
+
+export const createDelayedTask = (slug: string, scheduledAt: string, payload: Record<string, unknown>) =>
+  request<Invocation>(`/v1/apps/${slug}/delayed-tasks`, {
+    method: 'POST',
+    body: JSON.stringify({ scheduled_at: scheduledAt, payload }),
+  });
+
+export const cancelDelayedTask = (id: string) =>
+  request<void>(`/v1/delayed-tasks/${id}`, { method: 'DELETE' }, 'none');
+
+/* ─────────────────────────── Audit / activity ──────────────────────────── */
+
+export const listAuditEvents = (limit = 50, kindPrefix?: string) => {
+  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
+  if (kindPrefix) q.set('kind_prefix', kindPrefix);
+  return request<AuditEventList>(`/v1/audit-events?${q}`, { cache: 'no-store' });
+};
+
+/* ──────────────────────────────── Logs ─────────────────────────────────── */
+
+/**
+ * SSE endpoints. These stream `text/event-stream`, so callers attach an
+ * EventSource rather than going through `request()`. Same-origin, so the
+ * session cookie rides along without extra config.
+ */
+export const appLogsUrl = (slug: string, follow = true) =>
+  `/v1/apps/${slug}/logs?follow=${follow ? 1 : 0}`;
+
+export const deploymentLogsUrl = (id: string, follow = true) =>
+  `/v1/deployments/${id}/logs?follow=${follow ? 1 : 0}`;
+
 /* ─────────────────────────── Per-app secrets ───────────────────────────── */
 
 export const listSecrets = (slug: string) => request<AppSecretList>(`/v1/apps/${slug}/secrets`);
@@ -359,4 +464,9 @@ export const deleteKey = (id: string) =>
 
 /* ────────────────────────────────── Usage ──────────────────────────────── */
 
-export const getUsageSummary = () => request<UsageSummary>('/v1/usage/summary', { cache: 'no-store' });
+export const getUsageSummary = (month?: string) =>
+  request<UsageSummary>(`/v1/usage/summary${month ? `?month=${month}` : ''}`, { cache: 'no-store' });
+
+/** Per-app rows for a billing month (YYYY-MM); defaults to the current month. */
+export const getUsageByApp = (month?: string) =>
+  request<AppUsage[]>(`/v1/usage${month ? `?month=${month}` : ''}`, { cache: 'no-store' });
