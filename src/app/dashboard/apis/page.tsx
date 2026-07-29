@@ -10,13 +10,13 @@
 
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { listApps, listDomains, listInvocations } from '@/lib/api';
+import { listApps, listDomains, getAppsMetrics } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, SearchInput, FilterSelect, CopyButton } from '@/components/ui/bits';
 import { TableFooter } from '@/components/ui/Panels';
 import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
-import { totals, compact, ms } from '@/lib/series';
+import { compact, ms } from '@/lib/series';
 
 interface Endpoint {
   key: string;
@@ -26,24 +26,23 @@ interface Endpoint {
   kind: 'Platform' | 'Custom domain';
   verified: boolean;
   status: string;
-  invocations: number;
-  avgMs: number | null;
+  requests: number | null;
+  p95: number | null;
+  errorRate: number | null;
 }
 
 export default function ApisPage() {
   const apps = useAsync(listApps, []);
   const domains = useAsync(listDomains, []);
-  const invocations = useAsync(() => listInvocations(200), []);
+  const metrics = useAsync(() => getAppsMetrics('24h'), []);
 
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState('all');
 
-  const rows = useMemo(() => invocations.data?.invocations ?? [], [invocations.data]);
-
   const endpoints = useMemo<Endpoint[]>(() => {
     const list: Endpoint[] = [];
     for (const app of apps.data ?? []) {
-      const stats = totals(rows.filter((r) => r.app_id === app.id));
+      const m = metrics.data?.apps?.[app.slug] ?? null;
       let host = app.url;
       try {
         host = new URL(app.url).host;
@@ -58,8 +57,9 @@ export default function ApisPage() {
         kind: 'Platform',
         verified: true,
         status: app.status,
-        invocations: stats.total,
-        avgMs: stats.avgCompletionMs,
+        requests: m ? m.request_count : null,
+        p95: m ? m.latency_p95_ms : null,
+        errorRate: m ? m.error_rate_pct : null,
       });
 
       for (const d of (domains.data ?? []).filter((x) => x.app_id === app.id)) {
@@ -71,13 +71,16 @@ export default function ApisPage() {
           kind: 'Custom domain',
           verified: d.verified,
           status: d.verified ? app.status : 'pending verification',
-          invocations: stats.total,
-          avgMs: stats.avgCompletionMs,
+          // Metrics are labelled by app, not by hostname, so a custom domain
+          // shows its workflow's totals rather than traffic for that host.
+          requests: m ? m.request_count : null,
+          p95: m ? m.latency_p95_ms : null,
+          errorRate: m ? m.error_rate_pct : null,
         });
       }
     }
     return list;
-  }, [apps.data, domains.data, rows]);
+  }, [apps.data, domains.data, metrics.data]);
 
   const filtered = endpoints.filter((e) => {
     if (query && !(`${e.host} ${e.slug}`.toLowerCase().includes(query.toLowerCase()))) return false;
@@ -140,8 +143,9 @@ export default function ApisPage() {
                       <th>Workflow</th>
                       <th>Type</th>
                       <th>Status</th>
-                      <th>Invocations</th>
-                      <th>Avg completion</th>
+                      <th>Requests (24h)</th>
+                      <th>p95</th>
+                      <th>Error rate</th>
                       <th />
                     </tr>
                   </thead>
@@ -173,8 +177,11 @@ export default function ApisPage() {
                             <span className="badge badge-warn">Pending DNS</span>
                           )}
                         </td>
-                        <td>{compact(e.invocations)}</td>
-                        <td>{ms(e.avgMs)}</td>
+                        <td>{e.requests != null ? compact(e.requests) : '—'}</td>
+                        <td>{ms(e.p95)}</td>
+                        <td style={e.errorRate ? { color: 'var(--color-danger)' } : undefined}>
+                          {e.errorRate != null ? `${e.errorRate.toFixed(2)}%` : '—'}
+                        </td>
                         <td className="text-right">
                           <CopyButton value={e.url} label="Copy" />
                         </td>
@@ -190,8 +197,8 @@ export default function ApisPage() {
       </div>
 
       <p className="mt-3 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-        Invocation counts cover dispatched work (queue, cron, async). Synchronous HTTPS traffic through the gateway
-        isn&apos;t recorded per-request — see Usage for metered request totals.
+        Request figures are measured at the gateway over the last 24 hours and are labelled per workflow, so a custom
+        domain reports the totals for the workflow behind it rather than for that hostname alone.
       </p>
     </div>
   );

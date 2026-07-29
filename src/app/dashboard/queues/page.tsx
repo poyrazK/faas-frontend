@@ -1,72 +1,94 @@
 'use client';
 
 /* ==========================================================================
-   Queue Jobs — the queue- and delayed-task-sourced rows of /v1/invocations.
+   Queue Jobs — real queue introspection (#394).
 
-   The control plane has no "list queue depth" endpoint; depth is inferred
-   from rows that haven't reached a terminal state, which is exactly what the
-   drain still owes work on. Cancelling a pending row uses the real
-   DELETE /v1/delayed-tasks/{id}.
+   Depth, in-flight count and oldest-pending age come from
+   /v1/apps/{slug}/queues/state. Pending rows come from `peek`, which
+   acquires no lease and does not increment `attempts` — so opening this page
+   cannot perturb the queue. Exhausted rows come from `dead_letter`.
+
+   The endpoints are per-app, so a workflow has to be selected first; there is
+   no account-wide queue view.
    ========================================================================== */
 
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
-import { listApps, listInvocations, queueSend, cancelDelayedTask, ApiError } from '@/lib/api';
+import {
+  listApps, getQueueState, peekQueue, listDeadLetter, queueSend, cancelDelayedTask, ApiError,
+} from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { PageHeader, Mono, StatusBadge, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
+import { PageHeader, Mono, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { StatTile, TableFooter } from '@/components/ui/Panels';
-import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
+import { AsyncBoundary, EmptyState, SkeletonTable, SkeletonBlock } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
-import { totals, compact, ms } from '@/lib/series';
+import { compact } from '@/lib/series';
 
-const PER_PAGE = 15;
+type Tab = 'Pending' | 'Dead letter';
+
+/** Seconds → a short human age for the oldest-pending tile. */
+function age(seconds: number | null | undefined): string {
+  if (seconds == null) return '—';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+  return `${Math.round(seconds / 86400)}d`;
+}
+
+/** Payloads arrive as a JSON string straight from the jsonb column. */
+function prettyPayload(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw));
+  } catch {
+    return raw;
+  }
+}
 
 export default function QueuesPage() {
   const apps = useAsync(listApps, []);
-  const invocations = useAsync(() => listInvocations(200), []);
   const toast = useToast();
 
+  const [picked, setPicked] = useState('');
+  const slug = picked || apps.data?.[0]?.slug || '';
+
+  const [tab, setTab] = useState<Tab>('Pending');
   const [query, setQuery] = useState('');
-  const [state, setState] = useState('all');
-  const [page, setPage] = useState(1);
   const [sendOpen, setSendOpen] = useState(false);
-  const [sendApp, setSendApp] = useState('');
   const [payload, setPayload] = useState('{\n  "hello": "world"\n}');
   const [busy, setBusy] = useState(false);
 
-  const queued = useMemo(
-    () => (invocations.data?.invocations ?? []).filter((r) => r.source === 'queue' || r.source === 'delayed_task'),
-    [invocations.data],
+  const state = useAsync(() => (slug ? getQueueState(slug) : Promise.resolve(null)), [slug]);
+  const pending = useAsync(() => (slug ? peekQueue(slug, 50) : Promise.resolve(null)), [slug]);
+  const dead = useAsync(() => (slug ? listDeadLetter(slug, 50) : Promise.resolve(null)), [slug]);
+
+  const pendingMsgs = (pending.data?.messages ?? []).filter((m) =>
+    query ? `${m.id} ${m.payload}`.toLowerCase().includes(query.toLowerCase()) : true,
+  );
+  const deadMsgs = (dead.data?.messages ?? []).filter((m) =>
+    query ? `${m.id} ${m.payload} ${m.last_error}`.toLowerCase().includes(query.toLowerCase()) : true,
   );
 
-  const stats = useMemo(() => totals(queued), [queued]);
-  const appSlug = (id: string) => apps.data?.find((a) => a.id === id)?.slug;
+  const s = state.data;
+  const capPct = s && s.plan_cap > 0 ? Math.min(100, (s.depth / s.plan_cap) * 100) : 0;
 
-  const filtered = queued.filter((r) => {
-    const slug = appSlug(r.app_id) ?? r.app_id;
-    if (query && !`${slug} ${r.path ?? ''}`.toLowerCase().includes(query.toLowerCase())) return false;
-    if (state !== 'all' && r.state !== state) return false;
-    return true;
-  });
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const current = Math.min(page, pageCount);
-  const visible = filtered.slice((current - 1) * PER_PAGE, current * PER_PAGE);
+  function reloadAll() {
+    state.reload();
+    pending.reload();
+    dead.reload();
+  }
 
   async function send(e: React.FormEvent) {
     e.preventDefault();
-    const slug = apps.data?.find((a) => a.id === sendApp)?.slug;
     if (!slug) return;
     setBusy(true);
     try {
-      const body = JSON.parse(payload) as Record<string, unknown>;
-      await queueSend(slug, body);
+      await queueSend(slug, JSON.parse(payload) as Record<string, unknown>);
       toast.success(`Message queued to ${slug}.`);
       setSendOpen(false);
-      invocations.reload();
+      reloadAll();
     } catch (err) {
       if (err instanceof SyntaxError) toast.error('Payload must be valid JSON.');
       else toast.error(err instanceof ApiError ? err.message : 'Could not queue the message.');
@@ -75,155 +97,226 @@ export default function QueuesPage() {
     }
   }
 
+  if (apps.data && apps.data.length === 0) {
+    return (
+      <div>
+        <PageHeader title="Queue Jobs" subtitle="Process jobs in the background with at-least-once delivery." />
+        <div className="card">
+          <EmptyState
+            icon="queues"
+            title="No workflows yet"
+            hint="Queues belong to a workflow. Create one to start pushing background work."
+            action={<Link href="/dashboard/workflows" className="btn btn-primary">Create a workflow</Link>}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader
         title="Queue Jobs"
         subtitle="Process jobs in the background with at-least-once delivery."
         actions={
-          <button className="btn btn-primary" onClick={() => setSendOpen(true)} disabled={!apps.data?.length}>
-            <Icon name="plus" size={14} /> Send message
-          </button>
+          <>
+            <FilterSelect
+              value={slug}
+              onChange={setPicked}
+              options={(apps.data ?? []).map((a) => ({ value: a.slug, label: a.slug }))}
+            />
+            <button className="btn-icon btn-icon-bordered" onClick={reloadAll} aria-label="Refresh">
+              <Icon name="refresh" size={16} />
+            </button>
+            <button className="btn btn-primary" onClick={() => setSendOpen(true)} disabled={!slug}>
+              <Icon name="plus" size={14} /> Send message
+            </button>
+          </>
         }
       />
 
-      <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Messages seen" value={compact(stats.total)} sub="Newest 200 dispatches" />
-        <StatTile label="In flight" value={compact(stats.pending)} sub="Pending or dispatching" />
-        <StatTile label="Failed" value={compact(stats.failed)} sub={`${stats.errorRatePct.toFixed(2)}% of finished`} />
-        <StatTile label="Avg completion" value={ms(stats.avgCompletionMs)} sub={stats.p95CompletionMs != null ? `p95 ${ms(stats.p95CompletionMs)}` : undefined} />
-      </div>
+      <AsyncBoundary state={state} skeleton={<SkeletonBlock height={120} />}>
+        {() =>
+          !s ? (
+            <SkeletonBlock height={120} />
+          ) : (
+            <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatTile
+                label="Queue depth"
+                value={compact(s.depth)}
+                sub={`of ${compact(s.plan_cap)} allowed on ${s.plan}`}
+                color={capPct > 80 ? 'var(--color-chart-alt)' : undefined}
+              />
+              <StatTile label="In flight" value={compact(s.in_flight)} sub="holding a dispatch lease" />
+              <StatTile
+                label="Oldest pending"
+                value={age(s.oldest_pending_age_seconds)}
+                sub={s.oldest_pending_at ? relativeTime(s.oldest_pending_at) : 'queue is empty'}
+              />
+              <StatTile
+                label="Dead letter"
+                value={compact(dead.data?.messages.length ?? 0)}
+                color="var(--color-chart-alt)"
+                sub="retry budget exhausted"
+              />
+            </div>
+          )
+        }
+      </AsyncBoundary>
+
+      {s && capPct > 80 && (
+        <div
+          className="mb-4 flex items-start gap-3 rounded-lg px-4 py-3"
+          style={{ background: '#fdf6e7', border: '1px solid #f2e2bd' }}
+        >
+          <Icon name="alerts" size={16} style={{ color: '#a1650b', marginTop: 2, flex: 'none' }} />
+          <p className="text-sm" style={{ color: '#7c4f08' }}>
+            The queue is at {capPct.toFixed(0)}% of the {s.plan} plan cap ({compact(s.depth)} of {compact(s.plan_cap)}).
+            Sends are rejected once the cap is reached.
+          </p>
+        </div>
+      )}
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--color-line)' }}>
-          <SearchInput value={query} onChange={(v) => { setQuery(v); setPage(1); }} placeholder="Search queue jobs…" className="w-full max-w-xs" />
-          <div className="ml-auto">
-            <FilterSelect
-              value={state}
-              onChange={(v) => { setState(v); setPage(1); }}
-              options={[
-                { value: 'all', label: 'All Status' },
-                { value: 'pending', label: 'Pending' },
-                { value: 'dispatching', label: 'Dispatching' },
-                { value: 'completed', label: 'Completed' },
-                { value: 'failed', label: 'Failed' },
-                { value: 'cancelled', label: 'Cancelled' },
-              ]}
-            />
+          <div className="seg">
+            {(['Pending', 'Dead letter'] as Tab[]).map((t) => (
+              <button key={t} data-active={tab === t} onClick={() => setTab(t)}>
+                {t}
+                {t === 'Dead letter' && (dead.data?.messages.length ?? 0) > 0 ? ` (${dead.data!.messages.length})` : ''}
+              </button>
+            ))}
           </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search messages…" className="ml-auto w-full max-w-xs" />
         </div>
 
-        <AsyncBoundary
-          state={invocations}
-          isEmpty={() => filtered.length === 0}
-          skeleton={<SkeletonTable cols={6} rows={5} />}
-          empty={
-            query || state !== 'all' ? (
-              <EmptyState icon="search" title="No matches" hint="No queue job matches these filters." />
-            ) : (
-              <EmptyState
-                icon="queues"
-                title="No queue jobs"
-                hint="Send a message to a workflow's queue and it appears here until the drain acks it."
-                action={
-                  <button className="btn btn-primary" onClick={() => setSendOpen(true)} disabled={!apps.data?.length}>
-                    Send a message
-                  </button>
-                }
-              />
-            )
-          }
-        >
-          {() => (
-            <>
-              <div className="overflow-x-auto">
-                <table className="dtable">
-                  <thead>
-                    <tr>
-                      <th>Job</th>
-                      <th>Workflow</th>
-                      <th>Kind</th>
-                      <th>Status</th>
-                      <th>Attempts</th>
-                      <th>Queued</th>
-                      <th>Completed</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visible.map((r) => {
-                      const slug = appSlug(r.app_id);
-                      const cancellable = r.source === 'delayed_task' && (r.state === 'pending' || r.state === 'dispatching');
-                      return (
-                        <tr key={r.id}>
-                          <td className="cell-primary"><Mono>{r.id.slice(0, 12)}</Mono></td>
-                          <td>
-                            {slug ? (
-                              <Link href={`/dashboard/workflows/${slug}`} style={{ color: 'var(--color-brand)' }}>{slug}</Link>
-                            ) : (
-                              <Mono>{r.app_id.slice(0, 8)}</Mono>
-                            )}
+        {tab === 'Pending' ? (
+          <AsyncBoundary
+            state={pending}
+            isEmpty={() => pendingMsgs.length === 0}
+            skeleton={<SkeletonTable cols={4} rows={4} />}
+            empty={
+              query ? (
+                <EmptyState icon="search" title="No matches" hint="No pending message matches that search." />
+              ) : (
+                <EmptyState
+                  icon="queues"
+                  title="Queue is empty"
+                  hint={`Nothing is waiting on ${slug}. Messages appear here between send and ack.`}
+                  action={<button className="btn btn-primary" onClick={() => setSendOpen(true)}>Send a message</button>}
+                />
+              )
+            }
+          >
+            {() => (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="dtable">
+                    <thead>
+                      <tr><th>Message</th><th>Payload</th><th>Attempts</th><th>Queued</th><th /></tr>
+                    </thead>
+                    <tbody>
+                      {pendingMsgs.map((m) => (
+                        <tr key={m.id}>
+                          <td className="cell-primary"><Mono>{m.id.slice(0, 12)}</Mono></td>
+                          <td className="mono max-w-[340px] truncate text-xs" title={m.payload}>
+                            {prettyPayload(m.payload)}
                           </td>
-                          <td>{r.source === 'queue' ? 'Queue' : 'Delayed task'}</td>
                           <td>
-                            <StatusBadge state={r.state} />
-                            {r.last_error && (
-                              <div className="mt-1 max-w-[240px] truncate text-xs" style={{ color: 'var(--color-danger)' }} title={r.last_error}>
-                                {r.last_error}
+                            {m.attempts}
+                            {m.last_error && (
+                              <div className="mt-1 max-w-[220px] truncate text-xs" style={{ color: 'var(--color-danger)' }} title={m.last_error}>
+                                {m.last_error}
                               </div>
                             )}
                           </td>
-                          <td>{r.attempts ?? 0}</td>
-                          <td>{relativeTime(r.created_at)}</td>
-                          <td>{relativeTime(r.completed_at)}</td>
+                          <td>{relativeTime(m.created_at)}</td>
                           <td>
-                            {cancellable && (
-                              <RowMenu>
-                                <RowMenuItem
-                                  danger
-                                  onClick={async () => {
-                                    try {
-                                      await cancelDelayedTask(r.id);
-                                      toast.success('Task cancelled.');
-                                      invocations.reload();
-                                    } catch (err) {
-                                      toast.error(err instanceof ApiError ? err.message : 'Cancel failed.');
-                                    }
-                                  }}
-                                >
-                                  Cancel task
-                                </RowMenuItem>
-                              </RowMenu>
-                            )}
+                            <RowMenu>
+                              <RowMenuItem
+                                danger
+                                onClick={async () => {
+                                  try {
+                                    await cancelDelayedTask(m.id);
+                                    toast.success('Message cancelled.');
+                                    reloadAll();
+                                  } catch (err) {
+                                    toast.error(err instanceof ApiError ? err.message : 'Cancel failed.');
+                                  }
+                                }}
+                              >
+                                Cancel message
+                              </RowMenuItem>
+                            </RowMenu>
                           </td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <TableFooter
-                from={(current - 1) * PER_PAGE + 1}
-                to={(current - 1) * PER_PAGE + visible.length}
-                total={filtered.length}
-                noun="queue jobs"
-                page={current}
-                pageCount={pageCount}
-                onPage={setPage}
-              />
-            </>
-          )}
-        </AsyncBoundary>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <TableFooter from={1} to={pendingMsgs.length} total={pendingMsgs.length} noun="pending messages" />
+              </>
+            )}
+          </AsyncBoundary>
+        ) : (
+          <AsyncBoundary
+            state={dead}
+            isEmpty={() => deadMsgs.length === 0}
+            skeleton={<SkeletonTable cols={4} rows={3} />}
+            empty={
+              query ? (
+                <EmptyState icon="search" title="No matches" hint="No dead-letter message matches that search." />
+              ) : (
+                <EmptyState
+                  icon="check"
+                  title="Nothing in the dead letter queue"
+                  hint={`No message on ${slug} has exhausted its retry budget.`}
+                />
+              )
+            }
+          >
+            {() => (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="dtable">
+                    <thead>
+                      <tr><th>Message</th><th>Last error</th><th>Payload</th><th>Attempts</th><th>Failed</th></tr>
+                    </thead>
+                    <tbody>
+                      {deadMsgs.map((m) => (
+                        <tr key={m.id}>
+                          <td className="cell-primary"><Mono>{m.id.slice(0, 12)}</Mono></td>
+                          <td className="max-w-[260px]" style={{ color: 'var(--color-danger)' }}>{m.last_error}</td>
+                          <td className="mono max-w-[240px] truncate text-xs" title={m.payload}>
+                            {prettyPayload(m.payload)}
+                          </td>
+                          <td>{m.attempts}</td>
+                          <td>{relativeTime(m.failed_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <TableFooter from={1} to={deadMsgs.length} total={deadMsgs.length} noun="dead-letter messages" />
+              </>
+            )}
+          </AsyncBoundary>
+        )}
       </div>
+
+      <p className="mt-4 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+        Viewing this page does not consume anything: pending messages are read with a peek that acquires no lease and
+        leaves the attempt count untouched.
+      </p>
 
       <Modal
         open={sendOpen}
         onClose={() => setSendOpen(false)}
-        title="Send queue message"
+        title={`Send message to ${slug}`}
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setSendOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" form="send-queue" type="submit" disabled={busy || !sendApp}>
+            <button className="btn btn-primary" form="send-queue" type="submit" disabled={busy}>
               {busy ? 'Sending…' : 'Send message'}
             </button>
           </>
@@ -231,20 +324,13 @@ export default function QueuesPage() {
       >
         <form id="send-queue" onSubmit={send} className="space-y-4">
           <div>
-            <label className="label">Workflow</label>
-            <select className="field" value={sendApp} onChange={(e) => setSendApp(e.target.value)} required>
-              <option value="">Select a workflow…</option>
-              {(apps.data ?? []).map((a) => (
-                <option key={a.id} value={a.id}>{a.slug}</option>
-              ))}
-            </select>
-          </div>
-          <div>
             <label className="label">Payload (JSON)</label>
-            <textarea className="field mono" rows={6} value={payload} onChange={(e) => setPayload(e.target.value)} required />
-            <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-              Counted against your plan&apos;s max queue depth.
-            </p>
+            <textarea className="field mono" rows={7} value={payload} onChange={(e) => setPayload(e.target.value)} required />
+            {s && (
+              <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                Queue currently holds {compact(s.depth)} of {compact(s.plan_cap)} allowed on the {s.plan} plan.
+              </p>
+            )}
           </div>
         </form>
       </Modal>

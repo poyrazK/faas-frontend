@@ -53,14 +53,14 @@ export const NAV: NavGroup[] = [
       { href: '/dashboard/logs', label: 'Logs', icon: 'logs' },
       { href: '/dashboard/metrics', label: 'Metrics', icon: 'metrics' },
       { href: '/dashboard/traces', label: 'Traces', icon: 'traces', unbacked: true },
-      { href: '/dashboard/alerts', label: 'Alerts', icon: 'alerts', unbacked: true },
+      { href: '/dashboard/alerts', label: 'Alerts', icon: 'alerts' },
     ],
   },
   {
     label: 'Billing',
     items: [
       { href: '/dashboard/usage', label: 'Usage', icon: 'usage' },
-      { href: '/dashboard/invoices', label: 'Invoices', icon: 'invoices', unbacked: true },
+      { href: '/dashboard/invoices', label: 'Invoices', icon: 'invoices' },
       { href: '/dashboard/plans', label: 'Plans', icon: 'plans' },
     ],
   },

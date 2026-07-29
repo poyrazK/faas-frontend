@@ -4,7 +4,10 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { exportAccount, deleteAccount, restoreAccount, listAuditEvents, ApiError } from '@/lib/api';
+import {
+  exportAccount, deleteAccount, restoreAccount, listAuditEvents,
+  listSessions, revokeSession, revokeAllSessions, ApiError,
+} from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, CopyButton } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
@@ -29,6 +32,7 @@ const KIND_LABEL: Record<string, string> = {
 export default function SettingsPage() {
   const { account, refresh, signOut } = useAuth();
   const events = useAsync(() => listAuditEvents(25), []);
+  const sessions = useAsync(listSessions, []);
   const toast = useToast();
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -112,6 +116,83 @@ export default function SettingsPage() {
             {account.github_install_id ? 'Connected' : 'Not connected'}
           </span>
         </div>
+      </SectionCard>
+
+      <SectionCard
+        className="mt-4"
+        title="Active sessions"
+        action={
+          <button
+            className="btn btn-secondary btn-sm"
+            disabled={busy === 'revoke-all'}
+            onClick={async () => {
+              if (!confirm('Sign out of every device? This ends this session too, so you will be signed out here.')) return;
+              setBusy('revoke-all');
+              try {
+                await revokeAllSessions();
+                toast.success('All sessions revoked.');
+                // revoke_all includes the caller's own session, so the cookie
+                // is dead — go to login rather than leaving a broken console.
+                await signOut();
+                router.replace('/login');
+              } catch (err) {
+                toast.error(err instanceof ApiError ? err.message : 'Revoke failed.');
+                setBusy(null);
+              }
+            }}
+          >
+            {busy === 'revoke-all' ? 'Revoking…' : 'Sign out everywhere'}
+          </button>
+        }
+      >
+        <AsyncBoundary
+          state={sessions}
+          isEmpty={(d) => d.sessions.length === 0}
+          skeleton={<SkeletonTable cols={4} rows={3} />}
+          empty={<EmptyState icon="user" title="No active sessions" />}
+        >
+          {(d) => (
+            <table className="dtable">
+              <thead>
+                <tr><th>Device</th><th>IP address</th><th>Signed in</th><th>Last seen</th><th /></tr>
+              </thead>
+              <tbody>
+                {d.sessions.map((s) => (
+                  <tr key={s.id}>
+                    <td className="cell-primary">
+                      <div className="max-w-[320px] truncate" title={s.issued_ua || undefined}>
+                        {s.issued_ua || 'Unknown device'}
+                      </div>
+                      {s.current_session && <span className="badge badge-brand mt-1">This device</span>}
+                    </td>
+                    <td><Mono>{s.issued_ip || '—'}</Mono></td>
+                    <td>{relativeTime(s.issued_at)}</td>
+                    <td>{relativeTime(s.last_seen_at)}</td>
+                    <td className="text-right">
+                      {!s.current_session && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: 'var(--color-danger)' }}
+                          onClick={async () => {
+                            try {
+                              await revokeSession(s.id);
+                              toast.success('Session revoked.');
+                              sessions.reload();
+                            } catch (err) {
+                              toast.error(err instanceof ApiError ? err.message : 'Revoke failed.');
+                            }
+                          }}
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </AsyncBoundary>
       </SectionCard>
 
       <SectionCard className="mt-4" title="Recent account activity">

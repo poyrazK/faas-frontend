@@ -3,14 +3,14 @@
 /* ==========================================================================
    Workers — every live Firecracker microVM across the account.
 
-   There's no account-wide instance endpoint, so this fans out over
-   /v1/apps/{slug}/instances. Per-app failures are kept rather than thrown:
-   one workflow 404-ing shouldn't blank the whole page.
+   Reads /v1/instances (#393), which returns the whole account in one call.
+   This used to fan out over /v1/apps/{slug}/instances — one request per
+   workflow, with a partial-failure footnote when any of them 404'd.
    ========================================================================== */
 
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { listApps, listInstances, parkApp, wakeApp, type Instance, ApiError } from '@/lib/api';
+import { listApps, listAllInstances, parkApp, wakeApp, type Instance, ApiError } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, StatusBadge, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { StatTile, TableFooter } from '@/components/ui/Panels';
@@ -24,23 +24,22 @@ interface WorkerRow {
   slug: string;
 }
 
-async function loadWorkers(): Promise<{ workers: WorkerRow[]; appCount: number; failed: string[] }> {
-  const apps = await listApps();
-  const failed: string[] = [];
+/**
+ * One account-scoped read, joined to the app list so each instance can show
+ * its workflow slug. Instances carry only `app_id` on the wire.
+ */
+async function loadWorkers(): Promise<{ workers: WorkerRow[]; appCount: number; more: boolean }> {
+  const [apps, page] = await Promise.all([listApps(), listAllInstances(100)]);
+  const slugById = new Map(apps.map((a) => [a.id, a.slug]));
 
-  const results = await Promise.all(
-    apps.map(async (a) => {
-      try {
-        const list = await listInstances(a.slug);
-        return list.map((instance) => ({ instance, slug: a.slug }));
-      } catch {
-        failed.push(a.slug);
-        return [];
-      }
-    }),
-  );
-
-  return { workers: results.flat(), appCount: apps.length, failed };
+  return {
+    workers: page.instances.map((instance) => ({
+      instance,
+      slug: slugById.get(instance.app_id) ?? instance.app_id.slice(0, 8),
+    })),
+    appCount: apps.length,
+    more: !!page.next_before,
+  };
 }
 
 export default function WorkersPage() {
@@ -189,9 +188,9 @@ export default function WorkersPage() {
         </AsyncBoundary>
       </div>
 
-      {data.data && data.data.failed.length > 0 && (
-        <p className="mt-3 text-xs" style={{ color: 'var(--color-warn)' }}>
-          Could not read instances for: {data.data.failed.join(', ')}.
+      {data.data?.more && (
+        <p className="mt-3 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+          Showing the newest 100 instances. Older ones exist beyond this page.
         </p>
       )}
     </div>

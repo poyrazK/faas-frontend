@@ -178,6 +178,228 @@ export interface InvocationList {
   invocations: Invocation[];
 }
 
+/* ─────────────────────────── Metrics (#273 / #393) ─────────────────────── */
+
+/** Closed vocabulary bounded by Prometheus retention (prom_retention_days: 15). */
+export type MetricsRange = '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
+
+export const METRICS_RANGES: MetricsRange[] = ['5m', '15m', '1h', '6h', '24h', '7d', '15d'];
+
+/**
+ * Gateway-measured metrics for one app. Latencies are 2xx-class only;
+ * failures surface via error_rate_pct. `wake_p95_ms` is the FLEET p95 — the
+ * underlying histogram is unlabeled, so it is NOT this app's wake latency.
+ *
+ * On Prometheus failure the endpoint still returns 200 with zeroed fields and
+ * `source: "degraded: <reason>"`. Callers must branch on `source`, not on the
+ * numbers, or they will render a convincing wall of zeros.
+ */
+export interface AppMetrics {
+  app_id: string;
+  range: MetricsRange;
+  source: string;
+  as_of: string;
+  request_count: number;
+  latency_p50_ms: number;
+  latency_p95_ms: number;
+  latency_p99_ms: number;
+  error_rate_pct: number;
+  cold_start_pct: number;
+  wake_p95_ms: number;
+}
+
+/** Account-wide rollup: same per-app shape, keyed by app slug. */
+export interface AppsMetrics {
+  range: MetricsRange;
+  source: string;
+  as_of: string;
+  apps: Record<string, AppMetrics> | null;
+}
+
+/** True when the rollup came back degraded and its numbers are meaningless. */
+export const isDegraded = (source: string | undefined): boolean =>
+  !!source && source.startsWith('degraded');
+
+/** Reason text from a `degraded: <reason>` source string. */
+export const degradedReason = (source: string): string =>
+  source.replace(/^degraded:\s*/, '') || 'metrics backend unavailable';
+
+/* ──────────────────────── Account-scoped lists (#393) ──────────────────── */
+
+export interface InstanceList {
+  instances: Instance[];
+  next_before?: string | null;
+}
+
+/** One sealed secret with its owning app attached. Plaintext never appears. */
+export interface AccountSecret {
+  app_id: string;
+  app_slug: string;
+  key: string;
+  ciphertext: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccountSecretList {
+  secrets: AccountSecret[];
+  next_before?: string | null;
+}
+
+/* ────────────────────────────── Env vars (#395) ────────────────────────── */
+
+/** Env var envelope. The plaintext value is not returned on list. */
+export interface AppEnv {
+  key: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppEnvList {
+  env: AppEnv[];
+  quota_max: number;
+  count: number;
+}
+
+/* ─────────────────────── Queue introspection (#394) ────────────────────── */
+
+export interface QueueState {
+  app_slug: string;
+  plan: Plan;
+  plan_cap: number;
+  depth: number;
+  in_flight: number;
+  oldest_pending_at?: string | null;
+  oldest_pending_age_seconds?: number | null;
+  generated_at: string;
+}
+
+/** A pending row. Peeking acquires no lease and does not bump `attempts`. */
+export interface QueuePeekMessage {
+  id: string;
+  created_at: string;
+  attempts: number;
+  payload: string;
+  last_error?: string;
+}
+
+export interface QueuePeek {
+  app_slug: string;
+  messages: QueuePeekMessage[];
+  next_before?: string;
+}
+
+/** A row that exhausted the plan's retry budget. */
+export interface QueueDeadLetterMessage {
+  id: string;
+  created_at: string;
+  failed_at: string;
+  attempts: number;
+  last_error: string;
+  payload: string;
+}
+
+export interface QueueDeadLetter {
+  app_slug: string;
+  messages: QueueDeadLetterMessage[];
+  next_before?: string;
+}
+
+/* ────────────────────────── Alert rules (#396) ─────────────────────────── */
+
+export type AlertMetric =
+  | 'error_rate_pct'
+  | 'latency_p50_ms'
+  | 'latency_p95_ms'
+  | 'latency_p99_ms'
+  | 'cold_start_pct'
+  | 'request_count'
+  | 'failed_invocations';
+
+export type AlertComparison = 'gt' | 'gte' | 'lt' | 'lte';
+export type AlertFailureSource = 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke';
+
+export interface AlertRule {
+  id: string;
+  /** Empty string means an account-wide rule. */
+  app_id: string;
+  name: string;
+  enabled: boolean;
+  metric: AlertMetric;
+  comparison: AlertComparison;
+  threshold: number;
+  window_spec: MetricsRange;
+  failure_source?: AlertFailureSource;
+  webhook_url: string;
+  webhook_secret_sealed_masked: string;
+  cooldown_minutes: number;
+  state: 'ok' | 'firing';
+  last_fired_at?: string | null;
+  last_evaluated_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAlertRuleInput {
+  name: string;
+  enabled?: boolean;
+  metric: AlertMetric;
+  comparison: AlertComparison;
+  threshold: number;
+  window_spec: MetricsRange;
+  /** Required when metric === 'failed_invocations'; must be omitted otherwise. */
+  failure_source?: AlertFailureSource;
+  webhook_url: string;
+  webhook_secret: string;
+  cooldown_minutes?: number;
+}
+
+/* ───────────────────────────── Sessions (IAM-3) ────────────────────────── */
+
+export interface SessionInfo {
+  id: string;
+  account_id: string;
+  issued_ip?: string;
+  issued_ua?: string;
+  issued_at: string;
+  last_seen_at?: string;
+  /** Exactly one row in a list response carries this. */
+  current_session: boolean;
+}
+
+export interface SessionList {
+  sessions: SessionInfo[];
+}
+
+/* ───────────────────────────── Invoices (#259) ─────────────────────────── */
+
+export interface Invoice {
+  id: string;
+  provider: 'stripe' | 'paddle';
+  provider_invoice_id: string;
+  number?: string;
+  status: 'draft' | 'open' | 'paid' | 'uncollectible' | 'void';
+  period_start: string;
+  period_end: string;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  amount_paid_cents: number;
+  currency: string;
+  /**
+   * The hosted PDF URL is provider-scoped and deliberately not on the wire —
+   * customers fetch it from the Stripe/Paddle portal. This flag is the only
+   * PDF surface the API exposes.
+   */
+  pdf_available: boolean;
+  created_at: string;
+}
+
+export interface InvoiceList {
+  items: Invoice[];
+  next_before?: string | null;
+}
+
 /** Security-event timeline row (GET /v1/audit-events). */
 export interface AuditEvent {
   id: string;
@@ -353,6 +575,91 @@ export const rollbackApp = (slug: string) =>
 export const listInstances = (slug: string) =>
   request<Instance[]>(`/v1/apps/${slug}/instances`, { cache: 'no-store' });
 
+/** Account-wide instance list — one call instead of one per app (#393). */
+export const listAllInstances = (limit = 100, before?: string) => {
+  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
+  if (before) q.set('before', before);
+  return request<InstanceList>(`/v1/instances?${q}`, { cache: 'no-store' });
+};
+
+/* ────────────────────────────── Metrics ────────────────────────────────── */
+
+export const getAppMetrics = (slug: string, range: MetricsRange = '24h') =>
+  request<AppMetrics>(`/v1/apps/${slug}/metrics?range=${range}`, { cache: 'no-store' });
+
+/** Account-wide per-app rollup, keyed by slug — one call for the whole page. */
+export const getAppsMetrics = (range: MetricsRange = '24h') =>
+  request<AppsMetrics>(`/v1/apps/metrics?range=${range}`, { cache: 'no-store' });
+
+/* ─────────────────────────────── Env vars ──────────────────────────────── */
+
+export const listEnv = (slug: string) => request<AppEnvList>(`/v1/apps/${slug}/env`, { cache: 'no-store' });
+
+/** key must match ^[A-Z][A-Z0-9_]*$. Plaintext by contract — not for secrets. */
+export const setEnv = (slug: string, key: string, value: string) =>
+  request<void>(`/v1/apps/${slug}/env/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }, 'none');
+
+export const deleteEnv = (slug: string, key: string) =>
+  request<void>(`/v1/apps/${slug}/env/${key}`, { method: 'DELETE' }, 'none');
+
+/* ────────────────────────── Queue introspection ────────────────────────── */
+
+export const getQueueState = (slug: string) =>
+  request<QueueState>(`/v1/apps/${slug}/queues/state`, { cache: 'no-store' });
+
+/** Read-only: acquires no lease and does not increment `attempts`. */
+export const peekQueue = (slug: string, limit = 25, before?: string) => {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (before) q.set('before', before);
+  return request<QueuePeek>(`/v1/apps/${slug}/queues/peek?${q}`, { cache: 'no-store' });
+};
+
+export const listDeadLetter = (slug: string, limit = 25, before?: string) => {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (before) q.set('before', before);
+  return request<QueueDeadLetter>(`/v1/apps/${slug}/queues/dead_letter?${q}`, { cache: 'no-store' });
+};
+
+/* ──────────────────────────── Alert rules ──────────────────────────────── */
+
+export const listAlertRules = (slug: string) =>
+  request<AlertRule[]>(`/v1/apps/${slug}/alerts`, { cache: 'no-store' });
+
+export const createAlertRule = (slug: string, input: CreateAlertRuleInput) =>
+  request<AlertRule>(`/v1/apps/${slug}/alerts`, { method: 'POST', body: JSON.stringify(input) });
+
+export const updateAlertRule = (slug: string, id: string, input: Partial<CreateAlertRuleInput>) =>
+  request<AlertRule>(`/v1/apps/${slug}/alerts/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+
+export const deleteAlertRule = (slug: string, id: string) =>
+  request<void>(`/v1/apps/${slug}/alerts/${id}`, { method: 'DELETE' }, 'none');
+
+export const rotateAlertSecret = (slug: string, id: string, secret: string) =>
+  request<AlertRule>(`/v1/apps/${slug}/alerts/${id}/rotate-secret`, {
+    method: 'POST',
+    body: JSON.stringify({ webhook_secret: secret }),
+  });
+
+/* ───────────────────────────── Sessions ────────────────────────────────── */
+
+export const listSessions = () => request<SessionList>('/v1/auth/sessions', { cache: 'no-store' });
+
+export const revokeSession = (id: string) =>
+  request<void>(`/v1/auth/sessions/${id}`, { method: 'DELETE' }, 'none');
+
+/** Revokes every session including the caller's — the UI must sign out after. */
+export const revokeAllSessions = () =>
+  request<void>('/v1/auth/sessions/revoke_all', { method: 'POST' }, 'none');
+
+/* ───────────────────────────── Invoices ────────────────────────────────── */
+
+export const listInvoices = (limit = 25, before?: string, month?: string) => {
+  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
+  if (before) q.set('before', before);
+  if (month) q.set('month', month);
+  return request<InvoiceList>(`/v1/invoices?${q}`, { cache: 'no-store' });
+};
+
 /* ────────────────────────────── Deployments ────────────────────────────── */
 
 export const listDeployments = () => request<DeploymentList>('/v1/deployments', { cache: 'no-store' });
@@ -415,6 +722,13 @@ export const deploymentLogsUrl = (id: string, follow = true) =>
 /* ─────────────────────────── Per-app secrets ───────────────────────────── */
 
 export const listSecrets = (slug: string) => request<AppSecretList>(`/v1/apps/${slug}/secrets`);
+
+/** Account-wide sealed-secret list — one call instead of one per app (#393). */
+export const listAllSecrets = (limit = 100, before?: string) => {
+  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
+  if (before) q.set('before', before);
+  return request<AccountSecretList>(`/v1/secrets?${q}`, { cache: 'no-store' });
+};
 
 /** key must match ^[A-Z][A-Z0-9_]*$. Body carries the plaintext value. */
 export const setSecret = (slug: string, key: string, value: string) =>

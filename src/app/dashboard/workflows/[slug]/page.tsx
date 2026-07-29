@@ -14,7 +14,7 @@ import Link from 'next/link';
 import {
   getApp, updateApp, deleteApp, renameApp, wakeApp, parkApp, rollbackApp,
   listInstances, listSecrets, setSecret, deleteSecret, listAppDeployments,
-  listDomains, listCrons, listInvocations, appLogsUrl, ApiError,
+  listDomains, listCrons, listInvocations, getAppMetrics, isDegraded, appLogsUrl, ApiError,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, Mono, CopyButton, RowMenu, RowMenuItem } from '@/components/ui/bits';
@@ -25,8 +25,9 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { Icon } from '@/components/ui/Icons';
 import { LogStream } from '@/components/LogStream';
+import { DegradedNotice } from '@/components/ui/DegradedNotice';
 import { relativeTime } from '@/lib/format';
-import { invocationsByDay, totals, trend, compact, ms } from '@/lib/series';
+import { invocationsByDay, totals, compact, ms } from '@/lib/series';
 
 const TABS = ['Overview', 'Deployments', 'Instances', 'Logs', 'Secrets', 'Configuration', 'Domains', 'Triggers'] as const;
 type Tab = (typeof TABS)[number];
@@ -43,6 +44,7 @@ export default function WorkflowDetailPage() {
   const domains = useAsync(listDomains, []);
   const crons = useAsync(listCrons, []);
   const invocations = useAsync(() => listInvocations(200), []);
+  const metrics = useAsync(() => getAppMetrics(slug, '24h'), [slug]);
 
   const [tab, setTab] = useState<Tab>('Overview');
   const [busy, setBusy] = useState<string | null>(null);
@@ -166,22 +168,51 @@ export default function WorkflowDetailPage() {
                   </div>
                 </SectionCard>
 
+                {isDegraded(metrics.data?.source) && metrics.data && (
+                  <DegradedNotice source={metrics.data.source} onRetry={metrics.reload} />
+                )}
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <StatTile label="Invocations (7d)" value={compact(stats.total)} series={series} trend={trend(series)} />
-                  <StatTile label="Avg completion" value={ms(stats.avgCompletionMs)} sub={stats.p95CompletionMs != null ? `p95 ${ms(stats.p95CompletionMs)}` : undefined} />
-                  <StatTile label="Error rate" value={`${stats.errorRatePct.toFixed(2)}%`} sub={`${stats.failed} failed`} />
-                  <StatTile label="Live instances" value={instances.data ? instances.data.length : '—'} sub={`min ${a.min_instances} kept warm`} />
+                  <StatTile
+                    label="Requests (24h)"
+                    value={metrics.data ? compact(metrics.data.request_count) : '—'}
+                    sub="measured at the gateway"
+                  />
+                  <StatTile
+                    label="p95 latency"
+                    value={metrics.data ? ms(metrics.data.latency_p95_ms) : '—'}
+                    sub={metrics.data ? `p50 ${ms(metrics.data.latency_p50_ms)} · p99 ${ms(metrics.data.latency_p99_ms)}` : undefined}
+                  />
+                  <StatTile
+                    label="Error rate"
+                    value={metrics.data ? `${metrics.data.error_rate_pct.toFixed(2)}%` : '—'}
+                    color="var(--color-chart-alt)"
+                    sub={metrics.data ? `${metrics.data.cold_start_pct.toFixed(1)}% cold starts` : undefined}
+                  />
+                  <StatTile
+                    label="Live instances"
+                    value={instances.data ? instances.data.length : '—'}
+                    sub={`min ${a.min_instances} kept warm`}
+                  />
                 </div>
 
-                <SectionCard title="Invocations (7 days)" bodyClassName="p-4">
+                <SectionCard
+                  title="Dispatched work (7 days)"
+                  action={
+                    <span className="text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                      {stats.failed > 0 ? `${stats.failed} failed · ` : ''}avg {ms(stats.avgCompletionMs)}
+                    </span>
+                  }
+                  bodyClassName="p-4"
+                >
                   {mine.length === 0 ? (
                     <EmptyState
                       icon="spark"
                       title="No dispatched invocations"
-                      hint="Queue jobs, cron runs and async invokes for this workflow show up here."
+                      hint="Queue jobs, cron runs and async invokes for this workflow show up here. HTTPS requests are measured separately, in the tiles above."
                     />
                   ) : (
-                    <AreaChart points={series} height={230} format={(n) => compact(n)} />
+                    <AreaChart points={series} height={230} valueLabel="Dispatches" format={(n) => compact(n)} />
                   )}
                 </SectionCard>
 

@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   listApps, createApp, deleteApp, wakeApp, parkApp,
-  listInvocations, listDeployments, AppType, Runtime, ApiError,
+  getAppsMetrics, listDeployments, isDegraded, AppType, Runtime, ApiError,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, Mono, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
@@ -19,15 +19,16 @@ import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { Icon } from '@/components/ui/Icons';
+import { DegradedNotice } from '@/components/ui/DegradedNotice';
 import { relativeTime } from '@/lib/format';
-import { totals, ms, compact } from '@/lib/series';
+import { ms, compact } from '@/lib/series';
 
 const RAM_OPTIONS = [128, 256, 512, 1024, 2048];
 const PER_PAGE = 12;
 
 export default function WorkflowsPage() {
   const apps = useAsync(listApps, []);
-  const invocations = useAsync(() => listInvocations(200), []);
+  const metrics = useAsync(() => getAppsMetrics('24h'), []);
   const deployments = useAsync(listDeployments, []);
   const toast = useToast();
   const router = useRouter();
@@ -46,7 +47,7 @@ export default function WorkflowsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const rows = useMemo(() => invocations.data?.invocations ?? [], [invocations.data]);
+  const degraded = isDegraded(metrics.data?.source);
 
   /** Newest deployment per app, for the "Last deployed" column. */
   const lastDeploy = useMemo(() => {
@@ -60,11 +61,12 @@ export default function WorkflowsPage() {
 
   const enriched = useMemo(
     () =>
-      (apps.data ?? []).map((a) => {
-        const mine = rows.filter((r) => r.app_id === a.id);
-        return { app: a, stats: totals(mine), deployedAt: lastDeploy.get(a.id) ?? null };
-      }),
-    [apps.data, rows, lastDeploy],
+      (apps.data ?? []).map((a) => ({
+        app: a,
+        m: metrics.data?.apps?.[a.slug] ?? null,
+        deployedAt: lastDeploy.get(a.id) ?? null,
+      })),
+    [apps.data, metrics.data, lastDeploy],
   );
 
   const filtered = useMemo(
@@ -123,6 +125,8 @@ export default function WorkflowsPage() {
         }
       />
 
+      {degraded && metrics.data && <DegradedNotice source={metrics.data.source} onRetry={metrics.reload} />}
+
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--color-line)' }}>
           <SearchInput value={query} onChange={(v) => { setQuery(v); setPage(1); }} placeholder="Search workflows…" className="w-full max-w-xs" />
@@ -179,15 +183,16 @@ export default function WorkflowsPage() {
                       <th>Name</th>
                       <th>Type</th>
                       <th>Status</th>
-                      <th>Invocations</th>
-                      <th>Avg completion</th>
+                      <th>Requests (24h)</th>
+                      <th>p95</th>
+                      <th>Error rate</th>
                       <th>Memory</th>
                       <th>Last deployed</th>
                       <th />
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map(({ app, stats, deployedAt }) => (
+                    {visible.map(({ app, m, deployedAt }) => (
                       <tr key={app.id}>
                         <td>
                           <Link href={`/dashboard/workflows/${app.slug}`} className="flex items-center gap-2.5">
@@ -204,8 +209,11 @@ export default function WorkflowsPage() {
                           {app.type === 'function' ? `Function · ${app.runtime ?? '—'}` : 'HTTPS App'}
                         </td>
                         <td><StatusBadge state={app.status} /></td>
-                        <td>{compact(stats.total)}</td>
-                        <td>{ms(stats.avgCompletionMs)}</td>
+                        <td>{m ? compact(m.request_count) : '—'}</td>
+                        <td>{m ? ms(m.latency_p95_ms) : '—'}</td>
+                        <td style={m && m.error_rate_pct > 0 ? { color: 'var(--color-danger)' } : undefined}>
+                          {m ? `${m.error_rate_pct.toFixed(2)}%` : '—'}
+                        </td>
                         <td>{app.ram_mb} MB</td>
                         <td>{relativeTime(deployedAt)}</td>
                         <td>

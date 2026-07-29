@@ -1,16 +1,17 @@
 'use client';
 
 /* ==========================================================================
-   Secrets — account-wide view over the per-app secret stores.
+   Secrets — account-wide view, from /v1/secrets (#393).
 
-   The API is scoped per workflow (/v1/apps/{slug}/secrets), so this fans out
-   and flattens. Values are sealed server-side and never returned, so there is
-   deliberately no "reveal" affordance here: only set, replace and delete.
+   One call returns every sealed envelope with its owning app attached, so
+   this no longer fans out over /v1/apps/{slug}/secrets. Values are sealed
+   server-side and never returned — the wire carries only the ciphertext — so
+   there is deliberately no "reveal" affordance: set, replace and delete only.
    ========================================================================== */
 
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { listApps, listSecrets, setSecret, deleteSecret, ApiError } from '@/lib/api';
+import { listApps, listAllSecrets, setSecret, deleteSecret, ApiError } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { TableFooter } from '@/components/ui/Panels';
@@ -27,25 +28,17 @@ interface Row {
   updated_at: string;
 }
 
-async function loadSecrets(): Promise<{ rows: Row[]; quota: Map<string, { count: number; max: number }>; failed: string[] }> {
-  const apps = await listApps();
-  const failed: string[] = [];
-  const quota = new Map<string, { count: number; max: number }>();
-
-  const results = await Promise.all(
-    apps.map(async (a) => {
-      try {
-        const res = await listSecrets(a.slug);
-        quota.set(a.slug, { count: res.count, max: res.quota_max });
-        return res.secrets.map((s) => ({ key: s.key, slug: a.slug, created_at: s.created_at, updated_at: s.updated_at }));
-      } catch {
-        failed.push(a.slug);
-        return [];
-      }
-    }),
-  );
-
-  return { rows: results.flat(), quota, failed };
+async function loadSecrets(): Promise<{ rows: Row[]; more: boolean }> {
+  const page = await listAllSecrets(100);
+  return {
+    rows: page.secrets.map((s) => ({
+      key: s.key,
+      slug: s.app_slug,
+      created_at: s.created_at,
+      updated_at: s.updated_at,
+    })),
+    more: !!page.next_before,
+  };
 }
 
 export default function SecretsPage() {
@@ -206,9 +199,9 @@ export default function SecretsPage() {
         </AsyncBoundary>
       </div>
 
-      {data.data && data.data.failed.length > 0 && (
-        <p className="mt-3 text-xs" style={{ color: 'var(--color-warn)' }}>
-          Could not read secrets for: {data.data.failed.join(', ')}.
+      {data.data?.more && (
+        <p className="mt-3 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+          Showing the first 100 secrets. More exist beyond this page.
         </p>
       )}
 
@@ -230,15 +223,11 @@ export default function SecretsPage() {
             <label className="label">Workflow</label>
             <select className="field" value={formSlug} onChange={(e) => setFormSlug(e.target.value)} required>
               <option value="">Select a workflow…</option>
-              {(apps.data ?? []).map((a) => {
-                const q = data.data?.quota.get(a.slug);
-                return (
-                  <option key={a.id} value={a.slug}>
-                    {a.slug}
-                    {q ? ` (${q.count}/${q.max})` : ''}
-                  </option>
-                );
-              })}
+              {(apps.data ?? []).map((a) => (
+                <option key={a.id} value={a.slug}>
+                  {a.slug}
+                </option>
+              ))}
             </select>
           </div>
           <div>

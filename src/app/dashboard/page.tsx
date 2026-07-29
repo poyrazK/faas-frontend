@@ -4,29 +4,45 @@
    Overview — the template's dashboard home.
 
    Sources, all real:
-     • /v1/apps            — workflow inventory
-     • /v1/invocations     — dispatch rows: the charts, error rate, latency
-     • /v1/usage           — per-app metered requests + GB-hours this month
-     • /v1/usage/summary   — account roll-up and overage
+     • /v1/apps          — workflow inventory
+     • /v1/apps/metrics  — gateway request volume, latency, errors (#393)
+     • /v1/invocations   — dispatched work: queue, cron, delayed tasks
+     • /v1/usage[/summary] — metered GB-hours and overage
 
-   The invocations endpoint pages at 200 rows, so when a busy account fills
-   the page the header says so rather than implying it saw everything.
+   The distinction that runs through this page: the metrics endpoint measures
+   HTTPS traffic at the gateway, while the invocations table records
+   background dispatches that never touch the gateway. Neither is a superset
+   of the other, so they are presented as separate panels rather than summed.
    ========================================================================== */
 
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
-import { listApps, listInvocations, getUsageSummary, getUsageByApp } from '@/lib/api';
+import {
+  listApps, listInvocations, getUsageSummary, getUsageByApp, getAppsMetrics,
+  isDegraded, METRICS_RANGES, type MetricsRange,
+} from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, Mono, FilterSelect } from '@/components/ui/bits';
-import { StatTile, SectionCard, MeterRow, TableFooter } from '@/components/ui/Panels';
+import { StatTile, SectionCard, MeterRow } from '@/components/ui/Panels';
+import { DegradedNotice } from '@/components/ui/DegradedNotice';
 import { AreaChart, BarChart } from '@/components/ui/Chart';
 import { EmptyState, SkeletonBlock, ErrorState } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
 import { PLANS, relativeTime, euros } from '@/lib/format';
-import { invocationsByDay, failuresByDay, totals, rollupByApp, trend, compact, ms } from '@/lib/series';
+import { invocationsByDay, totals, trend, compact, ms } from '@/lib/series';
 
 const SAMPLE = 200;
+
+const RANGE_LABEL: Record<MetricsRange, string> = {
+  '5m': 'Last 5 minutes',
+  '15m': 'Last 15 minutes',
+  '1h': 'Last hour',
+  '6h': 'Last 6 hours',
+  '24h': 'Last 24 hours',
+  '7d': 'Last 7 days',
+  '15d': 'Last 15 days',
+};
 
 const SOURCE_LABEL: Record<string, string> = {
   async_invoke: 'Async invoke',
@@ -37,11 +53,10 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export default function OverviewPage() {
   const { account } = useAuth();
-  const [days, setDays] = useState(7);
+  const [range, setRange] = useState<MetricsRange>('24h');
 
   const apps = useAsync(listApps, []);
-  // Stamped at fetch time so the trailing window is anchored to when the data
-  // was read, not to every render — render stays pure.
+  const metrics = useAsync(() => getAppsMetrics(range), [range]);
   const invocations = useAsync(
     async () => ({ rows: (await listInvocations(SAMPLE)).invocations, fetchedAt: Date.now() }),
     [],
@@ -49,23 +64,30 @@ export default function OverviewPage() {
   const summary = useAsync(() => getUsageSummary(), []);
   const perApp = useAsync(() => getUsageByApp(), []);
 
+  const degraded = isDegraded(metrics.data?.source);
+
+  /* Gateway metrics, rolled up across apps. */
+  const byApp = metrics.data?.apps ?? null;
+  const metricRows = useMemo(
+    () =>
+      Object.entries(byApp ?? {})
+        .map(([slug, m]) => ({ slug, m }))
+        .sort((a, b) => b.m.request_count - a.m.request_count),
+    [byApp],
+  );
+  const requestTotal = metricRows.reduce((s, r) => s + r.m.request_count, 0);
+  const weighted = (pick: (m: (typeof metricRows)[number]['m']) => number) =>
+    requestTotal === 0 ? 0 : metricRows.reduce((s, r) => s + pick(r.m) * r.m.request_count, 0) / requestTotal;
+
+  /* Dispatched work, from the invocations table. */
   const rows = useMemo(() => invocations.data?.rows ?? [], [invocations.data]);
   const windowed = useMemo(() => {
-    const cutoff = (invocations.data?.fetchedAt ?? 0) - days * 86_400_000;
+    const cutoff = (invocations.data?.fetchedAt ?? 0) - 7 * 86_400_000;
     return rows.filter((r) => Date.parse(r.created_at) >= cutoff);
-  }, [rows, days, invocations.data]);
-
-  const series = useMemo(() => invocationsByDay(windowed, days), [windowed, days]);
-  const errorSeries = useMemo(() => failuresByDay(windowed, days), [windowed, days]);
-  const stats = useMemo(() => totals(windowed), [windowed]);
-  const rollup = useMemo(
-    () => rollupByApp(apps.data ?? [], windowed, perApp.data),
-    [apps.data, windowed, perApp.data],
-  );
-
-  const meteredRequests = perApp.data?.reduce((s, u) => s + (u.requests ?? 0), 0) ?? null;
+  }, [rows, invocations.data]);
+  const series = useMemo(() => invocationsByDay(windowed, 7), [windowed]);
+  const dispatch = useMemo(() => totals(windowed), [windowed]);
   const truncated = rows.length >= SAMPLE;
-  const plan = account ? PLANS[account.plan] : null;
 
   const sources = useMemo(() => {
     const counts = new Map<string, number>();
@@ -73,16 +95,20 @@ export default function OverviewPage() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [windowed]);
 
-  const gbHourBars = useMemo(
-    () =>
-      rollup
-        .filter((r) => (r.usedGbHours ?? 0) > 0)
-        .slice(0, 12)
-        .map((r) => ({ date: new Date(), label: r.slug, value: Number((r.usedGbHours ?? 0).toFixed(3)) })),
-    [rollup],
-  );
+  const gbHourBars = useMemo(() => {
+    const slugFor = (id: string) => apps.data?.find((a) => a.id === id)?.slug ?? id.slice(0, 6);
+    return (perApp.data ?? [])
+      .map((u) => ({
+        date: new Date(),
+        label: slugFor(u.app_id),
+        value: Number((u.used_gb_hours ?? u.mb_seconds / 1024 / 3600).toFixed(3)),
+      }))
+      .filter((p) => p.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 12);
+  }, [perApp.data, apps.data]);
 
-  const loadingCore = invocations.loading && !invocations.data;
+  const plan = account ? PLANS[account.plan] : null;
 
   return (
     <div>
@@ -92,17 +118,14 @@ export default function OverviewPage() {
         actions={
           <>
             <FilterSelect
-              value={String(days)}
-              onChange={(v) => setDays(Number(v))}
-              options={[
-                { value: '7', label: 'Last 7 days' },
-                { value: '14', label: 'Last 14 days' },
-                { value: '30', label: 'Last 30 days' },
-              ]}
+              value={range}
+              onChange={(v) => setRange(v as MetricsRange)}
+              options={METRICS_RANGES.map((r) => ({ value: r, label: RANGE_LABEL[r] }))}
             />
             <button
               className="btn-icon btn-icon-bordered"
               onClick={() => {
+                metrics.reload();
                 invocations.reload();
                 summary.reload();
                 perApp.reload();
@@ -116,49 +139,46 @@ export default function OverviewPage() {
         }
       />
 
-      {/* ── Stat tiles ─────────────────────────────────────────────────── */}
+      {degraded && metrics.data && <DegradedNotice source={metrics.data.source} onRetry={metrics.reload} />}
+
+      {/* ── Stat tiles: gateway-measured ───────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile
-          label="Metered requests"
-          value={meteredRequests == null ? '—' : compact(meteredRequests)}
-          sub={summary.data ? `Billing month ${summary.data.month}` : 'This billing month'}
+          label="Requests"
+          value={metrics.data ? compact(requestTotal) : '—'}
+          sub={RANGE_LABEL[range].toLowerCase()}
         />
         <StatTile
-          label="Invocations"
-          value={compact(stats.total)}
-          trend={trend(series)}
-          series={series}
-          sub={`${stats.completed} completed · ${stats.pending} in flight`}
-        />
-        <StatTile
-          label="Avg time to completion"
-          value={ms(stats.avgCompletionMs)}
-          sub={stats.p95CompletionMs != null ? `p95 ${ms(stats.p95CompletionMs)}` : 'Queue wait + wake + run'}
+          label="p95 latency"
+          value={metrics.data ? ms(weighted((m) => m.latency_p95_ms)) : '—'}
+          sub={metrics.data ? `p99 ${ms(weighted((m) => m.latency_p99_ms))}` : undefined}
         />
         <StatTile
           label="Error rate"
-          value={`${stats.errorRatePct.toFixed(2)}%`}
-          trend={trend(errorSeries)}
-          invertTrend
-          series={errorSeries}
+          value={metrics.data ? `${weighted((m) => m.error_rate_pct).toFixed(2)}%` : '—'}
           color="var(--color-chart-alt)"
-          sub={`${stats.failed} failed of ${stats.completed + stats.failed} finished`}
+          sub={`across ${metricRows.length} workflow${metricRows.length === 1 ? '' : 's'}`}
+        />
+        <StatTile
+          label="Cold start rate"
+          value={metrics.data ? `${weighted((m) => m.cold_start_pct).toFixed(1)}%` : '—'}
+          sub={plan ? `${plan.ramMb} MB · ${plan.concurrency} concurrent` : undefined}
         />
       </div>
 
-      {/* ── Chart + top workflows ──────────────────────────────────────── */}
+      {/* ── Dispatched work + top workflows ────────────────────────────── */}
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <SectionCard
           className="xl:col-span-2"
-          title="Invocations"
+          title="Dispatched work (7 days)"
           action={
             <span className="text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-              {truncated ? `newest ${SAMPLE} dispatches` : 'dispatched work'}
+              {truncated ? `newest ${SAMPLE} dispatches` : 'queue · cron · delayed tasks'}
             </span>
           }
           bodyClassName="p-4"
         >
-          {loadingCore ? (
+          {invocations.loading && !invocations.data ? (
             <SkeletonBlock height={260} />
           ) : invocations.error ? (
             <ErrorState error={invocations.error} onRetry={invocations.reload} />
@@ -166,10 +186,10 @@ export default function OverviewPage() {
             <EmptyState
               icon="spark"
               title="No dispatched invocations"
-              hint="Queue jobs, cron runs and async invokes appear here. Synchronous HTTPS traffic isn't recorded in this table."
+              hint="Queue jobs, cron runs and async invokes appear here. HTTPS traffic is measured separately, in the tiles above."
             />
           ) : (
-            <AreaChart points={series} height={260} valueLabel="Invocations" format={(n) => compact(n)} />
+            <AreaChart points={series} height={260} valueLabel="Dispatches" format={(n) => compact(n)} />
           )}
         </SectionCard>
 
@@ -182,14 +202,18 @@ export default function OverviewPage() {
           }
           bodyClassName="p-2"
         >
-          {rollup.length === 0 ? (
-            <EmptyState icon="workflows" title="No workflows yet" hint="Create one to see it ranked here." />
+          {metricRows.length === 0 ? (
+            <EmptyState
+              icon="workflows"
+              title={degraded ? 'Metrics unavailable' : 'No traffic yet'}
+              hint={degraded ? undefined : 'Workflows rank here once they serve requests.'}
+            />
           ) : (
             <ul>
-              {rollup.slice(0, 6).map((r) => (
-                <li key={r.app_id}>
+              {metricRows.slice(0, 6).map(({ slug, m }) => (
+                <li key={slug}>
                   <Link
-                    href={`/dashboard/workflows/${r.slug}`}
+                    href={`/dashboard/workflows/${slug}`}
                     className="flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-[var(--color-surface-subtle)]"
                   >
                     <span
@@ -199,14 +223,12 @@ export default function OverviewPage() {
                       <Icon name="workflows" size={14} />
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: 'var(--color-ink)' }}>
-                      {r.slug}
+                      {slug}
                     </span>
-                    <span className="text-sm font-medium">
-                      {r.requests != null ? compact(r.requests) : compact(r.invocations)}
-                    </span>
-                    {r.failed > 0 && (
+                    <span className="text-sm font-medium">{compact(m.request_count)}</span>
+                    {m.error_rate_pct > 0 && (
                       <span className="text-xs" style={{ color: 'var(--color-danger)' }}>
-                        {r.failed} failed
+                        {m.error_rate_pct.toFixed(1)}%
                       </span>
                     )}
                   </Link>
@@ -217,12 +239,12 @@ export default function OverviewPage() {
         </SectionCard>
       </div>
 
-      {/* ── Recent invocations · sources · usage ───────────────────────── */}
+      {/* ── Recent dispatches · sources · usage ────────────────────────── */}
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <SectionCard
-          title="Recent invocations"
+          title="Recent dispatches"
           action={
-            <Link href="/dashboard/logs" className="text-xs font-medium" style={{ color: 'var(--color-brand)' }}>
+            <Link href="/dashboard/queues" className="text-xs font-medium" style={{ color: 'var(--color-brand)' }}>
               View all
             </Link>
           }
@@ -230,46 +252,43 @@ export default function OverviewPage() {
           {windowed.length === 0 ? (
             <EmptyState icon="clock" title="Nothing dispatched yet" />
           ) : (
-            <>
-              <table className="dtable">
-                <thead>
-                  <tr>
-                    <th>Workflow</th>
-                    <th>Source</th>
-                    <th>Status</th>
-                    <th>When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {windowed.slice(0, 5).map((r) => {
-                    const app = apps.data?.find((a) => a.id === r.app_id);
-                    return (
-                      <tr key={r.id}>
-                        <td className="cell-primary">
-                          {app ? (
-                            <Link href={`/dashboard/workflows/${app.slug}`} style={{ color: 'var(--color-brand)' }}>
-                              {app.slug}
-                            </Link>
-                          ) : (
-                            <Mono>{r.app_id.slice(0, 8)}</Mono>
-                          )}
-                        </td>
-                        <td>{SOURCE_LABEL[r.source] ?? r.source}</td>
-                        <td>
-                          <StatusBadge state={r.state} />
-                        </td>
-                        <td>{relativeTime(r.created_at)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <TableFooter from={1} to={Math.min(5, windowed.length)} total={windowed.length} noun="invocations" />
-            </>
+            <table className="dtable">
+              <thead>
+                <tr>
+                  <th>Workflow</th>
+                  <th>Source</th>
+                  <th>Status</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {windowed.slice(0, 5).map((r) => {
+                  const app = apps.data?.find((a) => a.id === r.app_id);
+                  return (
+                    <tr key={r.id}>
+                      <td className="cell-primary">
+                        {app ? (
+                          <Link href={`/dashboard/workflows/${app.slug}`} style={{ color: 'var(--color-brand)' }}>
+                            {app.slug}
+                          </Link>
+                        ) : (
+                          <Mono>{r.app_id.slice(0, 8)}</Mono>
+                        )}
+                      </td>
+                      <td>{SOURCE_LABEL[r.source] ?? r.source}</td>
+                      <td>
+                        <StatusBadge state={r.state} />
+                      </td>
+                      <td>{relativeTime(r.created_at)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
         </SectionCard>
 
-        <SectionCard title="Invocation sources" bodyClassName="space-y-3.5 px-5 py-5">
+        <SectionCard title="Dispatch sources" bodyClassName="space-y-3.5 px-5 py-5">
           {sources.length === 0 ? (
             <p className="text-sm" style={{ color: 'var(--color-ink-muted)' }}>
               No dispatches in this window.
@@ -284,9 +303,18 @@ export default function OverviewPage() {
               />
             ))
           )}
-          <p className="pt-1 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-            Gregale runs a single region today, so traffic isn&apos;t split geographically.
-          </p>
+          <div className="flex items-center justify-between pt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+            <span>Failed dispatches</span>
+            <span style={{ color: dispatch.failed > 0 ? 'var(--color-danger)' : 'var(--color-ink)' }}>
+              {dispatch.failed}
+            </span>
+          </div>
+          {trend(series) && (
+            <p className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+              Volume {trend(series)!.direction === 'up' ? 'up' : 'down'} {trend(series)!.pct.toFixed(1)}% versus the
+              previous period.
+            </p>
+          )}
         </SectionCard>
 
         <SectionCard
@@ -341,7 +369,7 @@ export default function OverviewPage() {
       {/* ── Footer strip ───────────────────────────────────────────────── */}
       <div className="card mt-4 flex flex-wrap items-center gap-x-8 gap-y-4 px-5 py-4">
         <Fact icon="bolt" title="Firecracker powered" sub="< 350ms p50 cold wake" />
-        <Fact icon="scale" title="Scale to zero" sub="Parked apps cost nothing" />
+        <Fact icon="scale" title="Scale to zero" sub="Parked workflows cost nothing" />
         <Fact
           icon="shield"
           title="Hardware isolation"
