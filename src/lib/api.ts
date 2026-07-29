@@ -486,37 +486,82 @@ async function request<T>(
 
 /* ─────────────────────────────── Auth ──────────────────────────────────── */
 
+/** Body of a successful POST /login or /signup. No API key is ever returned. */
 export interface LoginResult {
-  status: string;
-  account: unknown;
+  account_id: string;
+  plan: Plan;
+}
+
+/** Minimum accepted by the backend (NIST-style: length only, no complexity). */
+export const PASSWORD_MIN_LENGTH = 12;
+
+/**
+ * Shared form-post helper for the auth aliases. These endpoints answer with an
+ * RFC 7807 problem document, so the body is parsed into an ApiError rather
+ * than surfaced raw — dumping `{"type":"","title":"Validation failed",…}` into
+ * the UI is how this page used to report a missing password.
+ */
+async function authPost(path: string, fields: Record<string, string>): Promise<LoginResult> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams(fields).toString(),
+    });
+  } catch (err) {
+    throw new ApiError(null, 0, `Network error: could not reach the control plane (${(err as Error).message})`);
+  }
+
+  if (!res.ok) {
+    let problem: Problem | null = null;
+    try {
+      problem = (await res.json()) as Problem;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(problem, res.status, `Sign-in failed (HTTP ${res.status})`);
+  }
+
+  return (await res.json().catch(() => ({ account_id: '', plan: 'free' as Plan }))) as LoginResult;
 }
 
 /**
- * POST /login — the backend upserts the account, sets the HttpOnly faas_sid
- * cookie, emails a magic link, and returns JSON. We deliberately ignore the
- * api_key it echoes back and rely on the cookie for session auth.
+ * POST /login — email + password, verified against an Argon2id hash. Sets the
+ * HttpOnly faas_sid session cookie on success.
+ *
+ * Anti-enumeration: an unknown email, a wrong password and an OAuth-only
+ * account all return the same 401, so the UI must not try to distinguish them.
  */
-export async function login(email: string): Promise<LoginResult> {
-  const res = await fetch('/api/auth/login', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body: new URLSearchParams({ email }).toString(),
+export const login = (email: string, password: string) =>
+  authPost('/api/auth/login', { email, password });
+
+/**
+ * POST /signup — creates the account and signs in. Idempotent when the email
+ * exists AND the password matches; a colliding email with a different password
+ * returns 401, not 409, to avoid leaking which addresses are registered.
+ */
+export const signup = (email: string, password: string) =>
+  authPost('/api/auth/signup', { email, password });
+
+/** POST /login/forgot — always succeeds, so it can't be used to probe emails. */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await authPost('/api/auth/forgot', { email }).catch((err) => {
+    // A 4xx here would itself leak whether the address exists; only surface
+    // transport failures.
+    if (err instanceof ApiError && err.status >= 400 && err.status < 500) return;
+    throw err;
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new ApiError(null, res.status, text || `Sign-in failed (HTTP ${res.status})`);
-  }
-  return (await res.json().catch(() => ({ status: 'ok', account: null }))) as LoginResult;
 }
 
 export async function logout(): Promise<void> {
   await fetch('/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
 }
 
+/** OAuth consent redirects. Both 302 to the provider; the callback mints the session. */
 export const googleAuthUrl = '/v1/auth/google';
-/** GitHub App install / OAuth callback entry point (see next.config rewrites). */
-export const githubAuthUrl = '/oauth/callback';
+export const githubAuthUrl = '/v1/auth/github';
 
 /* ────────────────────────────── Account ────────────────────────────────── */
 

@@ -1,17 +1,21 @@
 'use client';
 
 import React, { createContext, useContext, useCallback, useEffect, useState } from 'react';
-import { Account, getAccount, login as apiLogin, logout as apiLogout, ApiError } from './api';
+import {
+  Account, getAccount, login as apiLogin, signup as apiSignup, logout as apiLogout, ApiError,
+} from './api';
 
 interface AuthState {
   account: Account | null;
   loading: boolean;
   /**
-   * Signs in by email. The backend sets the faas_sid session cookie
-   * synchronously, so this resolves with the authenticated account (or
-   * null if the session cookie could not be established).
+   * Signs in with email + password. The backend sets the faas_sid session
+   * cookie synchronously, so this resolves with the authenticated account
+   * (or null if the cookie could not be established).
    */
-  signIn: (email: string) => Promise<Account | null>;
+  signIn: (email: string, password: string) => Promise<Account | null>;
+  /** Creates the account and signs in, in one call. */
+  signUp: (email: string, password: string) => Promise<Account | null>;
   signOut: () => Promise<void>;
   refresh: () => Promise<Account | null>;
 }
@@ -46,8 +50,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const signIn = useCallback(
-    async (email: string) => {
-      await apiLogin(email);
+    async (email: string, password: string) => {
+      await apiLogin(email, password);
+      return refresh();
+    },
+    [refresh],
+  );
+
+  const signUp = useCallback(
+    async (email: string, password: string) => {
+      await apiSignup(email, password);
       return refresh();
     },
     [refresh],
@@ -59,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ account, loading, signIn, signOut, refresh }}>
+    <AuthContext.Provider value={{ account, loading, signIn, signUp, signOut, refresh }}>
       {children}
     </AuthContext.Provider>
   );

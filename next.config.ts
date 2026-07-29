@@ -14,13 +14,22 @@ const nextConfig: NextConfig = {
         source: "/oauth/:path*",
         destination: `${backendUrl}/oauth/:path*`,
       },
-      // Auth: POST the login form to the backend /login. We proxy via a
-      // dedicated alias because /login is ALSO a Next.js page (the sign-in
-      // UI); afterFiles rewrites lose to filesystem routes, so a rewrite on
-      // "/login" itself would be shadowed by the page and POSTs would 405.
+      // Auth form posts go through /api/auth/* aliases, never through the
+      // real path. /login and /signup are ALSO Next.js pages, and afterFiles
+      // rewrites lose to filesystem routes — a rewrite on "/login" itself is
+      // shadowed by the page, so the POST 405s in production (dev masks it).
+      // Any future backend-proxied path must NOT share a name with a page.
       {
         source: "/api/auth/login",
         destination: `${backendUrl}/login`,
+      },
+      {
+        source: "/api/auth/signup",
+        destination: `${backendUrl}/signup`,
+      },
+      {
+        source: "/api/auth/forgot",
+        destination: `${backendUrl}/login/forgot`,
       },
       {
         source: "/auth/:path*",
