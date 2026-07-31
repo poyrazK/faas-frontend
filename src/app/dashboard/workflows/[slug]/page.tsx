@@ -14,13 +14,14 @@ import Link from 'next/link';
 import {
   getApp, updateApp, deleteApp, renameApp, wakeApp, parkApp, rollbackApp,
   listInstances, listSecrets, setSecret, deleteSecret, listAppDeployments,
-  listDomains, listCrons, listInvocations, getAppMetrics, isDegraded, appLogsUrl, ApiError,
+  listDomains, listCrons, listInvocations, getAppMetrics, isDegraded, appLogsUrl,
+  deployImage, deploySource, invokeApp, invokeAppAsync, type InvokeResult, ApiError,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, Mono, CopyButton, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { SectionCard, StatTile } from '@/components/ui/Panels';
 import { AreaChart } from '@/components/ui/Chart';
-import { AsyncBoundary, EmptyState, SkeletonTable, SkeletonBlock } from '@/components/ui/States';
+import { AsyncBoundary, EmptyState, SkeletonTable, SkeletonBlock, Spinner } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { Icon } from '@/components/ui/Icons';
@@ -29,8 +30,10 @@ import { DegradedNotice } from '@/components/ui/DegradedNotice';
 import { relativeTime } from '@/lib/format';
 import { invocationsByDay, totals, compact, ms } from '@/lib/series';
 
-const TABS = ['Overview', 'Deployments', 'Instances', 'Logs', 'Secrets', 'Configuration', 'Domains', 'Triggers'] as const;
+const TABS = ['Overview', 'Test', 'Deployments', 'Instances', 'Logs', 'Secrets', 'Configuration', 'Domains', 'Triggers'] as const;
 type Tab = (typeof TABS)[number];
+
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
 export default function WorkflowDetailPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -54,6 +57,21 @@ export default function WorkflowDetailPage() {
   const [secretVal, setSecretVal] = useState('');
   const [renameTo, setRenameTo] = useState('');
 
+  // Deploy
+  const [deployOpen, setDeployOpen] = useState(false);
+  const [deployMode, setDeployMode] = useState<'image' | 'source'>('image');
+  const [image, setImage] = useState('');
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [isDockerfile, setIsDockerfile] = useState(false);
+
+  // Test panel
+  const [testMethod, setTestMethod] = useState('POST');
+  const [testPath, setTestPath] = useState('/');
+  const [testBody, setTestBody] = useState('{\n  "hello": "world"\n}');
+  const [testAsync, setTestAsync] = useState(false);
+  const [testResult, setTestResult] = useState<InvokeResult | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
   const mine = useMemo(
     () => (invocations.data?.invocations ?? []).filter((r) => r.app_id === app.data?.id),
     [invocations.data, app.data],
@@ -73,6 +91,67 @@ export default function WorkflowDetailPage() {
       instances.reload();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : `${name} failed.`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runDeploy(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy('deploy');
+    try {
+      const dep =
+        deployMode === 'image'
+          ? await deployImage(slug, image.trim())
+          : await deploySource(slug, sourceFile!, {
+              dockerfile: isDockerfile,
+              kind: app.data?.type,
+              runtime: app.data?.runtime ?? undefined,
+            });
+      // 202 Accepted: the build is queued, not finished. Send the user
+      // straight to the build log rather than implying the deploy is done.
+      toast.success('Build queued.');
+      setDeployOpen(false);
+      setImage('');
+      setSourceFile(null);
+      deployments.reload();
+      router.push(`/dashboard/deployments/${dep.id}`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not start the deployment.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runTest(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy('test');
+    setTestResult(null);
+    setTestError(null);
+    try {
+      let payload: Record<string, unknown> | undefined;
+      if (testBody.trim()) {
+        try {
+          payload = JSON.parse(testBody) as Record<string, unknown>;
+        } catch {
+          setTestError('Payload must be valid JSON.');
+          return;
+        }
+      }
+      const input = { method: testMethod, path: testPath.trim() || '/', payload };
+      const res = testAsync ? await invokeAppAsync(slug, input) : await invokeApp(slug, input);
+      setTestResult(res);
+      invocations.reload();
+    } catch (err) {
+      // 504 is a long-poll timeout, not a failure: the invocation is still
+      // running and its row can be read back later.
+      if (err instanceof ApiError && err.status === 504) {
+        setTestError(
+          'The request exceeded the long-poll window (30s on paid plans, 5s on Free). The invocation is still running — check Recent dispatches for its result.',
+        );
+      } else {
+        setTestError(err instanceof ApiError ? err.message : 'Invoke failed.');
+      }
     } finally {
       setBusy(null);
     }
@@ -120,6 +199,12 @@ export default function WorkflowDetailPage() {
                   <a href={a.url} target="_blank" rel="noreferrer" className="btn btn-secondary">
                     <Icon name="external" size={14} /> Open
                   </a>
+                  <button className="btn btn-secondary" onClick={() => setTab('Test')}>
+                    <Icon name="play" size={13} /> Test
+                  </button>
+                  <button className="btn btn-primary" onClick={() => setDeployOpen(true)}>
+                    <Icon name="deployments" size={14} /> Deploy
+                  </button>
                   <button className="btn btn-secondary" disabled={!!busy} onClick={() => act('wake', () => wakeApp(slug), 'Wake requested.')}>
                     <Icon name="bolt" size={14} /> Wake
                   </button>
@@ -231,6 +316,100 @@ export default function WorkflowDetailPage() {
               </div>
             )}
 
+            {/* ── Test ───────────────────────────────────────────────── */}
+            {tab === 'Test' && (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <SectionCard title="Invoke this workflow">
+                  <form onSubmit={runTest} className="space-y-4 px-5 py-5">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="label">Method</label>
+                        <select className="field" value={testMethod} onChange={(e) => setTestMethod(e.target.value)}>
+                          {HTTP_METHODS.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="label">Path</label>
+                        <input className="field mono" value={testPath} onChange={(e) => setTestPath(e.target.value)} placeholder="/" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="label">Payload (JSON)</label>
+                      <textarea className="field mono" rows={8} value={testBody} onChange={(e) => setTestBody(e.target.value)} />
+                      <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                        Leave empty to send no body.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="seg">
+                        <button type="button" data-active={!testAsync} onClick={() => setTestAsync(false)}>
+                          Wait for result
+                        </button>
+                        <button type="button" data-active={testAsync} onClick={() => setTestAsync(true)}>
+                          Fire and forget
+                        </button>
+                      </div>
+                      <button className="btn btn-primary" type="submit" disabled={busy === 'test'}>
+                        {busy === 'test' ? <Spinner size={14} /> : <Icon name="play" size={13} />}
+                        {busy === 'test' ? 'Invoking…' : 'Send'}
+                      </button>
+                    </div>
+
+                    <p className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+                      {testAsync
+                        ? 'Returns immediately with an invocation id; the result lands in the invocations table.'
+                        : 'The server long-polls until the run finishes — up to 30s on paid plans, 5s on Free.'}
+                    </p>
+                  </form>
+                </SectionCard>
+
+                <SectionCard title="Response">
+                  {testError ? (
+                    <div className="px-5 py-5">
+                      <div
+                        className="rounded-lg px-3 py-2.5 text-sm"
+                        style={{ background: '#fdf6e7', color: '#7c4f08', border: '1px solid #f2e2bd' }}
+                      >
+                        {testError}
+                      </div>
+                    </div>
+                  ) : testResult ? (
+                    <div className="px-5 py-5">
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <StatusBadge state={testResult.status} />
+                        <Mono>{testResult.id.slice(0, 16)}</Mono>
+                        <CopyButton value={testResult.id} label="Copy id" />
+                      </div>
+                      {testResult.result ? (
+                        <pre
+                          className="mono overflow-auto rounded-lg px-4 py-3 text-xs leading-relaxed"
+                          style={{ background: 'var(--color-surface-code)', color: '#e7e5e1', maxHeight: 340 }}
+                        >
+                          {JSON.stringify(testResult.result, null, 2)}
+                        </pre>
+                      ) : (
+                        <p className="text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+                          {testResult.status === 'pending' || testResult.status === 'dispatching'
+                            ? 'Queued. The result appears in the invocations table once the drain runs it.'
+                            : 'The run returned no body.'}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon="play"
+                      title="No invocation yet"
+                      hint="Send a request to see the response the workflow returns."
+                    />
+                  )}
+                </SectionCard>
+              </div>
+            )}
+
             {/* ── Deployments ─────────────────────────────────────────── */}
             {tab === 'Deployments' && (
               <SectionCard
@@ -255,7 +434,11 @@ export default function WorkflowDetailPage() {
                       <tbody>
                         {d.items.map((dep) => (
                           <tr key={dep.id}>
-                            <td className="cell-primary"><Mono>{dep.id.slice(0, 12)}</Mono></td>
+                            <td className="cell-primary">
+                              <Link href={`/dashboard/deployments/${dep.id}`} style={{ color: 'var(--color-brand)' }}>
+                                <Mono>{dep.id.slice(0, 12)}</Mono>
+                              </Link>
+                            </td>
                             <td>{dep.kind}</td>
                             <td className="mono text-xs" style={{ color: 'var(--color-ink-muted)' }}>
                               {dep.image_digest ? dep.image_digest.slice(0, 20) + '…' : '—'}
@@ -562,6 +745,99 @@ export default function WorkflowDetailPage() {
           </>
         )}
       </AsyncBoundary>
+
+      {/* Deploy */}
+      <Modal
+        open={deployOpen}
+        onClose={() => setDeployOpen(false)}
+        width={560}
+        title={`Deploy ${slug}`}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setDeployOpen(false)}>Cancel</button>
+            <button
+              className="btn btn-primary"
+              form="deploy-form"
+              type="submit"
+              disabled={busy === 'deploy' || (deployMode === 'image' ? !image.trim() : !sourceFile)}
+            >
+              {busy === 'deploy' ? 'Starting build…' : 'Start deployment'}
+            </button>
+          </>
+        }
+      >
+        <form id="deploy-form" onSubmit={runDeploy} className="space-y-4">
+          <div className="seg w-full">
+            <button
+              type="button"
+              className="flex-1"
+              data-active={deployMode === 'image'}
+              onClick={() => setDeployMode('image')}
+            >
+              Prebuilt image
+            </button>
+            <button
+              type="button"
+              className="flex-1"
+              data-active={deployMode === 'source'}
+              onClick={() => setDeployMode('source')}
+            >
+              Source upload
+            </button>
+          </div>
+
+          {deployMode === 'image' ? (
+            <div>
+              <label className="label">OCI image reference</label>
+              <input
+                className="field mono"
+                placeholder="registry.example.com/app@sha256:…"
+                value={image}
+                onChange={(e) => setImage(e.target.value)}
+              />
+              <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                Digest-pinned references are strongly preferred — a mutable tag makes the deployed bytes
+                unreproducible.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="label">Source tarball</label>
+                <input
+                  className="field"
+                  type="file"
+                  accept=".tar,.tar.gz,.tgz,application/gzip,application/x-tar"
+                  onChange={(e) => setSourceFile(e.target.files?.[0] ?? null)}
+                />
+                <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                  {sourceFile
+                    ? `${sourceFile.name} · ${(sourceFile.size / 1024 / 1024).toFixed(1)} MB`
+                    : 'Plan-capped at 100 MB on Free and Hobby, 250 MB on Pro and Scale.'}
+                </p>
+              </div>
+              <label className="flex items-start gap-2.5 text-sm" style={{ color: 'var(--color-ink-soft)' }}>
+                <input
+                  type="checkbox"
+                  checked={isDockerfile}
+                  onChange={(e) => setIsDockerfile(e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  Build from a Dockerfile in the archive
+                  <span className="block text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                    Otherwise the builder auto-detects the runtime from the source.
+                  </span>
+                </span>
+              </label>
+            </>
+          )}
+
+          <p className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+            Deploying queues a build — it does not complete inline. You&apos;ll be taken to the build log to watch it.
+          </p>
+        </form>
+      </Modal>
 
       {/* Delete confirmation */}
       <Modal

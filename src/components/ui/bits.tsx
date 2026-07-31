@@ -164,25 +164,124 @@ export function Delta({
   );
 }
 
-/** Row overflow menu trigger. Kept dumb — pages own the menu contents. */
+/**
+ * Row overflow menu. This is the primary action surface on most tables, so it
+ * has to be operable without a mouse:
+ *
+ *   • ArrowDown / ArrowUp move between items, wrapping at the ends
+ *   • Home / End jump to the first and last item
+ *   • Escape closes and returns focus to the trigger
+ *   • Opening with the keyboard focuses the first item
+ *   • Clicking outside closes it — via a real listener rather than an
+ *     overlay div, which would have swallowed the click that dismissed it
+ *
+ * Roles follow the ARIA menu pattern so a screen reader announces the item
+ * count and position.
+ */
 export function RowMenu({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  const items = React.useCallback(
+    () => Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []),
+    [],
+  );
+
+  const close = React.useCallback(
+    (returnFocus = true) => {
+      setOpen(false);
+      if (returnFocus) triggerRef.current?.focus();
+    },
+    [],
+  );
+
+  // Outside click and Escape are document-level so they work regardless of
+  // where focus currently sits.
+  React.useEffect(() => {
+    if (!open) return;
+
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!menuRef.current?.contains(t) && !triggerRef.current?.contains(t)) close(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+      }
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, close]);
+
+  function move(delta: number) {
+    const list = items();
+    if (list.length === 0) return;
+    const at = list.findIndex((el) => el === document.activeElement);
+    const next = at === -1 ? (delta > 0 ? 0 : list.length - 1) : (at + delta + list.length) % list.length;
+    list[next]?.focus();
+  }
+
+  function onMenuKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      move(1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      move(-1);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      items()[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      const list = items();
+      list[list.length - 1]?.focus();
+    }
+  }
+
+  function openWithKeyboard() {
+    setOpen(true);
+    // Focus lands after the menu paints.
+    requestAnimationFrame(() => items()[0]?.focus());
+  }
+
   return (
     <div className="relative flex justify-end">
-      <button className="btn-icon" onClick={() => setOpen((o) => !o)} aria-label="Row actions" aria-expanded={open}>
+      <button
+        ref={triggerRef}
+        className="btn-icon"
+        aria-label="Row actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (open) move(1);
+            else openWithKeyboard();
+          }
+        }}
+      >
         <Icon name="dots" size={16} />
       </button>
       {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div
-            className="card absolute right-0 top-9 z-50 min-w-[160px] overflow-hidden py-1"
-            style={{ boxShadow: 'var(--shadow-pop)' }}
-            onClick={() => setOpen(false)}
-          >
-            {children}
-          </div>
-        </>
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-orientation="vertical"
+          className="card absolute right-0 top-9 z-50 min-w-[170px] overflow-hidden py-1"
+          style={{ boxShadow: 'var(--shadow-pop)' }}
+          onKeyDown={onMenuKeyDown}
+          onClick={() => close()}
+        >
+          {children}
+        </div>
       )}
     </div>
   );
@@ -199,8 +298,10 @@ export function RowMenuItem({
 }) {
   return (
     <button
+      role="menuitem"
+      tabIndex={-1}
       onClick={onClick}
-      className="block w-full px-3 py-1.5 text-left text-sm transition-colors hover:bg-[var(--color-surface-subtle)]"
+      className="block w-full px-3 py-1.5 text-left text-sm transition-colors hover:bg-[var(--color-surface-subtle)] focus:bg-[var(--color-surface-subtle)] focus:outline-none"
       style={{ color: danger ? 'var(--color-danger)' : 'var(--color-ink-soft)' }}
     >
       {children}

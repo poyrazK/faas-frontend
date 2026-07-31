@@ -13,11 +13,12 @@ import Link from 'next/link';
 import { listApps, listAllInstances, parkApp, wakeApp, type Instance, ApiError } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, StatusBadge, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
-import { StatTile, TableFooter } from '@/components/ui/Panels';
-import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
+import { StatTile, CursorFooter } from '@/components/ui/Panels';
+import { EmptyState, SkeletonTable, ErrorState } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { useCursorPages } from '@/lib/usePaged';
 
 interface WorkerRow {
   instance: Instance;
@@ -25,30 +26,30 @@ interface WorkerRow {
 }
 
 /**
- * One account-scoped read, joined to the app list so each instance can show
- * its workflow slug. Instances carry only `app_id` on the wire.
+ * One account-scoped read per page, joined to the app list so each instance
+ * can show its workflow slug — instances carry only `app_id` on the wire.
  */
-async function loadWorkers(): Promise<{ workers: WorkerRow[]; appCount: number; more: boolean }> {
-  const [apps, page] = await Promise.all([listApps(), listAllInstances(100)]);
+async function loadWorkers(cursor?: string): Promise<{ items: WorkerRow[]; nextBefore?: string | null }> {
+  const [apps, page] = await Promise.all([listApps(), listAllInstances(50, cursor)]);
   const slugById = new Map(apps.map((a) => [a.id, a.slug]));
 
   return {
-    workers: page.instances.map((instance) => ({
+    items: page.instances.map((instance) => ({
       instance,
       slug: slugById.get(instance.app_id) ?? instance.app_id.slice(0, 8),
     })),
-    appCount: apps.length,
-    more: !!page.next_before,
+    nextBefore: page.next_before,
   };
 }
 
 export default function WorkersPage() {
-  const data = useAsync(loadWorkers, []);
   const toast = useToast();
   const [query, setQuery] = useState('');
   const [state, setState] = useState('all');
 
-  const workers = useMemo(() => data.data?.workers ?? [], [data.data]);
+  const apps = useAsync(listApps, []);
+  const paged = useCursorPages(loadWorkers, 'workers');
+  const workers = paged.items;
 
   const filtered = useMemo(
     () =>
@@ -69,19 +70,21 @@ export default function WorkersPage() {
         title="Workers"
         subtitle="Live Firecracker microVMs serving your workflows."
         actions={
-          <button className="btn-icon btn-icon-bordered" onClick={() => data.reload()} aria-label="Refresh">
+          <button className="btn-icon btn-icon-bordered" onClick={paged.reload} aria-label="Refresh">
             <Icon name="refresh" size={16} />
           </button>
         }
       />
 
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Live microVMs" value={workers.length} sub={`across ${data.data?.appCount ?? 0} workflows`} />
+        {/* Counts describe the page on screen, not the account, because a
+            forward-only cursor API gives no total. */}
+        <StatTile label="Live microVMs" value={workers.length} sub={paged.hasNext ? 'on this page' : `across ${apps.data?.length ?? 0} workflows`} />
         <StatTile label="Running" value={running} sub={`${workers.length - running} waking or parking`} />
         <StatTile label="Resident memory" value={`${totalRam} MB`} sub="Sum of allocated RAM" />
         <StatTile
           label="Parked workflows"
-          value={Math.max(0, (data.data?.appCount ?? 0) - new Set(workers.map((w) => w.slug)).size)}
+          value={Math.max(0, (apps.data?.length ?? 0) - new Set(workers.map((w) => w.slug)).size)}
           sub="Zero resident memory"
         />
       </div>
@@ -103,24 +106,22 @@ export default function WorkersPage() {
           </div>
         </div>
 
-        <AsyncBoundary
-          state={data}
-          isEmpty={() => filtered.length === 0}
-          skeleton={<SkeletonTable cols={6} rows={4} />}
-          empty={
-            query || state !== 'all' ? (
-              <EmptyState icon="search" title="No matches" hint="No worker matches these filters." />
-            ) : (
-              <EmptyState
-                icon="workers"
-                title="No live workers"
-                hint="Every workflow is parked as a snapshot right now — that's the idle state, and it costs nothing."
-                action={<Link href="/dashboard/workflows" className="btn btn-secondary">View workflows</Link>}
-              />
-            )
-          }
-        >
-          {() => (
+        {paged.loading && workers.length === 0 ? (
+          <SkeletonTable cols={6} rows={4} />
+        ) : paged.error ? (
+          <ErrorState error={paged.error} onRetry={paged.reload} />
+        ) : filtered.length === 0 ? (
+          query || state !== 'all' ? (
+            <EmptyState icon="search" title="No matches" hint="No worker matches these filters on this page." />
+          ) : (
+            <EmptyState
+              icon="workers"
+              title="No live workers"
+              hint="Every workflow is parked as a snapshot right now — that's the idle state, and it costs nothing."
+              action={<Link href="/dashboard/workflows" className="btn btn-secondary">View workflows</Link>}
+            />
+          )
+        ) : (
             <>
               <div className="overflow-x-auto">
                 <table className="dtable">
@@ -154,7 +155,7 @@ export default function WorkersPage() {
                                 try {
                                   await wakeApp(slug);
                                   toast.success(`${slug} waking.`);
-                                  data.reload();
+                                  paged.reload();
                                 } catch (err) {
                                   toast.error(err instanceof ApiError ? err.message : 'Wake failed.');
                                 }
@@ -167,7 +168,7 @@ export default function WorkersPage() {
                                 try {
                                   await parkApp(slug);
                                   toast.success(`${slug} parked.`);
-                                  data.reload();
+                                  paged.reload();
                                 } catch (err) {
                                   toast.error(err instanceof ApiError ? err.message : 'Park failed.');
                                 }
@@ -182,17 +183,18 @@ export default function WorkersPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={filtered.length} total={filtered.length} noun="workers" />
+              <CursorFooter
+                count={filtered.length}
+                noun="workers"
+                page={paged.page}
+                hasPrev={paged.hasPrev}
+                hasNext={paged.hasNext}
+                onPrev={paged.prev}
+                onNext={paged.next}
+              />
             </>
           )}
-        </AsyncBoundary>
       </div>
-
-      {data.data?.more && (
-        <p className="mt-3 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-          Showing the newest 100 instances. Older ones exist beyond this page.
-        </p>
-      )}
     </div>
   );
 }

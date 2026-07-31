@@ -14,8 +14,9 @@ import Link from 'next/link';
 import { listApps, listAllSecrets, setSecret, deleteSecret, ApiError } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
-import { TableFooter } from '@/components/ui/Panels';
-import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
+import { CursorFooter } from '@/components/ui/Panels';
+import { EmptyState, SkeletonTable, ErrorState } from '@/components/ui/States';
+import { useCursorPages } from '@/lib/usePaged';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { Icon } from '@/components/ui/Icons';
@@ -28,21 +29,21 @@ interface Row {
   updated_at: string;
 }
 
-async function loadSecrets(): Promise<{ rows: Row[]; more: boolean }> {
-  const page = await listAllSecrets(100);
+async function loadSecrets(cursor?: string): Promise<{ items: Row[]; nextBefore?: string | null }> {
+  const page = await listAllSecrets(50, cursor);
   return {
-    rows: page.secrets.map((s) => ({
+    items: page.secrets.map((s) => ({
       key: s.key,
       slug: s.app_slug,
       created_at: s.created_at,
       updated_at: s.updated_at,
     })),
-    more: !!page.next_before,
+    nextBefore: page.next_before,
   };
 }
 
 export default function SecretsPage() {
-  const data = useAsync(loadSecrets, []);
+  const paged = useCursorPages(loadSecrets, 'secrets');
   const apps = useAsync(listApps, []);
   const toast = useToast();
 
@@ -54,7 +55,7 @@ export default function SecretsPage() {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const rows = useMemo(() => data.data?.rows ?? [], [data.data]);
+  const rows = paged.items;
 
   const filtered = useMemo(
     () =>
@@ -75,7 +76,7 @@ export default function SecretsPage() {
       setOpen(false);
       setKey('');
       setValue('');
-      data.reload();
+      paged.reload();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not save secret.');
     } finally {
@@ -110,28 +111,26 @@ export default function SecretsPage() {
           </div>
         </div>
 
-        <AsyncBoundary
-          state={data}
-          isEmpty={() => filtered.length === 0}
-          skeleton={<SkeletonTable cols={4} rows={4} />}
-          empty={
-            query || scope !== 'all' ? (
-              <EmptyState icon="search" title="No matches" hint="No secret matches these filters." />
-            ) : (
-              <EmptyState
-                icon="secrets"
-                title="No secrets"
-                hint="Store API tokens and connection strings here. They're sealed at rest and injected into the guest environment."
-                action={
-                  <button className="btn btn-primary" onClick={() => setOpen(true)} disabled={!apps.data?.length}>
-                    New Secret
-                  </button>
-                }
-              />
-            )
-          }
-        >
-          {() => (
+        {paged.loading && rows.length === 0 ? (
+          <SkeletonTable cols={4} rows={4} />
+        ) : paged.error ? (
+          <ErrorState error={paged.error} onRetry={paged.reload} />
+        ) : filtered.length === 0 ? (
+          query || scope !== 'all' ? (
+            <EmptyState icon="search" title="No matches" hint="No secret matches these filters on this page." />
+          ) : (
+            <EmptyState
+              icon="secrets"
+              title="No secrets"
+              hint="Store API tokens and connection strings here. They're sealed at rest and injected into the guest environment."
+              action={
+                <button className="btn btn-primary" onClick={() => setOpen(true)} disabled={!apps.data?.length}>
+                  New Secret
+                </button>
+              }
+            />
+          )
+        ) : (
             <>
               <div className="overflow-x-auto">
                 <table className="dtable">
@@ -178,7 +177,7 @@ export default function SecretsPage() {
                                 try {
                                   await deleteSecret(r.slug, r.key);
                                   toast.success(`${r.key} deleted.`);
-                                  data.reload();
+                                  paged.reload();
                                 } catch (err) {
                                   toast.error(err instanceof ApiError ? err.message : 'Delete failed.');
                                 }
@@ -193,17 +192,18 @@ export default function SecretsPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={filtered.length} total={filtered.length} noun="secrets" />
+              <CursorFooter
+                count={filtered.length}
+                noun="secrets"
+                page={paged.page}
+                hasPrev={paged.hasPrev}
+                hasNext={paged.hasNext}
+                onPrev={paged.prev}
+                onNext={paged.next}
+              />
             </>
           )}
-        </AsyncBoundary>
       </div>
-
-      {data.data?.more && (
-        <p className="mt-3 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-          Showing the first 100 secrets. More exist beyond this page.
-        </p>
-      )}
 
       <Modal
         open={open}

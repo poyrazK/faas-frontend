@@ -106,7 +106,11 @@ export default function DeploymentsPage() {
                       const slug = appSlug(d.app_id);
                       return (
                         <tr key={d.id}>
-                          <td className="cell-primary"><Mono>{d.id.slice(0, 12)}</Mono></td>
+                          <td className="cell-primary">
+                            <Link href={`/dashboard/deployments/${d.id}`} style={{ color: 'var(--color-brand)' }}>
+                              <Mono>{d.id.slice(0, 12)}</Mono>
+                            </Link>
+                          </td>
                           <td>
                             {slug ? (
                               <Link href={`/dashboard/workflows/${slug}`} style={{ color: 'var(--color-brand)' }}>{slug}</Link>

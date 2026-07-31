@@ -6,12 +6,13 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import {
   exportAccount, deleteAccount, restoreAccount, listAuditEvents,
-  listSessions, revokeSession, revokeAllSessions, ApiError,
+  listSessions, revokeSession, revokeAllSessions,
+  listApps, listInstallRepos, bindAppInstall, ApiError,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, CopyButton } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
-import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
+import { AsyncBoundary, EmptyState, SkeletonTable, Spinner } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { Icon } from '@/components/ui/Icons';
@@ -36,6 +37,7 @@ export default function SettingsPage() {
   const toast = useToast();
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [bindOpen, setBindOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   if (!account) return null;
@@ -108,15 +110,44 @@ export default function SettingsPage() {
             <div>
               <div className="text-sm font-medium">GitHub</div>
               <div className="text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-                {account.github_install_id ? `App installed · id ${account.github_install_id}` : 'Not connected — deploy from the CLI instead'}
+                {account.github_install_id
+                  ? `App installed · installation ${account.github_install_id}`
+                  : 'Not connected — deploy from the CLI or the console instead'}
               </div>
             </div>
           </div>
-          <span className={`badge ${account.github_install_id ? 'badge-brand' : 'badge-muted'}`}>
-            {account.github_install_id ? 'Connected' : 'Not connected'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={`badge ${account.github_install_id ? 'badge-brand' : 'badge-muted'}`}>
+              {account.github_install_id ? 'Connected' : 'Not connected'}
+            </span>
+            {account.github_install_id ? (
+              <button className="btn btn-secondary btn-sm" onClick={() => setBindOpen(true)}>
+                <Icon name="deployments" size={13} /> Bind a repo
+              </button>
+            ) : (
+              <a href="/v1/auth/github" className="btn btn-secondary btn-sm">
+                <Icon name="external" size={13} /> Connect
+              </a>
+            )}
+          </div>
         </div>
+
+        {account.github_install_id && (
+          <div className="px-5 pb-5">
+            <p className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+              Binding a repository to a workflow lets pushes on the production branch trigger a deployment.
+            </p>
+          </div>
+        )}
       </SectionCard>
+
+      {/* The account carries the installation id as a string; the install
+          endpoints take it as an int64. */}
+      <BindRepoModal
+        open={bindOpen}
+        onClose={() => setBindOpen(false)}
+        installationId={account.github_install_id ? Number(account.github_install_id) : null}
+      />
 
       <SectionCard
         className="mt-4"
@@ -304,6 +335,131 @@ export default function SettingsPage() {
         </p>
       </Modal>
     </div>
+  );
+}
+
+/* ─────────────────────────── Bind repo modal ───────────────────────────── */
+
+/**
+ * Picks a repo from the account's GitHub App installation and binds it to a
+ * workflow. Repos load lazily on open, so a Settings visit doesn't hit GitHub
+ * for every page view.
+ */
+function BindRepoModal({
+  open,
+  onClose,
+  installationId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  installationId: number | null;
+}) {
+  const toast = useToast();
+  const apps = useAsync(listApps, []);
+  const repos = useAsync(
+    () => (open && installationId ? listInstallRepos(installationId) : Promise.resolve([])),
+    [open, installationId],
+  );
+
+  const [slug, setSlug] = useState('');
+  const [repo, setRepo] = useState('');
+  const [branch, setBranch] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const selected = (repos.data ?? []).find((r) => r.full_name === repo);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!installationId) return;
+    setBusy(true);
+    try {
+      await bindAppInstall(slug, installationId, repo, branch.trim() || undefined);
+      toast.success(`${repo} bound to ${slug}.`);
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not bind the repository.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      width={520}
+      title="Bind a repository"
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" form="bind-repo" type="submit" disabled={busy || !slug || !repo}>
+            {busy ? 'Binding…' : 'Bind repository'}
+          </button>
+        </>
+      }
+    >
+      <form id="bind-repo" onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="label">Workflow</label>
+          <select className="field" value={slug} onChange={(e) => setSlug(e.target.value)} required>
+            <option value="">Select a workflow…</option>
+            {(apps.data ?? []).map((a) => (
+              <option key={a.id} value={a.slug}>{a.slug}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="label">Repository</label>
+          {repos.error ? (
+            <p className="text-sm" style={{ color: 'var(--color-danger)' }}>
+              Could not list repositories: {repos.error.message}
+            </p>
+          ) : repos.loading ? (
+            <div className="flex items-center gap-2 py-2 text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+              <Spinner size={14} /> Loading repositories…
+            </div>
+          ) : (repos.data ?? []).length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+              The installation can&apos;t see any repositories. Grant the Gregale GitHub App access to a repo, then
+              reopen this dialog.
+            </p>
+          ) : (
+            <select
+              className="field"
+              value={repo}
+              onChange={(e) => {
+                setRepo(e.target.value);
+                setBranch('');
+              }}
+              required
+            >
+              <option value="">Select a repository…</option>
+              {(repos.data ?? []).map((r) => (
+                <option key={r.id} value={r.full_name}>
+                  {r.full_name}
+                  {r.private ? ' (private)' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div>
+          <label className="label">Production branch</label>
+          <input
+            className="field mono"
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            placeholder={selected?.default_branch ?? 'default branch'}
+          />
+          <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+            Leave empty to use the repository&apos;s default branch
+            {selected ? ` (${selected.default_branch})` : ''}.
+          </p>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

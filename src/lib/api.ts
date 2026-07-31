@@ -371,6 +371,77 @@ export interface SessionList {
   sessions: SessionInfo[];
 }
 
+/* ──────────────────────── GitHub App installation ──────────────────────── */
+
+/** A repo the account's GitHub App installation can see. */
+export interface InstallRepo {
+  id: number;
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+}
+
+export interface InstallBindResult {
+  binding_id?: string;
+}
+
+/**
+ * Lists repos for one installation. This is a POST, not a GET, because the
+ * installation id travels in the body.
+ *
+ * SPEC ODDITY: the endpoint reuses `InstallBindRequest`, which declares
+ * `repo_full_name` as required — a field that has no meaning when listing.
+ * Only `installation_id` is sent here; inventing a placeholder repo name to
+ * satisfy a schema would put fiction on the wire. If the server enforces the
+ * shared schema this surfaces as a validation error the caller can act on.
+ */
+export const listInstallRepos = (installationId: number) =>
+  request<InstallRepo[]>('/v1/install/repos/list', {
+    method: 'POST',
+    body: JSON.stringify({ installation_id: installationId }),
+    cache: 'no-store',
+  });
+
+/** Persists the (account, app, installation, repo, branch) bind row. */
+export const bindAppInstall = (
+  slug: string,
+  installationId: number,
+  repoFullName: string,
+  productionBranch?: string,
+) =>
+  request<InstallBindResult>(`/v1/apps/${slug}/install/bind`, {
+    method: 'POST',
+    body: JSON.stringify({
+      installation_id: installationId,
+      repo_full_name: repoFullName,
+      ...(productionBranch ? { production_branch: productionBranch } : {}),
+    }),
+  });
+
+/* ────────────────────── Build provenance / SBOM (#197) ─────────────────── */
+
+/**
+ * "What actually ran" record for one successful build. Empty strings are
+ * meaningful: they mark columns the Phase-3 populator (cosign + syft) has not
+ * filled yet, so the UI must distinguish empty from absent.
+ */
+export interface BuildProvenance {
+  id: string;
+  build_id: string;
+  buildkit_version?: string;
+  railpack_version?: string;
+  base_digest?: string;
+  source_sha256: string;
+  source_url?: string;
+  commit_sha?: string;
+  plan: string;
+  runner_digest?: string;
+  builder_node_id: string;
+  started_at: string;
+  finished_at: string;
+  sbom_storage_key?: string | null;
+}
+
 /* ───────────────────────────── Invoices (#259) ─────────────────────────── */
 
 export interface Invoice {
@@ -462,7 +533,10 @@ async function request<T>(
       credentials: 'include',
       headers: {
         Accept: 'application/json',
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        // FormData must set its own Content-Type: the browser appends the
+        // multipart boundary, and forcing application/json here would produce
+        // a body the server cannot parse.
+        ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
         ...(init.headers as Record<string, string>),
       },
     });
@@ -714,6 +788,45 @@ export const getDeployment = (id: string) => request<Deployment>(`/v1/deployment
 export const listAppDeployments = (slug: string) =>
   request<DeploymentList>(`/v1/apps/${slug}/deployments`, { cache: 'no-store' });
 
+/**
+ * Deploy a prebuilt, digest-pinned OCI image. Returns 202 — the build is
+ * queued, not finished; poll the deployment or watch its build log.
+ */
+export const deployImage = (slug: string, image: string) =>
+  request<Deployment>(`/v1/apps/${slug}/deployments`, {
+    method: 'POST',
+    body: JSON.stringify({ image }),
+  });
+
+/**
+ * Deploy from a source tarball. Sent as multipart, so `Content-Type` is left
+ * to the browser — setting it manually would omit the multipart boundary and
+ * the backend would reject the body.
+ */
+export async function deploySource(
+  slug: string,
+  file: File,
+  opts: { dockerfile?: boolean; kind?: AppType; runtime?: Runtime } = {},
+): Promise<Deployment> {
+  const form = new FormData();
+  form.append('source', file);
+  if (opts.dockerfile) form.append('dockerfile', 'true');
+  if (opts.kind) form.append('kind', opts.kind);
+  if (opts.runtime) form.append('runtime', opts.runtime);
+
+  return request<Deployment>(`/v1/apps/${slug}/deployments`, { method: 'POST', body: form });
+}
+
+/** CycloneDX SBOM for a build. Served as vnd.cyclonedx+json. */
+export const getBuildSbom = (id: string) =>
+  request<Record<string, unknown>>(`/v1/builds/${id}/sbom`, {
+    headers: { Accept: 'application/vnd.cyclonedx+json' },
+    cache: 'no-store',
+  });
+
+export const getBuildProvenance = (id: string) =>
+  request<BuildProvenance>(`/v1/builds/${id}/provenance`, { cache: 'no-store' });
+
 /* ───────────────────────────── Invocations ─────────────────────────────── */
 
 /**
@@ -730,6 +843,31 @@ export const listInvocations = (limit = 100, before?: string) => {
 export const getInvocation = (id: string) => request<Invocation>(`/v1/invocations/${id}`);
 
 /* ────────────────────────── Queues & delayed tasks ─────────────────────── */
+
+export interface InvokeInput {
+  payload?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  method?: string;
+  path?: string;
+}
+
+export interface InvokeResult {
+  id: string;
+  status: InvocationState;
+  result?: Record<string, unknown>;
+}
+
+/**
+ * Sync invoke: the server long-polls until the drain reaches a terminal
+ * state, capped at 30s on paid plans and 5s on Free. A 504 is NOT a failure —
+ * the work continues, and the row can be read back from /v1/invocations/{id}.
+ */
+export const invokeApp = (slug: string, input: InvokeInput) =>
+  request<InvokeResult>(`/v1/apps/${slug}/invoke`, { method: 'POST', body: JSON.stringify(input) });
+
+/** Async invoke: returns immediately with the row id. */
+export const invokeAppAsync = (slug: string, input: InvokeInput) =>
+  request<InvokeResult>(`/v1/apps/${slug}/invoke/async`, { method: 'POST', body: JSON.stringify(input) });
 
 export const queueSend = (slug: string, payload: Record<string, unknown>) =>
   request<Invocation>(`/v1/apps/${slug}/queues/send`, { method: 'POST', body: JSON.stringify({ payload }) });
@@ -829,3 +967,23 @@ export const getUsageSummary = (month?: string) =>
 /** Per-app rows for a billing month (YYYY-MM); defaults to the current month. */
 export const getUsageByApp = (month?: string) =>
   request<AppUsage[]>(`/v1/usage${month ? `?month=${month}` : ''}`, { cache: 'no-store' });
+
+/* ───────────────────────────── CLI Device Auth ──────────────────────────── */
+
+export interface CliAuthClaimInput {
+  code: string;
+  email: string;
+}
+
+/** Claim a CLI authorization device code. */
+export const claimCliAuthCode = async (code: string, email: string) => {
+  const form = new URLSearchParams();
+  form.set('code', code);
+  form.set('email', email);
+  return request<void>('/api/cli-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  }, 'none');
+};
+

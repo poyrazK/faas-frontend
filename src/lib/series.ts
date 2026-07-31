@@ -17,7 +17,7 @@
    table, so these series describe background execution, not total requests.
    ========================================================================== */
 
-import type { Invocation, InvocationState, AppUsage, App } from './api';
+import type { Invocation, AppUsage, App } from './api';
 
 export interface Point {
   /** Bucket start, midnight UTC. */
@@ -69,7 +69,15 @@ export interface Totals {
   completed: number;
   failed: number;
   pending: number;
-  /** Failed ÷ terminal rows, as a percentage. 0 when nothing has finished. */
+  /**
+   * Failed ÷ (completed + failed), as a percentage. 0 when nothing has run.
+   *
+   * Cancelled rows are deliberately NOT in the denominator: work that was
+   * withdrawn before finishing never got the chance to succeed or fail, and
+   * counting it would dilute the rate — a burst of cancellations would read
+   * as an improvement. This also matches the "N failed of M finished" label
+   * the UI prints beside the figure.
+   */
   errorRatePct: number;
   /**
    * Mean created_at → completed_at across completed rows, in ms. This is
@@ -80,12 +88,11 @@ export interface Totals {
   p95CompletionMs: number | null;
 }
 
-const TERMINAL: InvocationState[] = ['completed', 'failed', 'cancelled'];
-
 export function totals(rows: Invocation[]): Totals {
   const completed = rows.filter((r) => r.state === 'completed');
   const failed = rows.filter((r) => r.state === 'failed');
-  const terminal = rows.filter((r) => TERMINAL.includes(r.state));
+  /** Rows that actually ran to a verdict — cancelled ones did not. */
+  const finished = completed.length + failed.length;
   const pending = rows.filter((r) => r.state === 'pending' || r.state === 'dispatching');
 
   const durations = completed
@@ -105,7 +112,7 @@ export function totals(rows: Invocation[]): Totals {
     completed: completed.length,
     failed: failed.length,
     pending: pending.length,
-    errorRatePct: terminal.length ? (failed.length / terminal.length) * 100 : 0,
+    errorRatePct: finished ? (failed.length / finished) * 100 : 0,
     avgCompletionMs: mean,
     p95CompletionMs: p95,
   };

@@ -15,6 +15,7 @@ import { listInvoices, getUsageSummary, type Invoice } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, FilterSelect, Mono } from '@/components/ui/bits';
 import { StatTile, SectionCard, TableFooter } from '@/components/ui/Panels';
+import { usePage } from '@/lib/usePaged';
 import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
@@ -48,6 +49,8 @@ export default function InvoicesPage() {
 
   const items = useMemo(() => invoices.data?.items ?? [], [invoices.data]);
   const filtered = items.filter((i) => status === 'all' || i.status === status);
+
+  const pg = usePage(filtered, 15);
 
   const paidTotal = items.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount_paid_cents, 0);
   const outstanding = items.filter((i) => i.status === 'open').reduce((s, i) => s + (i.total_cents - i.amount_paid_cents), 0);
@@ -125,7 +128,7 @@ export default function InvoicesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((inv) => (
+                    {pg.items.map((inv) => (
                       <tr key={inv.id}>
                         <td className="cell-primary">
                           {inv.number ? inv.number : <Mono>{inv.provider_invoice_id.slice(0, 16)}</Mono>}
@@ -162,7 +165,15 @@ export default function InvoicesPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={filtered.length} total={filtered.length} noun="invoices" />
+              <TableFooter
+                from={pg.from}
+                to={pg.to}
+                total={pg.total}
+                noun="invoices"
+                page={pg.page}
+                pageCount={pg.pageCount}
+                onPage={pg.setPage}
+              />
             </>
           )}
         </AsyncBoundary>

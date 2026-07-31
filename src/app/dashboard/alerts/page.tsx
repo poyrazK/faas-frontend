@@ -23,6 +23,7 @@ import {
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, FilterSelect, Mono, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { StatTile, SectionCard, TableFooter } from '@/components/ui/Panels';
+import { usePage } from '@/lib/usePaged';
 import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
@@ -94,6 +95,8 @@ export default function AlertsPage() {
 
   const list = useMemo(() => rules.data ?? [], [rules.data]);
   const firing = list.filter((r) => r.state === 'firing');
+  // Declared before the early return below — hooks cannot be conditional.
+  const pg = usePage(list, 15);
 
   function resetForm() {
     setName('');
@@ -210,7 +213,7 @@ export default function AlertsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {list.map((r) => (
+                    {pg.items.map((r) => (
                       <tr key={r.id}>
                         <td className="cell-primary">
                           {r.name}
@@ -272,7 +275,15 @@ export default function AlertsPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={list.length} total={list.length} noun="alert rules" />
+              <TableFooter
+                from={pg.from}
+                to={pg.to}
+                total={pg.total}
+                noun="alert rules"
+                page={pg.page}
+                pageCount={pg.pageCount}
+                onPage={pg.setPage}
+              />
             </>
           )}
         </AsyncBoundary>

@@ -14,6 +14,7 @@ import { listApps, listDomains, getAppsMetrics } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, SearchInput, FilterSelect, CopyButton } from '@/components/ui/bits';
 import { TableFooter } from '@/components/ui/Panels';
+import { usePage } from '@/lib/usePaged';
 import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
 import { compact, ms } from '@/lib/series';
@@ -88,6 +89,8 @@ export default function ApisPage() {
     return true;
   });
 
+  const pg = usePage(filtered, 15);
+
   return (
     <div>
       <PageHeader
@@ -150,7 +153,7 @@ export default function ApisPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((e) => (
+                    {pg.items.map((e) => (
                       <tr key={e.key}>
                         <td>
                           <a
@@ -190,7 +193,15 @@ export default function ApisPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={filtered.length} total={filtered.length} noun="endpoints" />
+              <TableFooter
+                from={pg.from}
+                to={pg.to}
+                total={pg.total}
+                noun="endpoints"
+                page={pg.page}
+                pageCount={pg.pageCount}
+                onPage={pg.setPage}
+              />
             </>
           )}
         </AsyncBoundary>

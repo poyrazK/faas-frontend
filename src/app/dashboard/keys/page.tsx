@@ -5,6 +5,7 @@ import { listKeys, createKey, deleteKey, ApiError } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, CopyButton, SearchInput, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { TableFooter } from '@/components/ui/Panels';
+import { usePage } from '@/lib/usePaged';
 import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
@@ -45,6 +46,8 @@ export default function KeysPage() {
     setRevealed(null);
     setLabel('');
   }
+
+  const pg = usePage(filtered, 15);
 
   return (
     <div>
@@ -94,7 +97,7 @@ export default function KeysPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((k) => (
+                    {pg.items.map((k) => (
                       <tr key={k.id}>
                         <td className="cell-primary">
                           {k.label || <span style={{ color: 'var(--color-ink-muted)' }}>untitled</span>}
@@ -132,7 +135,15 @@ export default function KeysPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={filtered.length} total={filtered.length} noun="API keys" />
+              <TableFooter
+                from={pg.from}
+                to={pg.to}
+                total={pg.total}
+                noun="API keys"
+                page={pg.page}
+                pageCount={pg.pageCount}
+                onPage={pg.setPage}
+              />
             </>
           )}
         </AsyncBoundary>

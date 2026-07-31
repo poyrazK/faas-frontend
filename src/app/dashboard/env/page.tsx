@@ -18,6 +18,7 @@ import { listApps, listEnv, setEnv, deleteEnv, type AppEnvList, ApiError } from 
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { TableFooter } from '@/components/ui/Panels';
+import { usePage } from '@/lib/usePaged';
 import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
@@ -110,6 +111,8 @@ export default function EnvVarsPage() {
     }
   }
 
+  const pg = usePage(filtered, 15);
+
   return (
     <div>
       <PageHeader
@@ -188,7 +191,7 @@ export default function EnvVarsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((r) => (
+                    {pg.items.map((r) => (
                       <tr key={`${r.slug}:${r.key}`}>
                         <td className="mono cell-primary">{r.key}</td>
                         <td>
@@ -228,7 +231,15 @@ export default function EnvVarsPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={filtered.length} total={filtered.length} noun="env vars" />
+              <TableFooter
+                from={pg.from}
+                to={pg.to}
+                total={pg.total}
+                noun="env vars"
+                page={pg.page}
+                pageCount={pg.pageCount}
+                onPage={pg.setPage}
+              />
             </>
           )}
         </AsyncBoundary>

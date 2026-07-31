@@ -11,6 +11,7 @@ import { listCrons, createCron, deleteCron, updateCron, listApps, listInvocation
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, SearchInput, FilterSelect, StatusBadge, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { TableFooter, SectionCard } from '@/components/ui/Panels';
+import { usePage } from '@/lib/usePaged';
 import { AsyncBoundary, EmptyState, SkeletonTable } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
@@ -76,6 +77,8 @@ export default function CronsPage() {
     }
   }
 
+  const pg = usePage(filtered, 15);
+
   return (
     <div>
       <PageHeader
@@ -137,7 +140,7 @@ export default function CronsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((c) => {
+                    {pg.items.map((c) => {
                       const slug = appSlug(c.app_id);
                       const runs = cronRuns.filter((r) => r.app_id === c.app_id).length;
                       return (
@@ -199,7 +202,15 @@ export default function CronsPage() {
                   </tbody>
                 </table>
               </div>
-              <TableFooter from={1} to={filtered.length} total={filtered.length} noun="cron jobs" />
+              <TableFooter
+                from={pg.from}
+                to={pg.to}
+                total={pg.total}
+                noun="cron jobs"
+                page={pg.page}
+                pageCount={pg.pageCount}
+                onPage={pg.setPage}
+              />
             </>
           )}
         </AsyncBoundary>

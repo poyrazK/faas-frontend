@@ -154,6 +154,66 @@ export function TableFooter({
   );
 }
 
+/**
+ * Footer for a cursor-paginated list. The API gives no total and no way to
+ * jump, so this deliberately shows "Page N" and prev/next only — inventing a
+ * total or a page count would be a lie about data we cannot see.
+ */
+export function CursorFooter({
+  count,
+  noun,
+  page,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+}: {
+  count: number;
+  noun: string;
+  page: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="table-foot">
+      <span>
+        {count === 0 ? `No ${noun}` : `${count} ${noun} on page ${page}`}
+        {hasNext && ' · more available'}
+      </span>
+      {(hasPrev || hasNext) && (
+        <div className="flex items-center gap-1">
+          <button
+            className="btn-icon btn-icon-bordered"
+            style={{ width: 28, height: 28 }}
+            disabled={!hasPrev}
+            onClick={onPrev}
+            aria-label="Previous page"
+          >
+            <Icon name="chevronLeft" size={14} />
+          </button>
+          <span
+            className="inline-flex h-7 min-w-7 items-center justify-center rounded-lg px-2 text-xs font-medium"
+            style={{ border: '1px solid var(--color-line)', color: 'var(--color-ink)' }}
+          >
+            {page}
+          </span>
+          <button
+            className="btn-icon btn-icon-bordered"
+            style={{ width: 28, height: 28 }}
+            disabled={!hasNext}
+            onClick={onNext}
+            aria-label="Next page"
+          >
+            <Icon name="chevronRight" size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─────────────────────────── Unavailable panel ────────────────────────── */
 
 /**

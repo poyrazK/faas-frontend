@@ -20,6 +20,7 @@ import {
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, SearchInput, FilterSelect, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { StatTile, TableFooter } from '@/components/ui/Panels';
+import { usePage } from '@/lib/usePaged';
 import { AsyncBoundary, EmptyState, SkeletonTable, SkeletonBlock } from '@/components/ui/States';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
@@ -70,6 +71,10 @@ export default function QueuesPage() {
   const deadMsgs = (dead.data?.messages ?? []).filter((m) =>
     query ? `${m.id} ${m.payload} ${m.last_error}`.toLowerCase().includes(query.toLowerCase()) : true,
   );
+
+  // Declared before the early return below — hooks cannot be conditional.
+  const pgPending = usePage(pendingMsgs, 15);
+  const pgDead = usePage(deadMsgs, 15);
 
   const s = state.data;
   const capPct = s && s.plan_cap > 0 ? Math.min(100, (s.depth / s.plan_cap) * 100) : 0;
@@ -216,7 +221,7 @@ export default function QueuesPage() {
                       <tr><th>Message</th><th>Payload</th><th>Attempts</th><th>Queued</th><th /></tr>
                     </thead>
                     <tbody>
-                      {pendingMsgs.map((m) => (
+                      {pgPending.items.map((m) => (
                         <tr key={m.id}>
                           <td className="cell-primary"><Mono>{m.id.slice(0, 12)}</Mono></td>
                           <td className="mono max-w-[340px] truncate text-xs" title={m.payload}>
@@ -254,7 +259,7 @@ export default function QueuesPage() {
                     </tbody>
                   </table>
                 </div>
-                <TableFooter from={1} to={pendingMsgs.length} total={pendingMsgs.length} noun="pending messages" />
+                <TableFooter from={pgPending.from} to={pgPending.to} total={pgPending.total} noun="pending messages" page={pgPending.page} pageCount={pgPending.pageCount} onPage={pgPending.setPage} />
               </>
             )}
           </AsyncBoundary>
@@ -283,7 +288,7 @@ export default function QueuesPage() {
                       <tr><th>Message</th><th>Last error</th><th>Payload</th><th>Attempts</th><th>Failed</th></tr>
                     </thead>
                     <tbody>
-                      {deadMsgs.map((m) => (
+                      {pgDead.items.map((m) => (
                         <tr key={m.id}>
                           <td className="cell-primary"><Mono>{m.id.slice(0, 12)}</Mono></td>
                           <td className="max-w-[260px]" style={{ color: 'var(--color-danger)' }}>{m.last_error}</td>
@@ -297,7 +302,7 @@ export default function QueuesPage() {
                     </tbody>
                   </table>
                 </div>
-                <TableFooter from={1} to={deadMsgs.length} total={deadMsgs.length} noun="dead-letter messages" />
+                <TableFooter from={pgDead.from} to={pgDead.to} total={pgDead.total} noun="dead-letter messages" page={pgDead.page} pageCount={pgDead.pageCount} onPage={pgDead.setPage} />
               </>
             )}
           </AsyncBoundary>
