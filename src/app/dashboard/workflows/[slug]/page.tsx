@@ -15,8 +15,10 @@ import {
   getApp, updateApp, deleteApp, renameApp, wakeApp, parkApp, rollbackApp,
   listInstances, listSecrets, setSecret, deleteSecret, listAppDeployments,
   listDomains, listCrons, listInvocations, getAppMetrics, isDegraded, appLogsUrl,
-  deployImage, deploySource, invokeApp, invokeAppAsync, type InvokeResult, ApiError,
+  invokeApp, invokeAppAsync, type InvokeResult, ApiError,
 } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { DeployDialog } from '@/components/workflow/DeployDialog';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, Mono, CopyButton, RowMenu, RowMenuItem } from '@/components/ui/bits';
 import { SectionCard, StatTile } from '@/components/ui/Panels';
@@ -39,6 +41,7 @@ export default function WorkflowDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
   const toast = useToast();
+  const { account } = useAuth();
 
   const app = useAsync(() => getApp(slug), [slug]);
   const instances = useAsync(() => listInstances(slug), [slug]);
@@ -57,12 +60,8 @@ export default function WorkflowDetailPage() {
   const [secretVal, setSecretVal] = useState('');
   const [renameTo, setRenameTo] = useState('');
 
-  // Deploy
+  // Deploy — the dialog itself lives in components/workflow/DeployDialog.
   const [deployOpen, setDeployOpen] = useState(false);
-  const [deployMode, setDeployMode] = useState<'image' | 'source'>('image');
-  const [image, setImage] = useState('');
-  const [sourceFile, setSourceFile] = useState<File | null>(null);
-  const [isDockerfile, setIsDockerfile] = useState(false);
 
   // Test panel
   const [testMethod, setTestMethod] = useState('POST');
@@ -91,33 +90,6 @@ export default function WorkflowDetailPage() {
       instances.reload();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : `${name} failed.`);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function runDeploy(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy('deploy');
-    try {
-      const dep =
-        deployMode === 'image'
-          ? await deployImage(slug, image.trim())
-          : await deploySource(slug, sourceFile!, {
-              dockerfile: isDockerfile,
-              kind: app.data?.type,
-              runtime: app.data?.runtime ?? undefined,
-            });
-      // 202 Accepted: the build is queued, not finished. Send the user
-      // straight to the build log rather than implying the deploy is done.
-      toast.success('Build queued.');
-      setDeployOpen(false);
-      setImage('');
-      setSourceFile(null);
-      deployments.reload();
-      router.push(`/dashboard/deployments/${dep.id}`);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not start the deployment.');
     } finally {
       setBusy(null);
     }
@@ -746,98 +718,18 @@ export default function WorkflowDetailPage() {
         )}
       </AsyncBoundary>
 
-      {/* Deploy */}
-      <Modal
-        open={deployOpen}
-        onClose={() => setDeployOpen(false)}
-        width={560}
-        title={`Deploy ${slug}`}
-        footer={
-          <>
-            <button className="btn btn-secondary" onClick={() => setDeployOpen(false)}>Cancel</button>
-            <button
-              className="btn btn-primary"
-              form="deploy-form"
-              type="submit"
-              disabled={busy === 'deploy' || (deployMode === 'image' ? !image.trim() : !sourceFile)}
-            >
-              {busy === 'deploy' ? 'Starting build…' : 'Start deployment'}
-            </button>
-          </>
-        }
-      >
-        <form id="deploy-form" onSubmit={runDeploy} className="space-y-4">
-          <div className="seg w-full">
-            <button
-              type="button"
-              className="flex-1"
-              data-active={deployMode === 'image'}
-              onClick={() => setDeployMode('image')}
-            >
-              Prebuilt image
-            </button>
-            <button
-              type="button"
-              className="flex-1"
-              data-active={deployMode === 'source'}
-              onClick={() => setDeployMode('source')}
-            >
-              Source upload
-            </button>
-          </div>
-
-          {deployMode === 'image' ? (
-            <div>
-              <label className="label">OCI image reference</label>
-              <input
-                className="field mono"
-                placeholder="registry.example.com/app@sha256:…"
-                value={image}
-                onChange={(e) => setImage(e.target.value)}
-              />
-              <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-                Digest-pinned references are strongly preferred — a mutable tag makes the deployed bytes
-                unreproducible.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div>
-                <label className="label">Source tarball</label>
-                <input
-                  className="field"
-                  type="file"
-                  accept=".tar,.tar.gz,.tgz,application/gzip,application/x-tar"
-                  onChange={(e) => setSourceFile(e.target.files?.[0] ?? null)}
-                />
-                <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-                  {sourceFile
-                    ? `${sourceFile.name} · ${(sourceFile.size / 1024 / 1024).toFixed(1)} MB`
-                    : 'Plan-capped at 100 MB on Free and Hobby, 250 MB on Pro and Scale.'}
-                </p>
-              </div>
-              <label className="flex items-start gap-2.5 text-sm" style={{ color: 'var(--color-ink-soft)' }}>
-                <input
-                  type="checkbox"
-                  checked={isDockerfile}
-                  onChange={(e) => setIsDockerfile(e.target.checked)}
-                  style={{ marginTop: 3 }}
-                />
-                <span>
-                  Build from a Dockerfile in the archive
-                  <span className="block text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-                    Otherwise the builder auto-detects the runtime from the source.
-                  </span>
-                </span>
-              </label>
-            </>
-          )}
-
-          <p className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-            Deploying queues a build — it does not complete inline. You&apos;ll be taken to the build log to watch it.
-          </p>
-        </form>
-      </Modal>
+      {/* Deploy — plan drives the client-side upload cap. */}
+      {app.data && (
+        <DeployDialog
+          open={deployOpen}
+          onClose={() => setDeployOpen(false)}
+          slug={slug}
+          plan={account?.plan ?? 'free'}
+          appType={app.data.type}
+          runtime={app.data.runtime}
+          onDeployed={() => deployments.reload()}
+        />
+      )}
 
       {/* Delete confirmation */}
       <Modal

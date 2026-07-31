@@ -39,10 +39,23 @@ const nextConfig: NextConfig = {
         source: "/logout",
         destination: `${backendUrl}/logout`,
       },
+      {
+        source: "/api/cli-auth",
+        destination: `${backendUrl}/cli-auth`,
+      },
       // Health check
       {
         source: "/healthz",
         destination: `${backendUrl}/healthz`,
+      },
+    ];
+  },
+  async redirects() {
+    return [
+      {
+        source: "/dashboard/account",
+        destination: "/dashboard",
+        permanent: false,
       },
     ];
   },

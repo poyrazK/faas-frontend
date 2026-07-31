@@ -1,0 +1,6 @@
+# Never upload local credential material or agent scratch files.
+cookies.txt
+*.cookies
+.claude/
+node_modules
+.next
