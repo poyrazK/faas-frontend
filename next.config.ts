@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   async rewrites() {
-    const backendUrl = process.env.APID_BACKEND_URL || "http://146.190.210.124:8080";
+    const backendUrl = process.env.APID_BACKEND_URL || "https://api.gregale.dev";
     return [
       // API routes — proxy all /v1/* to the DO backend
       {
