@@ -291,7 +291,7 @@ function LoginInner() {
             Built on Firecracker
           </span>
           <h2 className="text-3xl font-bold leading-tight tracking-tight">
-            Your apps park as snapshots and wake in under 350&nbsp;ms.
+            Your services park as snapshots and wake in under 350&nbsp;ms.
           </h2>
           <p className="mt-4 text-sm" style={{ color: 'var(--color-ink-soft)' }}>
             No idle instances quietly billing you. A parked workflow holds zero resident memory — it exists as a memory

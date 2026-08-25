@@ -50,7 +50,7 @@ function CliAuthInner() {
   // Fetch CSRF token & initialize session cookie from backend on mount
   useEffect(() => {
     if (normalizedCode.length !== 8) {
-      setInitLoading(false);
+      queueMicrotask(() => setInitLoading(false));
       return;
     }
 

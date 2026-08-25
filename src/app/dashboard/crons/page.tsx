@@ -83,7 +83,7 @@ export default function CronsPage() {
     <div>
       <PageHeader
         title="Cron Jobs"
-        subtitle="Schedule workflows to run on a cron schedule."
+        subtitle="Schedule services to run on a cron schedule."
         actions={
           <button className="btn btn-primary" onClick={() => setOpen(true)}>
             <Icon name="plus" size={14} /> New Cron Job
@@ -151,7 +151,7 @@ export default function CronsPage() {
                           </td>
                           <td>
                             {slug ? (
-                              <Link href={`/dashboard/workflows/${slug}`} className="cell-primary">{slug}</Link>
+                              <Link href={`/dashboard/services/${slug}`} className="cell-primary">{slug}</Link>
                             ) : (
                               <Mono>{c.app_id.slice(0, 8)}</Mono>
                             )}
@@ -179,7 +179,7 @@ export default function CronsPage() {
                               >
                                 {c.enabled ? 'Pause' : 'Resume'}
                               </RowMenuItem>
-                              {slug && <RowMenuItem onClick={() => location.assign(`/dashboard/workflows/${slug}`)}>Open workflow</RowMenuItem>}
+                              {slug && <RowMenuItem onClick={() => location.assign(`/dashboard/services/${slug}`)}>Open service</RowMenuItem>}
                               <RowMenuItem
                                 danger
                                 onClick={async () => {
@@ -229,7 +229,7 @@ export default function CronsPage() {
                 return (
                   <tr key={r.id}>
                     <td className="cell-primary">
-                      {slug ? <Link href={`/dashboard/workflows/${slug}`} style={{ color: 'var(--color-brand)' }}>{slug}</Link> : <Mono>{r.app_id.slice(0, 8)}</Mono>}
+                      {slug ? <Link href={`/dashboard/services/${slug}`} style={{ color: 'var(--color-brand)' }}>{slug}</Link> : <Mono>{r.app_id.slice(0, 8)}</Mono>}
                     </td>
                     <td><Mono>{r.path || '/'}</Mono></td>
                     <td>

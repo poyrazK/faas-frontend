@@ -29,7 +29,7 @@ export const NAV: NavGroup[] = [
   {
     label: 'Build',
     items: [
-      { href: '/dashboard/workflows', label: 'Workflows', icon: 'workflows' },
+      { href: '/dashboard/services', label: 'Services', icon: 'workflows' },
       { href: '/dashboard/apis', label: 'APIs', icon: 'apis' },
       { href: '/dashboard/crons', label: 'Cron Jobs', icon: 'crons' },
       { href: '/dashboard/queues', label: 'Queue Jobs', icon: 'queues' },
@@ -69,6 +69,19 @@ export const NAV: NavGroup[] = [
     items: [
       { href: '/dashboard/keys', label: 'API Keys', icon: 'keys' },
       { href: '/dashboard/settings', label: 'Settings', icon: 'settings' },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { href: '/dashboard/admin/overview', label: 'Fleet Overview', icon: 'overview' },
+      { href: '/dashboard/admin/controls', label: 'Recovery & Controls', icon: 'bolt' },
+      { href: '/dashboard/admin/tenants', label: 'Tenants', icon: 'user' },
+      { href: '/dashboard/admin/nodes', label: 'Compute Nodes', icon: 'storage' },
+      { href: '/dashboard/admin/anomalies', label: 'Anomalies', icon: 'spark' },
+      { href: '/dashboard/admin/rate-limits', label: 'Rate Limits', icon: 'shield' },
+      { href: '/dashboard/admin/billing', label: 'Catalog Ops', icon: 'plans' },
+      { href: '/dashboard/admin/audit-log', label: 'Global Audit Log', icon: 'logs' },
     ],
   },
 ];

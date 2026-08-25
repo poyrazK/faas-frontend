@@ -57,6 +57,7 @@ export interface App {
   max_concurrency: number;
   idle_timeout_s?: number | null;
   min_instances: number;
+  eviction_priority?: 'best_effort' | 'reserved';
   status: string;
   url: string;
   manifest: AppManifest;
@@ -259,6 +260,55 @@ export interface AppEnvList {
   env: AppEnv[];
   quota_max: number;
   count: number;
+}
+
+/* ────────────────────────── Outbound Webhooks (#476) ───────────────────── */
+
+export type AppWebhookEventType = 'cron.fired' | 'app.created' | 'app.deleted' | 'build.succeeded' | 'build.failed';
+export type AppWebhookRetryPolicy = 'default' | 'aggressive' | 'none';
+export type AppWebhookDeliveryStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'dead';
+
+export interface AppWebhook {
+  id: string;
+  app_id: string;
+  account_id: string;
+  target_url: string;
+  webhook_secret_sealed_masked: string;
+  event_filter: AppWebhookEventType[];
+  retry_policy: AppWebhookRetryPolicy;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAppWebhookInput {
+  target_url: string;
+  webhook_secret?: string;
+  event_filter?: AppWebhookEventType[];
+  retry_policy?: AppWebhookRetryPolicy;
+  enabled?: boolean;
+}
+
+export interface AppWebhookDelivery {
+  id: string;
+  webhook_id: string;
+  app_id: string;
+  account_id: string;
+  event: string;
+  payload?: Record<string, unknown>;
+  attempt: number;
+  status: AppWebhookDeliveryStatus;
+  last_error?: string;
+  last_response_code?: number;
+  next_attempt_at: string;
+  delivered_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppWebhookDeliveryListResponse {
+  deliveries: AppWebhookDelivery[];
+  next_token?: string | null;
 }
 
 /* ─────────────────────── Queue introspection (#394) ────────────────────── */
@@ -537,6 +587,9 @@ async function request<T>(
         // multipart boundary, and forcing application/json here would produce
         // a body the server cannot parse.
         ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+        ...(typeof window !== 'undefined' && localStorage.getItem('faas_active_org')
+          ? { 'X-Active-Org': localStorage.getItem('faas_active_org')! }
+          : {}),
         ...(init.headers as Record<string, string>),
       },
     });
@@ -758,6 +811,37 @@ export const rotateAlertSecret = (slug: string, id: string, secret: string) =>
     method: 'POST',
     body: JSON.stringify({ webhook_secret: secret }),
   });
+
+/* ────────────────────────── Outbound Webhooks ─────────────────────────── */
+
+export const listAppWebhooks = (slug: string) =>
+  request<AppWebhook[]>(`/v1/apps/${slug}/webhooks`, { cache: 'no-store' });
+
+export const createAppWebhook = (slug: string, input: CreateAppWebhookInput) =>
+  request<AppWebhook>(`/v1/apps/${slug}/webhooks`, { method: 'POST', body: JSON.stringify(input) });
+
+export const getAppWebhook = (slug: string, id: string) =>
+  request<AppWebhook>(`/v1/apps/${slug}/webhooks/${id}`, { cache: 'no-store' });
+
+export const updateAppWebhook = (slug: string, id: string, input: Partial<CreateAppWebhookInput>) =>
+  request<AppWebhook>(`/v1/apps/${slug}/webhooks/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+
+export const deleteAppWebhook = (slug: string, id: string) =>
+  request<void>(`/v1/apps/${slug}/webhooks/${id}`, { method: 'DELETE' }, 'none');
+
+export const rotateAppWebhookSecret = (slug: string, id: string) =>
+  request<{ webhook_secret_sealed_masked: string; rotated_at: string }>(`/v1/apps/${slug}/webhooks/${id}/rotate-secret`, {
+    method: 'POST',
+  });
+
+export const listAppWebhookDeliveries = (slug: string, id: string, pageSize = 50, pageToken?: string) => {
+  const q = new URLSearchParams({ page_size: String(pageSize) });
+  if (pageToken) q.set('page_token', pageToken);
+  return request<AppWebhookDeliveryListResponse>(`/v1/apps/${slug}/webhooks/${id}/deliveries?${q}`, { cache: 'no-store' });
+};
+
+export const retryAppWebhookDelivery = (slug: string, id: string, did: string) =>
+  request<AppWebhookDelivery>(`/v1/apps/${slug}/webhooks/${id}/deliveries/${did}/retry`, { method: 'POST' });
 
 /* ───────────────────────────── Sessions ────────────────────────────────── */
 
@@ -986,4 +1070,482 @@ export const claimCliAuthCode = async (code: string, email: string) => {
     body: form.toString(),
   }, 'none');
 };
+
+/* ───────────────────────────── Organizations ──────────────────────────── */
+
+export type OrgRole = 'owner' | 'admin' | 'developer' | 'viewer' | 'billing';
+
+export interface Org {
+  id: string;
+  slug: string;
+  name: string;
+  personal: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrgWithRole extends Org {
+  role: OrgRole;
+}
+
+export interface OrgMeResponse {
+  org: OrgWithRole | null;
+}
+
+export interface OrgMember {
+  user_id: string;
+  email: string;
+  role: OrgRole;
+  joined_at: string;
+}
+
+export interface OrgInvitation {
+  token: string;
+  email: string;
+  role: OrgRole;
+  invited_by: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface OrgSeatUsage {
+  total_members: number;
+  pending_invitations: number;
+}
+
+export interface CreateOrgInput {
+  slug: string;
+  name: string;
+}
+
+export interface UpdateOrgInput {
+  name?: string;
+  owner_id?: string;
+}
+
+export interface ListOrgsResponse { orgs: OrgWithRole[]; }
+export const listOrgs = () => request<ListOrgsResponse>('/v1/orgs', { cache: 'no-store' });
+
+export const createOrg = (input: CreateOrgInput) =>
+  request<Org>('/v1/orgs', { method: 'POST', body: JSON.stringify(input) });
+
+export const getOrgMe = () => request<OrgMeResponse>('/v1/orgs/me', { cache: 'no-store' });
+
+export const getOrg = (slug: string) => request<Org>(`/v1/orgs/${slug}`, { cache: 'no-store' });
+
+export const updateOrg = (slug: string, input: UpdateOrgInput) =>
+  request<Org>(`/v1/orgs/${slug}`, { method: 'PATCH', body: JSON.stringify(input) });
+
+export interface ListOrgMembersResponse { members: OrgMember[]; }
+export const listOrgMembers = (slug: string) =>
+  request<ListOrgMembersResponse>(`/v1/orgs/${slug}/members`, { cache: 'no-store' });
+
+export const addOrgMember = (slug: string, email: string, role: OrgRole) =>
+  request<OrgInvitation>(`/v1/orgs/${slug}/members`, { method: 'POST', body: JSON.stringify({ email, role }) });
+
+export const updateOrgMemberRole = (slug: string, userId: string, role: OrgRole) =>
+  request<void>(`/v1/orgs/${slug}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }, 'none');
+
+export const removeOrgMember = (slug: string, userId: string) =>
+  request<void>(`/v1/orgs/${slug}/members/${userId}`, { method: 'DELETE' }, 'none');
+
+export interface ListOrgInvitationsResponse { invitations: OrgInvitation[]; }
+export const listOrgInvitations = (slug: string) =>
+  request<ListOrgInvitationsResponse>(`/v1/orgs/${slug}/invitations`, { cache: 'no-store' });
+
+export const revokeOrgInvitation = (slug: string, token: string) =>
+  request<void>(`/v1/orgs/${slug}/invitations/${token}`, { method: 'DELETE' }, 'none');
+
+export const getInvitation = (token: string) =>
+  request<OrgInvitation>(`/v1/invitations/${token}`, { cache: 'no-store' });
+
+export const acceptInvitation = (token: string) =>
+  request<OrgMember>(`/v1/invitations/${token}/accept`, { method: 'POST' });
+
+export const transferOrgOwnership = (slug: string, newOwnerId: string) =>
+  request<void>(`/v1/orgs/${slug}/transfer_ownership`, { method: 'POST', body: JSON.stringify({ new_owner_id: newOwnerId }) }, 'none');
+
+export const getOrgSeatUsage = (slug: string) =>
+  request<OrgSeatUsage>(`/v1/orgs/${slug}/seat_usage`, { cache: 'no-store' });
+
+/* ────────────────────────── Operator & Admin (/v1/admin/*) ─────────────────────── */
+
+export interface ObsOverviewTotals {
+  accounts_active: number;
+  accounts_past_due: number;
+  accounts_suspended: number;
+  orgs_total: number;
+  apps_total: number;
+  instances_live: number;
+  instances_waking: number;
+  nodes_active: number;
+  nodes_inactive: number;
+  audit_events_24h: number;
+}
+
+export interface ObsOverviewRateLimited {
+  account_id: string;
+  hits: number;
+}
+
+export interface ObsOverviewNodeHealth {
+  name: string;
+  active: boolean;
+  last_heartbeat_at?: string;
+  stale: boolean;
+}
+
+export interface ObsOverviewFailureKind {
+  kind: string;
+  count: number;
+}
+
+export interface ObsOverviewResponse {
+  generated_at: string;
+  totals: ObsOverviewTotals;
+  top_rate_limited_accounts_24h: ObsOverviewRateLimited[];
+  node_health: ObsOverviewNodeHealth[];
+  recent_failures_1h: ObsOverviewFailureKind[];
+}
+
+export interface ObsTenantRow {
+  account_id: string;
+  plan: Plan;
+  status: AccountStatus;
+  org_slug?: string;
+  is_personal: boolean;
+  created_at: string;
+  mfa_enrolled: boolean;
+  apps_count: number;
+  deployments_live_count: number;
+  email?: string;
+}
+
+export interface ObsTenantListResponse {
+  items: ObsTenantRow[];
+  next_cursor: string;
+  limit: number;
+}
+
+export interface ObsTenantApp {
+  id: string;
+  slug: string;
+  status: string;
+  deployments: number;
+}
+
+export interface ObsTenantOrg {
+  id: string;
+  slug: string;
+  role: string;
+}
+
+export interface ObsTenantCounts {
+  active: number;
+  revoked: number;
+}
+
+export interface ObsTenantDetailResponse {
+  account: ObsTenantRow;
+  apps: ObsTenantApp[];
+  orgs: ObsTenantOrg[];
+  api_keys: ObsTenantCounts;
+  sessions: ObsTenantCounts;
+}
+
+export interface ObsNodeRow {
+  id: string;
+  name: string;
+  active: boolean;
+  vpcpus: number;
+  mem_mb: number;
+  max_concurrency: number;
+  admission_ceiling_mb: number;
+  overlay_ip?: string;
+  last_heartbeat_at?: string;
+  created_at: string;
+}
+
+export interface ObsNodeListResponse {
+  items: ObsNodeRow[];
+  next_cursor: string;
+  limit: number;
+}
+
+export interface ObsHeartbeatRow {
+  received_at: string;
+  last_heartbeat_at: string;
+  source: string;
+  gap_to_previous_ms: number;
+  missed: boolean;
+  stale: boolean;
+}
+
+export interface ObsHeartbeatListResponse {
+  node_id: string;
+  name: string;
+  since: string;
+  since_clamped: boolean;
+  heartbeats: ObsHeartbeatRow[];
+  limit: number;
+}
+
+export interface ObsAnomalyRow {
+  account_id: string;
+  app_id: string;
+  minute: string;
+  current: number;
+  baseline_mean: number;
+  baseline_stddev: number;
+  baseline_samples: number;
+  z_score: number | null;
+  reason: string;
+}
+
+export interface ObsAnomalyListResponse {
+  generated_at: string;
+  window_hours: number;
+  baseline_window_days: number;
+  items: ObsAnomalyRow[];
+}
+
+export interface ObsRateLimitDurableRow {
+  account_id: string;
+  hits: number;
+  last_event_at: string;
+}
+
+export interface ObsRateLimitLiveRow {
+  ip: string;
+  currently_rate_limited: boolean;
+  live_hits_30s: number;
+  last_event_at: string;
+}
+
+export interface ObsRateLimitResponse {
+  generated_at: string;
+  window_hours: number;
+  sources: string[];
+  lag_seconds: number;
+  durable: ObsRateLimitDurableRow[];
+  live: ObsRateLimitLiveRow[];
+}
+
+export interface BillingCatalogEntry {
+  id: string;
+  kind: string;
+  plan?: string;
+  price_cents: number;
+  currency: string;
+  interval?: string;
+  created_at: string;
+}
+
+export interface BillingCatalogResponse {
+  items: BillingCatalogEntry[];
+}
+
+export interface GlobalAuditLogEntry {
+  id: string;
+  at: string;
+  account_id?: string | null;
+  actor: string;
+  kind: string;
+  subject?: string | null;
+  data?: Record<string, unknown>;
+}
+
+export interface GlobalAuditLogResponse {
+  items: GlobalAuditLogEntry[];
+  next_before?: string | null;
+}
+
+export const getObsOverview = () =>
+  request<ObsOverviewResponse>('/v1/admin/obs/overview', { cache: 'no-store' });
+
+export const listObsTenants = (limit = 200, cursor?: string, includePii = false) => {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (cursor) q.set('cursor', cursor);
+  if (includePii) q.set('include_pii', '1');
+  return request<ObsTenantListResponse>(`/v1/admin/obs/tenants?${q}`, { cache: 'no-store' });
+};
+
+export const getObsTenantDetail = (id: string, includePii = false) => {
+  const q = includePii ? '?include_pii=1' : '';
+  return request<ObsTenantDetailResponse>(`/v1/admin/obs/tenants/${id}${q}`, { cache: 'no-store' });
+};
+
+export const issueAccountCredit = (accountId: string, amountCents: number, reason: string) =>
+  request<{ id: string; amount_cents: number; reason: string }>(
+    `/v1/admin/accounts/${accountId}/credits`,
+    { method: 'POST', body: JSON.stringify({ amount_cents: amountCents, reason }) },
+  );
+
+export const reconcileAccount = (accountId: string) =>
+  request<{ account_id: string; reconciled_at: string; status: string }>(
+    `/v1/admin/billing-reconcile/${accountId}`,
+    { method: 'POST' },
+  );
+
+export const listObsNodes = () =>
+  request<ObsNodeListResponse>('/v1/admin/obs/nodes', { cache: 'no-store' });
+
+export const getObsNodeHeartbeats = (name: string, sinceMinutes = 30) =>
+  request<ObsHeartbeatListResponse>(
+    `/v1/admin/obs/nodes/${encodeURIComponent(name)}/heartbeats?since=${sinceMinutes}m`,
+    { cache: 'no-store' },
+  );
+
+export const getObsAnomalies = (windowHours = 24) =>
+  request<ObsAnomalyListResponse>(`/v1/admin/obs/anomalies?window_hours=${windowHours}`, { cache: 'no-store' });
+
+export const getObsRateLimits = (windowHours = 24) =>
+  request<ObsRateLimitResponse>(`/v1/admin/obs/rate-limits?window_hours=${windowHours}`, { cache: 'no-store' });
+
+export const listPaddleCatalog = () =>
+  request<BillingCatalogResponse>('/v1/admin/billing-paddle-catalog', { cache: 'no-store' });
+
+export const syncPaddleCatalog = () =>
+  request<BillingCatalogResponse>('/v1/admin/billing-paddle-catalog/sync', { method: 'POST' });
+
+export const resetPaddleCatalog = () =>
+  request<void>('/v1/admin/billing-paddle-catalog', { method: 'DELETE' }, 'none');
+
+export const listGlobalAuditLog = (limit = 100, before?: string, includeAnonymous = true) => {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (before) q.set('before', before);
+  if (includeAnonymous) q.set('include_anonymous', 'true');
+  return request<GlobalAuditLogResponse>(`/v1/audit-log/all?${q}`, { cache: 'no-store' });
+};
+
+export interface OperatorIntentResponse {
+  intent_id: string;
+  kind: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  target_id: string;
+  account_id?: string;
+  requested_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  snap_ids_marked_stale?: string[];
+}
+
+export interface OperatorIntentAcceptedResponse {
+  ok: boolean;
+  intent_id: string;
+  status_url: string;
+  expires_at: string;
+}
+
+export interface SweepStuckBuildsResponse {
+  ok: boolean;
+  swept_count: number;
+  older_than_secs: number;
+  threshold_iso: string;
+}
+
+export interface ObsBuilderHeartbeatRow {
+  node_id: string;
+  received_at: string;
+  cpu_pct_60s: number;
+  disk_used_bytes: number;
+}
+
+export interface ObsBuilderHeartbeatListResponse {
+  generated_at: string;
+  items: ObsBuilderHeartbeatRow[];
+  queued_builds: number;
+}
+
+export interface RekeyProgressResponse {
+  total: number;
+  completed: number;
+  failed: number;
+  in_progress: number;
+  enabled: boolean;
+}
+
+export interface ObsWakeLatencyRow {
+  node: string;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  sample_count: number;
+  window_hours: number;
+}
+
+export interface ObsWakeLatencyResponse {
+  items: ObsWakeLatencyRow[];
+}
+
+export interface AuditLogSearchParams {
+  since?: string;
+  kind_prefix?: string;
+  include_anon?: boolean;
+  limit?: number;
+  actor_email?: string;
+  operator_only?: boolean;
+  target_account_id?: string;
+}
+
+export interface ObsAuditLogSearchResponse {
+  items: GlobalAuditLogEntry[];
+  total?: number;
+  has_more?: boolean;
+}
+
+export const forceParkInstance = (instanceId: string, reason = 'operator_force_park') =>
+  request<OperatorIntentAcceptedResponse>(
+    `/v1/admin/instances/${encodeURIComponent(instanceId)}/force-park?confirm=true&reason=${encodeURIComponent(reason)}`,
+    { method: 'POST' },
+  );
+
+export const forceColdBootApp = (slug: string, reason = 'operator_force_cold_boot') =>
+  request<OperatorIntentAcceptedResponse>(
+    `/v1/admin/apps/${encodeURIComponent(slug)}/force-cold-boot?confirm=true&reason=${encodeURIComponent(reason)}`,
+    { method: 'POST' },
+  );
+
+export const getOperatorIntent = (intentId: string) =>
+  request<OperatorIntentResponse>(`/v1/admin/operator-intents/${encodeURIComponent(intentId)}`, {
+    cache: 'no-store',
+  });
+
+export const sweepStuckBuilds = (olderThan = '15m') =>
+  request<SweepStuckBuildsResponse>(
+    `/v1/admin/builds/sweep-stuck?confirm=true&older_than=${encodeURIComponent(olderThan)}`,
+    { method: 'POST' },
+  );
+
+export const getObsBuilderHeartbeats = () =>
+  request<ObsBuilderHeartbeatListResponse>('/v1/admin/obs/builder-heartbeats', {
+    cache: 'no-store',
+  });
+
+export const getRekeyProgress = () =>
+  request<RekeyProgressResponse>('/v1/admin/secrets/rekey-progress', {
+    cache: 'no-store',
+  });
+
+export const getObsWakeLatencies = (windowHours = 24) =>
+  request<ObsWakeLatencyResponse>(`/v1/admin/obs/nodes/wake-latency?window_hours=${windowHours}`, {
+    cache: 'no-store',
+  });
+
+export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
+  const q = new URLSearchParams();
+  if (params.since) q.set('since', params.since);
+  if (params.kind_prefix) q.set('kind_prefix', params.kind_prefix);
+  if (params.include_anon !== undefined) q.set('include_anon', String(params.include_anon));
+  if (params.limit) q.set('limit', String(params.limit));
+  if (params.actor_email) q.set('actor_email', params.actor_email);
+  if (params.operator_only) q.set('operator_only', 'true');
+  if (params.target_account_id) q.set('target_account_id', params.target_account_id);
+  return request<ObsAuditLogSearchResponse>(`/v1/admin/obs/audit-log/search?${q}`, {
+    cache: 'no-store',
+  });
+};
+
+
 

@@ -40,7 +40,7 @@ export default function DeploymentsPage() {
     <div>
       <PageHeader
         title="Deployments"
-        subtitle="Build and release history across all your workflows."
+        subtitle="Build and release history across all your services."
         actions={
           <button className="btn-icon btn-icon-bordered" onClick={() => deps.reload()} aria-label="Refresh">
             <Icon name="refresh" size={16} />
@@ -113,7 +113,7 @@ export default function DeploymentsPage() {
                           </td>
                           <td>
                             {slug ? (
-                              <Link href={`/dashboard/workflows/${slug}`} style={{ color: 'var(--color-brand)' }}>{slug}</Link>
+                              <Link href={`/dashboard/services/${slug}`} style={{ color: 'var(--color-brand)' }}>{slug}</Link>
                             ) : (
                               <Mono>{d.app_id.slice(0, 8)}</Mono>
                             )}

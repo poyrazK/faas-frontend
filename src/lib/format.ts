@@ -38,13 +38,27 @@ export const PLANS: Record<Plan, PlanInfo> = {
   scale: { label: 'Scale', price: '€99', ramMb: 1024, concurrency: 20, apps: 100, gbHours: 1500 },
 };
 
-/** Maps a raw instance/app state string to a badge variant + label. */
-export function stateBadge(state: string): { cls: string; label: string; live: boolean } {
+/** Maps a raw instance/app state string to a badge variant + label + live indicator. */
+export function stateBadge(
+  state: string,
+  hasLiveInstance = false,
+  isDeployed = true,
+): { cls: string; label: string; live: boolean; mode?: 'running' | 'sleeping' | 'waking' | 'failed' | 'undeployed' } {
   const s = (state || '').toLowerCase();
-  if (s.includes('run')) return { cls: 'badge-brand', label: 'Running', live: true };
-  if (s.includes('wak') || s.includes('boot')) return { cls: 'badge-warn', label: 'Waking', live: true };
-  if (s.includes('park')) return { cls: 'badge-muted', label: 'Parked', live: false };
-  if (s.includes('fail') || s.includes('error')) return { cls: 'badge-danger', label: state, live: false };
-  if (s.includes('active') || s.includes('deploy')) return { cls: 'badge-brand', label: state, live: false };
-  return { cls: 'badge-muted', label: state || 'Unknown', live: false };
+  if (!isDeployed && !s.includes('fail') && !s.includes('error')) {
+    return { cls: 'badge-muted', label: 'Undeployed', live: false, mode: 'undeployed' };
+  }
+  if (s.includes('run') || (s.includes('active') && hasLiveInstance)) {
+    return { cls: 'badge-brand', label: 'Running', live: true, mode: 'running' };
+  }
+  if (s.includes('wak') || s.includes('boot')) {
+    return { cls: 'badge-warn', label: 'Waking (<350ms)', live: true, mode: 'waking' };
+  }
+  if (s.includes('fail') || s.includes('error')) {
+    return { cls: 'badge-danger', label: state, live: false, mode: 'failed' };
+  }
+  if (s.includes('park') || s.includes('sleep') || s.includes('idle') || s.includes('active')) {
+    return { cls: 'badge-muted', label: 'Sleeping (0 MB RAM)', live: false, mode: 'sleeping' };
+  }
+  return { cls: 'badge-muted', label: state || 'Unknown', live: false, mode: 'sleeping' };
 }

@@ -10,15 +10,40 @@ import React, { useState } from 'react';
 import { stateBadge } from '@/lib/format';
 import { Icon } from './Icons';
 
-export function StatusBadge({ state }: { state: string }) {
-  const b = stateBadge(state);
+export function StatusBadge({
+  state,
+  hasLiveInstance,
+  isDeployed = true,
+  evictionPriority,
+}: {
+  state: string;
+  hasLiveInstance?: boolean;
+  isDeployed?: boolean;
+  evictionPriority?: string;
+}) {
+  const b = stateBadge(state, hasLiveInstance, isDeployed);
+  const isReserved = evictionPriority === 'reserved';
+
   return (
-    <span className={`badge ${b.cls}`}>
-      <span
-        className={`inline-block h-1.5 w-1.5 rounded-full ${b.live ? 'live-dot' : ''}`}
-        style={{ background: 'currentColor' }}
-      />
-      {b.label}
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`badge ${b.cls} inline-flex items-center gap-1.5`}>
+        {b.mode === 'waking' ? (
+          <span className="animate-spin inline-block h-2 w-2 rounded-full border border-current border-t-transparent" />
+        ) : (
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${b.live ? 'live-dot' : ''}`}
+            style={{ background: 'currentColor' }}
+          />
+        )}
+        <span>{b.label}</span>
+      </span>
+
+      {isReserved && (
+        <span className="badge badge-info inline-flex items-center gap-1" title="RAM Eviction Priority: Reserved">
+          <Icon name="shield" size={11} />
+          <span>Reserved</span>
+        </span>
+      )}
     </span>
   );
 }

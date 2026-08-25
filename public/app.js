@@ -143,8 +143,6 @@ function initFunctionManager() {
  * 4. Secrets Manager Logic
  * -------------------------------------------------------------------------- */
 function initSecretsManager() {
-  const secretsTableBody = document.getElementById('secrets-table-body');
-
   document.addEventListener('click', (e) => {
     // Toggle Mask
     const toggleBtn = e.target.closest('.toggle-secret-val');

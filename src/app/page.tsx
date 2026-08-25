@@ -44,7 +44,7 @@ function Nav() {
         <nav className="hidden items-center gap-7 text-sm font-medium md:flex" style={{ color: 'var(--color-ink-soft)' }}>
           <a href="#features">Features</a>
           <a href="#how">How it works</a>
-          <a href="#workflows">Workflows</a>
+          <a href="#services">Services</a>
           <a href="#pricing">Pricing</a>
           <a href="/v1/openapi.yaml" target="_blank" rel="noreferrer">
             API
@@ -87,7 +87,7 @@ function Hero() {
           <span style={{ color: 'var(--color-brand)' }}>cold-start penalty.</span>
         </h1>
         <p className="mt-5 max-w-xl text-lg" style={{ color: 'var(--color-ink-soft)' }}>
-          Gregale runs your apps inside isolated Firecracker microVMs. They park as memory snapshots on NVMe when idle
+          Gregale runs your services inside isolated Firecracker microVMs. They park as memory snapshots on NVMe when idle
           and unpark on request in under 350&nbsp;ms — with zero resident memory while parked.
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -143,8 +143,8 @@ function FeatureGrid() {
     },
     {
       icon: 'workflows',
-      title: 'Built for workflows',
-      body: 'HTTPS apps, cron schedules and queue jobs run on the same runtime, with one deploy and one bill.',
+      title: 'Built for services',
+      body: 'HTTPS services, cron schedules and queue jobs run on the same runtime, with one deploy and one bill.',
     },
     {
       icon: 'shield',
@@ -250,7 +250,7 @@ function HowItWorks() {
       <div className="card mt-3 grid gap-6 p-6 sm:grid-cols-3">
         {[
           ['Two-drive rootfs', 'Shared read-only base plus a per-app overlay — about 130 MB per sandbox on disk.'],
-          ['Snapshot as cache', 'Snapshots are a cache, not the source of truth. Apps always cold-boot as a fallback.'],
+          ['Snapshot as cache', 'Snapshots are a cache, not the source of truth. Services always cold-boot as a fallback.'],
           ['Billed on running seconds', 'Plan RAM plus 8 MB per running second. No surprise bills from sampled RSS.'],
         ].map(([t, d]) => (
           <div key={t}>
@@ -288,7 +288,7 @@ function WorkflowTypes() {
   ];
 
   return (
-    <section id="workflows" className="section py-14">
+    <section id="services" className="section py-14">
       <div className="mb-10 text-center">
         <h2 className="text-3xl font-bold tracking-tight">Built for every serverless workflow</h2>
         <p className="mx-auto mt-2.5 max-w-xl text-sm" style={{ color: 'var(--color-ink-muted)' }}>
@@ -408,7 +408,7 @@ function Pricing() {
               </div>
               <ul className="mt-6 flex-1 space-y-2.5 text-sm" style={{ color: 'var(--color-ink-soft)' }}>
                 {[
-                  `${info.apps} workflow${info.apps > 1 ? 's' : ''}`,
+                  `${info.apps} service${info.apps > 1 ? 's' : ''}`,
                   `${info.ramMb} MB RAM per microVM`,
                   `${info.concurrency} concurrent wake${info.concurrency > 1 ? 's' : ''}`,
                   `${info.gbHours} GB-hours included`,
@@ -471,7 +471,7 @@ function Footer() {
       links: [
         { label: 'Features', href: '#features' },
         { label: 'How it works', href: '#how' },
-        { label: 'Workflows', href: '#workflows' },
+        { label: 'Services', href: '#services' },
         { label: 'Pricing', href: '#pricing' },
       ],
     },
@@ -506,7 +506,7 @@ function Footer() {
               style={{ height: 30, width: 'auto' }}
             />
             <p className="mt-3 max-w-xs text-sm" style={{ color: 'var(--color-ink-muted)' }}>
-              A scale-to-zero Firecracker microVM cloud. Apps park as snapshots and wake on request.
+              A scale-to-zero Firecracker microVM cloud. Services park as snapshots and wake on request.
             </p>
           </div>
           {columns.map((c) => (

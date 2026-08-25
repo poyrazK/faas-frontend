@@ -60,8 +60,8 @@ export default function DeploymentDetailPage() {
               actions={
                 <>
                   {slug && (
-                    <Link href={`/dashboard/workflows/${slug}`} className="btn btn-secondary">
-                      <Icon name="workflows" size={14} /> Open workflow
+                    <Link href={`/dashboard/services/${slug}`} className="btn btn-secondary">
+                      <Icon name="workflows" size={14} /> Open service
                     </Link>
                   )}
                   <button className="btn-icon btn-icon-bordered" onClick={deployment.reload} aria-label="Refresh">
@@ -80,7 +80,7 @@ export default function DeploymentDetailPage() {
                   k="Workflow"
                   v={
                     slug ? (
-                      <Link href={`/dashboard/workflows/${slug}`} style={{ color: 'var(--color-brand)' }}>
+                      <Link href={`/dashboard/services/${slug}`} style={{ color: 'var(--color-brand)' }}>
                         {slug}
                       </Link>
                     ) : (

@@ -194,9 +194,9 @@ export default function OverviewPage() {
         </SectionCard>
 
         <SectionCard
-          title="Top workflows"
+          title="Top services"
           action={
-            <Link href="/dashboard/workflows" className="text-xs font-medium" style={{ color: 'var(--color-brand)' }}>
+            <Link href="/dashboard/services" className="text-xs font-medium" style={{ color: 'var(--color-brand)' }}>
               View all
             </Link>
           }
@@ -206,14 +206,14 @@ export default function OverviewPage() {
             <EmptyState
               icon="workflows"
               title={degraded ? 'Metrics unavailable' : 'No traffic yet'}
-              hint={degraded ? undefined : 'Workflows rank here once they serve requests.'}
+              hint={degraded ? undefined : 'Services rank here once they serve requests.'}
             />
           ) : (
             <ul>
               {metricRows.slice(0, 6).map(({ slug, m }) => (
                 <li key={slug}>
                   <Link
-                    href={`/dashboard/workflows/${slug}`}
+                    href={`/dashboard/services/${slug}`}
                     className="flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-[var(--color-surface-subtle)]"
                   >
                     <span
@@ -268,7 +268,7 @@ export default function OverviewPage() {
                     <tr key={r.id}>
                       <td className="cell-primary">
                         {app ? (
-                          <Link href={`/dashboard/workflows/${app.slug}`} style={{ color: 'var(--color-brand)' }}>
+                          <Link href={`/dashboard/services/${app.slug}`} style={{ color: 'var(--color-brand)' }}>
                             {app.slug}
                           </Link>
                         ) : (
@@ -369,7 +369,7 @@ export default function OverviewPage() {
       {/* ── Footer strip ───────────────────────────────────────────────── */}
       <div className="card mt-4 flex flex-wrap items-center gap-x-8 gap-y-4 px-5 py-4">
         <Fact icon="bolt" title="Firecracker powered" sub="< 350ms p50 cold wake" />
-        <Fact icon="scale" title="Scale to zero" sub="Parked workflows cost nothing" />
+        <Fact icon="scale" title="Scale to zero" sub="Parked services cost nothing" />
         <Fact
           icon="shield"
           title="Hardware isolation"

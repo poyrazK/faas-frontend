@@ -14,7 +14,7 @@ export const metadata: Metadata = {
     template: "%s | Gregale",
   },
   description:
-    "Gregale runs serverless apps inside isolated Firecracker microVMs. Apps park as memory snapshots and wake on request in under 350ms.",
+    "Gregale runs serverless services inside isolated Firecracker microVMs. Services park as memory snapshots and wake on request in under 350ms.",
   keywords: [
     "Gregale",
     "gregale.dev",
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
     siteName: "Gregale",
     title: "Gregale — Scale-to-zero Firecracker MicroVM Cloud",
     description:
-      "Gregale runs serverless apps inside isolated Firecracker microVMs. Apps park as memory snapshots and wake on request in under 350ms.",
+      "Gregale runs serverless services inside isolated Firecracker microVMs. Services park as memory snapshots and wake on request in under 350ms.",
     images: [
       {
         url: "/gregale-logo-green-trans.png",
@@ -48,7 +48,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Gregale — Scale-to-zero Firecracker MicroVM Cloud",
     description:
-      "Gregale runs serverless apps inside isolated Firecracker microVMs. Apps park as memory snapshots and wake on request in under 350ms.",
+      "Gregale runs serverless services inside isolated Firecracker microVMs. Services park as memory snapshots and wake on request in under 350ms.",
     images: ["/gregale-logo-green-trans.png"],
   },
   robots: {

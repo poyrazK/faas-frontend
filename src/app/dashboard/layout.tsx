@@ -63,7 +63,7 @@ function initials(email: string): string {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { account, loading, signOut } = useAuth();
+  const { account, activeOrg, orgs, switchOrg, loading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -191,6 +191,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     </>
   );
 
+  const isOperationsView = pathname.startsWith('/dashboard/admin');
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--color-surface-subtle)' }}>
       {/* ── Top bar ───────────────────────────────────────────────────── */}
@@ -202,7 +204,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Icon name="env" size={18} />
         </button>
 
-        <Link href="/dashboard" className="flex items-center" style={{ width: collapsed ? undefined : 196 }}>
+        <Link href={isOperationsView ? "/dashboard/admin/overview" : "/dashboard"} className="flex items-center gap-2" style={{ width: collapsed ? undefined : 210 }}>
           <Image
             src="/gregale-logo-green-trans.png"
             alt="Gregale"
@@ -211,10 +213,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             style={{ height: 28, width: 'auto' }}
             priority
           />
+          {isOperationsView && (
+            <span className="hidden sm:inline-block rounded bg-[var(--color-brand-bright)]/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[var(--color-brand-bright)] border border-[var(--color-brand-bright)]/20">
+              OPERATIONS
+            </span>
+          )}
         </Link>
 
-        {/* Account chip — the template's team switcher. Gregale accounts are
-            single-tenant, so this opens account actions rather than a list. */}
+        {/* Account & Org Switcher */}
         <div className="relative hidden sm:block">
           <button
             className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-[var(--color-surface-subtle)]"
@@ -226,12 +232,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               className="flex h-7 w-7 items-center justify-center rounded-md text-[11px] font-bold text-white"
               style={{ background: 'var(--color-brand)' }}
             >
-              {initials(account.email)}
+              {initials(activeOrg ? activeOrg.name : account.email)}
             </span>
             <span className="text-left leading-tight">
-              <span className="block max-w-[150px] truncate text-[13px] font-semibold">{account.email}</span>
+              <span className="block max-w-[150px] truncate text-[13px] font-semibold">{activeOrg ? activeOrg.name : account.email}</span>
               <span className="block text-[11px]" style={{ color: 'var(--color-ink-muted)' }}>
-                {plan.label} Plan
+                {activeOrg ? `Role: ${activeOrg.role}` : `${plan.label} Plan`}
               </span>
             </span>
             <Icon name="chevronDown" size={14} style={{ color: 'var(--color-ink-muted)' }} />
@@ -251,9 +257,49 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     {account.app_count} workflow{account.app_count === 1 ? '' : 's'} · {plan.label}
                   </div>
                 </div>
+
+                <div className="py-1" style={{ borderBottom: '1px solid var(--color-line)' }}>
+                  <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">
+                    Switch context
+                  </div>
+                  <button
+                    className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-subtle)]"
+                    onClick={() => { switchOrg(null); setMenu(false); }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Personal namespace</span>
+                      {!activeOrg && <Icon name="check" size={14} />}
+                    </div>
+                  </button>
+                  {orgs.filter(org => !org.personal).map((org) => (
+                    <button
+                      key={org.slug}
+                      className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-subtle)]"
+                      onClick={() => { switchOrg(org.slug); setMenu(false); }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{org.name}</span>
+                        {activeOrg?.slug === org.slug && <Icon name="check" size={14} />}
+                      </div>
+                    </button>
+                  ))}
+                  <Link
+                    href="/dashboard/settings/orgs/create"
+                    onClick={() => setMenu(false)}
+                    className="block px-3 py-2 text-sm text-[var(--color-brand)] hover:bg-[var(--color-surface-subtle)]"
+                  >
+                    + Create Organization
+                  </Link>
+                </div>
+
                 <Link href="/dashboard/settings" className="block px-3 py-2 text-sm hover:bg-[var(--color-surface-subtle)]">
                   Account settings
                 </Link>
+                {activeOrg && (
+                  <Link href={`/dashboard/settings/orgs`} className="block px-3 py-2 text-sm hover:bg-[var(--color-surface-subtle)]">
+                    Organization settings
+                  </Link>
+                )}
                 <Link href="/dashboard/keys" className="block px-3 py-2 text-sm hover:bg-[var(--color-surface-subtle)]">
                   API keys
                 </Link>
@@ -272,7 +318,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-2">
+          {isOperationsView ? (
+            <Link
+              href="/dashboard"
+              className="btn btn-secondary btn-xs hidden md:inline-flex text-xs"
+              title="Return to Developer Console"
+            >
+              ← Developer Console
+            </Link>
+          ) : (
+            <Link
+              href="/dashboard/admin/overview"
+              className="btn btn-secondary btn-xs hidden md:inline-flex text-xs font-semibold text-[var(--color-brand-bright)]"
+              title="Switch to Operations Console (operations.gregale.dev)"
+            >
+              Operations Console →
+            </Link>
+          )}
+
           <a
             href="https://github.com/poyrazK/faas/issues/new"
             target="_blank"

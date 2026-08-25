@@ -80,6 +80,11 @@ export default function EnvVarsPage() {
     return true;
   });
 
+  const [openBulk, setOpenBulk] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkSlug, setBulkSlug] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+
   function openCreate() {
     setFormSlug('');
     setKey('');
@@ -94,6 +99,69 @@ export default function EnvVarsPage() {
     setValue('');
     setEditing(true);
     setOpen(true);
+  }
+
+  function handleCopyTemplate() {
+    if (filtered.length === 0) {
+      toast.error('No variables available to copy.');
+      return;
+    }
+    const lines = filtered.map((r) => `${r.key}=`).join('\n');
+    navigator.clipboard.writeText(lines);
+    toast.success(`Copied ${filtered.length} env keys as .env template.`);
+  }
+
+  async function submitBulk(e: React.FormEvent) {
+    e.preventDefault();
+    if (!bulkSlug || !bulkText.trim()) return;
+
+    setBulkBusy(true);
+    const lines = bulkText.split('\n');
+    let successCount = 0;
+    const errors: string[] = [];
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+
+      const eqIdx = line.indexOf('=');
+      if (eqIdx === -1) {
+        errors.push(`Invalid format: "${line}"`);
+        continue;
+      }
+
+      const k = line.slice(0, eqIdx).trim().toUpperCase();
+      let v = line.slice(eqIdx + 1).trim();
+      // Remove quotes if present
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+
+      if (!/^[A-Z][A-Z0-9_]*$/.test(k)) {
+        errors.push(`Invalid key name: "${k}"`);
+        continue;
+      }
+
+      try {
+        await setEnv(bulkSlug, k, v);
+        successCount++;
+      } catch (err) {
+        errors.push(`Failed ${k}: ${err instanceof ApiError ? err.message : 'Error'}`);
+      }
+    }
+
+    setBulkBusy(false);
+    if (successCount > 0) {
+      toast.success(`Successfully imported ${successCount} variable(s) into ${bulkSlug}.`);
+      data.reload();
+      if (errors.length === 0) {
+        setOpenBulk(false);
+        setBulkText('');
+      }
+    }
+    if (errors.length > 0) {
+      toast.error(`Errors during import:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '...' : ''}`);
+    }
   }
 
   async function submit(e: React.FormEvent) {
@@ -119,9 +187,17 @@ export default function EnvVarsPage() {
         title="Env Vars"
         subtitle="Plaintext configuration injected into your microVMs."
         actions={
-          <button className="btn btn-primary" onClick={openCreate} disabled={!apps.data?.length}>
-            <Icon name="plus" size={14} /> New Variable
-          </button>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-secondary" onClick={handleCopyTemplate} disabled={!filtered.length} title="Copy keys as .env template">
+              <Icon name="copy" size={14} /> Copy Template
+            </button>
+            <button className="btn btn-secondary" onClick={() => setOpenBulk(true)} disabled={!apps.data?.length}>
+              <Icon name="arrowUp" size={14} /> Bulk Import
+            </button>
+            <button className="btn btn-primary" onClick={openCreate} disabled={!apps.data?.length}>
+              <Icon name="plus" size={14} /> New Variable
+            </button>
+          </div>
         }
       />
 
@@ -307,6 +383,53 @@ export default function EnvVarsPage() {
             <textarea className="field mono" rows={3} value={value} onChange={(e) => setValue(e.target.value)} required />
             <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
               Stored verbatim as plaintext. Don&apos;t put credentials here — use a sealed secret instead.
+            </p>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={openBulk}
+        onClose={() => setOpenBulk(false)}
+        title="Bulk Import .env Variables"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setOpenBulk(false)}>Cancel</button>
+            <button className="btn btn-primary" form="bulk-set-env" type="submit" disabled={bulkBusy || !bulkSlug || !bulkText.trim()}>
+              {bulkBusy ? 'Importing…' : 'Import Variables'}
+            </button>
+          </>
+        }
+      >
+        <form id="bulk-set-env" onSubmit={submitBulk} className="space-y-4">
+          <div>
+            <label className="label">Target Workflow</label>
+            <select
+              className="field"
+              value={bulkSlug}
+              onChange={(e) => setBulkSlug(e.target.value)}
+              required
+            >
+              <option value="">Select a workflow…</option>
+              {(apps.data ?? []).map((a) => (
+                <option key={a.id} value={a.slug}>
+                  {a.slug}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Paste .env Content</label>
+            <textarea
+              className="field mono"
+              rows={8}
+              placeholder={`# Environment variables for your app\nLOG_LEVEL=info\nPORT=8080\nFEATURE_FLAGS=enabled`}
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              required
+            />
+            <p className="mt-1 text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+              Paste standard KEY=VALUE lines. Comments starting with # and blank lines are ignored. Keys will be converted to uppercase.
             </p>
           </div>
         </form>
