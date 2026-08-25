@@ -1411,6 +1411,52 @@ export const syncPaddleCatalog = () =>
 export const resetPaddleCatalog = () =>
   request<void>('/v1/admin/billing-paddle-catalog', { method: 'DELETE' }, 'none');
 
+export interface BillingPaddleOveragePreflightResponse {
+  table_exists: boolean;
+  has_window_start: boolean;
+  has_state: boolean;
+  has_claimed_at: boolean;
+  has_claimed_by: boolean;
+  pending_rows: number;
+  completed_rows: number;
+}
+
+export const getPaddleOveragePreflight = () =>
+  request<BillingPaddleOveragePreflightResponse>('/v1/admin/billing-paddle-overage/preflight', { cache: 'no-store' });
+
+export interface ObsEventRow {
+  id: string;
+  at: string;
+  kind: string;
+  actor: string;
+  subject: string | null;
+  data: Record<string, unknown> | null;
+}
+
+export interface ObsEventListResponse {
+  generated_at: string;
+  items: ObsEventRow[];
+  limit: number;
+  window_hours?: number;
+  kind_prefix?: string;
+  actor?: string;
+  subject?: string;
+}
+
+export const listObsEvents = (limit = 100, kindPrefix?: string, actor?: string, subject?: string) => {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (kindPrefix) q.set('kind_prefix', kindPrefix);
+  if (actor) q.set('actor', actor);
+  if (subject) q.set('subject', subject);
+  return request<ObsEventListResponse>(`/v1/admin/obs/events?${q}`, { cache: 'no-store' });
+};
+
+export const setGithubWebhookSecret = (secret: string) =>
+  request<{ ok: boolean }>('/v1/admin/github-webhook-secrets', {
+    method: 'POST',
+    body: JSON.stringify({ secret }),
+  });
+
 export const listGlobalAuditLog = (limit = 100, before?: string, includeAnonymous = true) => {
   const q = new URLSearchParams({ limit: String(limit) });
   if (before) q.set('before', before);

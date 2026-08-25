@@ -5,6 +5,7 @@ import {
   listPaddleCatalog,
   syncPaddleCatalog,
   resetPaddleCatalog,
+  getPaddleOveragePreflight,
   type BillingCatalogEntry,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
@@ -15,6 +16,7 @@ import { relativeTime } from '@/lib/format';
 
 export default function BillingCatalogPage() {
   const { data, loading, error, reload } = useAsync(listPaddleCatalog);
+  const preflightQuery = useAsync(getPaddleOveragePreflight, [], 30000);
   const [syncing, setSyncing] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
@@ -52,7 +54,7 @@ export default function BillingCatalogPage() {
     <div>
       <PageHeader
         title="Billing Catalog Operations"
-        subtitle="Operator billing surface for managing provider price catalog items and syncing plans"
+        subtitle="Operator billing surface for managing provider price catalog items, sync plans, and overage schema preflight"
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -81,6 +83,65 @@ export default function BillingCatalogPage() {
           {actionFeedback}
         </div>
       )}
+
+      {/* Overage Preflight Probe */}
+      <div className="mb-6">
+        <SectionCard
+          title={
+            <div className="flex items-center justify-between">
+              <span>Paddle Overage Dedupe Schema & Preflight</span>
+              <button onClick={() => preflightQuery.reload()} className="btn btn-secondary btn-xs">
+                <Icon name="refresh" size={12} />
+                Probe Schema
+              </button>
+            </div>
+          }
+        >
+          {preflightQuery.loading && !preflightQuery.data ? (
+            <div className="p-4 text-xs text-[var(--color-ink-muted)]">Probing overage schema status…</div>
+          ) : preflightQuery.error ? (
+            <div className="p-4 text-xs text-[var(--color-danger)]">
+              {preflightQuery.error.message || 'Overage preflight probe failed.'}
+            </div>
+          ) : preflightQuery.data ? (
+            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+              <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3">
+                <div className="text-[var(--color-ink-muted)]">Dedupe Table</div>
+                <div className="font-semibold mt-1">
+                  {preflightQuery.data.table_exists ? (
+                    <span className="badge badge-success">Table Initialized</span>
+                  ) : (
+                    <span className="badge badge-warning">Missing</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3">
+                <div className="text-[var(--color-ink-muted)]">Schema Columns</div>
+                <div className="font-semibold mt-1 font-mono text-[11px]">
+                  {preflightQuery.data.has_window_start && preflightQuery.data.has_state && preflightQuery.data.has_claimed_by
+                    ? 'All Required Columns Present'
+                    : 'Partial Migration'}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3">
+                <div className="text-[var(--color-ink-muted)]">Pending Overage Rows</div>
+                <div className="font-bold font-mono text-sm mt-1 text-[var(--color-brand-bright)]">
+                  {preflightQuery.data.pending_rows}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3">
+                <div className="text-[var(--color-ink-muted)]">Completed Dedupe Rows</div>
+                <div className="font-bold font-mono text-sm mt-1">
+                  {preflightQuery.data.completed_rows}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </SectionCard>
+      </div>
 
       <SectionCard title="Provider Price Catalog">
         {loading && !data ? (
