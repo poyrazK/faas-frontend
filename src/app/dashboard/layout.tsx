@@ -319,23 +319,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {isOperationsView ? (
-            <Link
-              href="/dashboard"
-              className="btn btn-secondary btn-xs hidden md:inline-flex text-xs"
-              title="Return to Developer Console"
-            >
-              ← Developer Console
-            </Link>
-          ) : (
-            <Link
-              href="/dashboard/admin/overview"
-              className="btn btn-secondary btn-xs hidden md:inline-flex text-xs font-semibold text-[var(--color-brand-bright)]"
-              title="Switch to Operations Console (operations.gregale.dev)"
-            >
-              Operations Console →
-            </Link>
-          )}
+          <a
+            href="https://operations.gregale.dev"
+            className="btn btn-secondary btn-xs hidden md:inline-flex text-xs font-semibold text-[var(--color-brand-bright)]"
+            title="Switch to Dedicated Operations Portal (operations.gregale.dev)"
+          >
+            Operations Console ↗
+          </a>
 
           <a
             href="https://github.com/poyrazK/faas/issues/new"

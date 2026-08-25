@@ -3,14 +3,14 @@ import type { NextRequest } from 'next/server';
 
 /**
  * Next.js Middleware for Gregale:
- * - Handles subdomain routing for operations.gregale.dev (and operations.localhost for dev).
- * - When accessing the operations subdomain, routes root '/' and '/dashboard' directly
- *   to '/dashboard/admin/overview'.
+ * - Directs traffic for operations.gregale.dev (and operations.localhost) to the dedicated /operations/* application tree.
+ * - Provides clean top-level URLs (/overview, /controls, /nodes, /tenants, /anomalies, /rate-limits, /billing, /audit-log, /login).
  * - Injects 'x-is-operations' header for server and client components to detect operator context.
  */
 export function middleware(request: NextRequest) {
   const host = request.headers.get('host') || '';
   const url = request.nextUrl.clone();
+  const pathname = url.pathname;
 
   // Detect operations subdomain (e.g., operations.gregale.dev, operations.localhost:3000)
   const isOperationsSubdomain =
@@ -22,14 +22,46 @@ export function middleware(request: NextRequest) {
   }
 
   if (isOperationsSubdomain) {
-    // If accessing root '/' or '/dashboard' on operations domain, rewrite to admin overview
-    if (url.pathname === '/' || url.pathname === '/dashboard') {
-      url.pathname = '/dashboard/admin/overview';
+    // If accessing root '/' or '/dashboard', rewrite to operations overview
+    if (pathname === '/' || pathname === '/dashboard' || pathname === '/dashboard/admin/overview') {
+      url.pathname = '/operations/overview';
       return NextResponse.rewrite(url, {
         request: {
           headers: requestHeaders,
         },
       });
+    }
+
+    // Clean top-level URL mappings
+    const cleanPaths = [
+      'overview',
+      'controls',
+      'nodes',
+      'tenants',
+      'anomalies',
+      'rate-limits',
+      'billing',
+      'audit-log',
+      'login',
+    ];
+
+    for (const p of cleanPaths) {
+      if (pathname === `/${p}` || pathname.startsWith(`/${p}/`)) {
+        url.pathname = `/operations${pathname}`;
+        return NextResponse.rewrite(url, {
+          request: {
+            headers: requestHeaders,
+          },
+        });
+      }
+      if (pathname === `/dashboard/admin/${p}` || pathname.startsWith(`/dashboard/admin/${p}/`)) {
+        url.pathname = pathname.replace('/dashboard/admin/', '/operations/');
+        return NextResponse.rewrite(url, {
+          request: {
+            headers: requestHeaders,
+          },
+        });
+      }
     }
   }
 
