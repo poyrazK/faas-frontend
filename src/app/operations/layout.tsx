@@ -23,6 +23,7 @@ const OPS_NAV: NavItem[] = [
   { href: '/operations/anomalies', label: 'Anomaly Scoring', icon: 'spark' },
   { href: '/operations/rate-limits', label: 'Rate Limits & Shield', icon: 'shield' },
   { href: '/operations/billing', label: 'Price Catalog Ops', icon: 'plans' },
+  { href: '/operations/configuration', label: 'Runtime Configuration', icon: 'settings' },
   { href: '/operations/audit-log', label: 'Global Audit Trail', icon: 'logs' },
 ];
 
