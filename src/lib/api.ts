@@ -1253,6 +1253,99 @@ export interface ObsTenantDetailResponse {
   sessions: ObsTenantCounts;
 }
 
+export interface ObsTenant360Response extends ObsTenantDetailResponse {
+  usage: ObsTenantUsage;
+  billing: ObsTenantBilling;
+}
+
+export interface ObsTenantUsage {
+  month: string;
+  used_gb_hours: number;
+  included_gb_hours: number;
+  overage_gb_hours: number;
+  overage_cents: number;
+  used_cpu_hours: number;
+  used_egress_gb: number;
+  used_ingress_gb: number;
+  cold_boots: number;
+  requests: number;
+  apps: ObsTenantUsageApp[];
+}
+
+export interface ObsTenantUsageApp {
+  app_id: string;
+  app_slug?: string;
+  mb_seconds: number;
+  cpu_usec: number;
+  requests: number;
+  tx_bytes: number;
+  net_tx_bytes: number;
+  net_rx_bytes: number;
+  cold_boots: number;
+}
+
+export interface ObsTenantBilling {
+  current_month_overage_cents: number;
+  overage_cap_cents?: number;
+  active_credits_cents: number;
+  invoices: ObsInvoiceSummary[];
+}
+
+export interface ObsInvoiceSummary {
+  id: string;
+  provider: string;
+  number?: string;
+  status: string;
+  currency: string;
+  period_start: string;
+  period_end: string;
+  total_cents: number;
+  amount_paid_cents: number;
+}
+
+export interface ObsCapacityResponse {
+  generated_at: string;
+  summary: ObsCapacitySummary;
+  nodes: ObsCapacityNode[];
+}
+
+export interface ObsCapacitySummary {
+  total_nodes: number;
+  active_nodes: number;
+  inactive_nodes: number;
+  total_vcpus: number;
+  total_vcpu_budget: number;
+  total_mem_mb: number;
+  total_admission_ceiling_mb: number;
+  ram_used_mb: number;
+  admission_margin_mb: number;
+  instances_live: number;
+  instances_running: number;
+  instances_waking: number;
+  instances_cold_booting: number;
+  apps_total: number;
+  tenants_total: number;
+  unplaced_apps: number;
+}
+
+export interface ObsCapacityNode {
+  id: string;
+  name: string;
+  active: boolean;
+  vpcpus: number;
+  vcpu_budget: number;
+  mem_mb: number;
+  admission_ceiling_mb: number;
+  instances_live: number;
+  instances_running: number;
+  instances_waking: number;
+  instances_cold_booting: number;
+  ram_used_mb: number;
+  admission_margin_mb: number;
+  apps_count: number;
+  tenants_count: number;
+}
+
 export interface ObsNodeRow {
   id: string;
   name: string;
@@ -1374,6 +1467,20 @@ export const getObsTenantDetail = (id: string, includePii = false) => {
   const q = includePii ? '?include_pii=1' : '';
   return request<ObsTenantDetailResponse>(`/v1/admin/obs/tenants/${id}${q}`, { cache: 'no-store' });
 };
+
+export const getObsTenant360 = (id: string, month?: string, includePii = false) => {
+  const q = new URLSearchParams();
+  if (month) q.set('month', month);
+  if (includePii) q.set('include_pii', '1');
+  const query = q.toString();
+  return request<ObsTenant360Response>(
+    `/v1/admin/obs/tenants/${id}/360${query ? `?${query}` : ''}`,
+    { cache: 'no-store' },
+  );
+};
+
+export const getObsCapacity = () =>
+  request<ObsCapacityResponse>('/v1/admin/obs/capacity', { cache: 'no-store' });
 
 export const issueAccountCredit = (accountId: string, amountCents: number, reason: string) =>
   request<{ id: string; amount_cents: number; reason: string }>(
@@ -1592,6 +1699,5 @@ export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
     cache: 'no-store',
   });
 };
-
 
 

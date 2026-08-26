@@ -4,11 +4,13 @@ import React, { useState } from 'react';
 import {
   listObsTenants,
   getObsTenantDetail,
+  getObsTenant360,
   issueAccountCredit,
   reconcileAccount,
   forceColdBootApp,
   type ObsTenantRow,
   type ObsTenantDetailResponse,
+  type ObsTenant360Response,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
@@ -24,6 +26,7 @@ export default function TenantsPage() {
   // Tenant detail modal
   const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<ObsTenantDetailResponse | null>(null);
+  const [tenant360Data, setTenant360Data] = useState<ObsTenant360Response | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   // Credit issue modal
@@ -50,9 +53,14 @@ export default function TenantsPage() {
     setSelectedTenantId(tenantId);
     setDetailLoading(true);
     setDetailData(null);
+    setTenant360Data(null);
     try {
-      const res = await getObsTenantDetail(tenantId, includePii);
-      setDetailData(res);
+      const [detail, tenant360] = await Promise.all([
+        getObsTenantDetail(tenantId, includePii),
+        getObsTenant360(tenantId, undefined, includePii),
+      ]);
+      setDetailData(detail);
+      setTenant360Data(tenant360);
     } catch {
       /* fetch failed */
     } finally {
@@ -326,6 +334,96 @@ export default function TenantsPage() {
                     <strong>{detailData.sessions.active}</strong>
                   </div>
                 </div>
+
+                {/* Tenant 360: usage, spend signals, and recent invoices */}
+                {tenant360Data && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">
+                        Tenant 360 · {tenant360Data.usage.month}
+                      </h4>
+                      <span className="text-[11px] text-[var(--color-ink-muted)]">
+                        {tenant360Data.usage.requests.toLocaleString()} requests
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <div className="rounded-lg border border-[var(--color-line)] p-3">
+                        <div className="text-[11px] text-[var(--color-ink-muted)]">RAM usage</div>
+                        <div className="mt-1 font-semibold">{tenant360Data.usage.used_gb_hours.toFixed(2)} GB-h</div>
+                        <div className="text-[10px] text-[var(--color-ink-muted)]">
+                          of {tenant360Data.usage.included_gb_hours} included
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-[var(--color-line)] p-3">
+                        <div className="text-[11px] text-[var(--color-ink-muted)]">Overage</div>
+                        <div className="mt-1 font-semibold">{tenant360Data.usage.overage_gb_hours.toFixed(2)} GB-h</div>
+                        <div className="text-[10px] text-[var(--color-ink-muted)]">
+                          €{(tenant360Data.usage.overage_cents / 100).toFixed(2)} derived
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-[var(--color-line)] p-3">
+                        <div className="text-[11px] text-[var(--color-ink-muted)]">Active credits</div>
+                        <div className="mt-1 font-semibold">€{(tenant360Data.billing.active_credits_cents / 100).toFixed(2)}</div>
+                        <div className="text-[10px] text-[var(--color-ink-muted)]">
+                          {tenant360Data.billing.overage_cap_cents == null
+                            ? 'No overage cap'
+                            : `Cap €${(tenant360Data.billing.overage_cap_cents / 100).toFixed(2)}`}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-[var(--color-line)] p-3">
+                        <div className="text-[11px] text-[var(--color-ink-muted)]">Current overage</div>
+                        <div className="mt-1 font-semibold">€{(tenant360Data.billing.current_month_overage_cents / 100).toFixed(2)}</div>
+                        <div className="text-[10px] text-[var(--color-ink-muted)]">
+                          {tenant360Data.usage.cold_boots} cold boots · {tenant360Data.usage.apps.length} usage apps
+                        </div>
+                      </div>
+                    </div>
+
+                    {tenant360Data.usage.apps.length > 0 && (
+                      <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
+                        <table className="w-full text-left text-xs">
+                          <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] text-[var(--color-ink-muted)]">
+                            <tr>
+                              <th className="px-3 py-2">App</th>
+                              <th className="px-3 py-2">GB-h</th>
+                              <th className="px-3 py-2">Requests</th>
+                              <th className="px-3 py-2">Egress</th>
+                              <th className="px-3 py-2">Cold boots</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--color-line)]">
+                            {tenant360Data.usage.apps.map((app) => (
+                              <tr key={app.app_id}>
+                                <td className="px-3 py-2 font-semibold">{app.app_slug || app.app_id.slice(0, 12)}</td>
+                                <td className="px-3 py-2">{(app.mb_seconds / 3600000).toFixed(2)}</td>
+                                <td className="px-3 py-2">{app.requests.toLocaleString()}</td>
+                                <td className="px-3 py-2">{((app.tx_bytes + app.net_tx_bytes) / (1024 ** 3)).toFixed(3)} GB</td>
+                                <td className="px-3 py-2">{app.cold_boots}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {tenant360Data.billing.invoices.length > 0 && (
+                      <div>
+                        <div className="mb-2 text-xs font-semibold text-[var(--color-ink-muted)]">Recent invoices</div>
+                        <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
+                          {tenant360Data.billing.invoices.slice(0, 5).map((invoice) => (
+                            <div key={invoice.id} className="flex items-center justify-between p-3 text-xs">
+                              <div>
+                                <span className="font-semibold">{invoice.number || invoice.id.slice(0, 12)}</span>
+                                <span className="ml-2 text-[var(--color-ink-muted)]">{invoice.status} · {invoice.currency}</span>
+                              </div>
+                              <span className="font-semibold">{(invoice.total_cents / 100).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Operator Actions */}
                 <div className="flex items-center justify-between rounded-lg border border-[var(--color-line)] p-4">
