@@ -207,6 +207,7 @@ export interface AppMetrics {
   error_rate_pct: number;
   cold_start_pct: number;
   wake_p95_ms: number;
+  queue_depth: number;
 }
 
 /** Account-wide rollup: same per-app shape, keyed by app slug. */
@@ -1283,6 +1284,12 @@ export interface ObsTenantActivityResponse {
   limit: number;
 }
 
+export interface ObsAccountMutationResponse {
+  account: ObsTenantRow;
+  action: string;
+  revoked_sessions: number;
+}
+
 export interface ObsDeploymentRow {
   id: string;
   status: string;
@@ -1327,6 +1334,27 @@ export interface ObsAppDetailResponse {
   deployments: ObsDeploymentRow[];
   instances: ObsInstanceRow[];
   invocations: ObsInvocationRow[];
+  health: ObsAppHealth;
+}
+
+export interface ObsAppErrorSummary {
+  fingerprint: string;
+  error_class: string;
+  route: string;
+  http_status: number;
+  count: number;
+  request_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  sample_message: string;
+}
+
+export interface ObsAppHealth {
+  generated_at: string;
+  metrics: AppMetrics;
+  errors: ObsAppErrorSummary[];
+  errors_window_start: string;
+  errors_window_end: string;
 }
 
 export interface ObsNodeRow {
@@ -1373,6 +1401,17 @@ export interface ObsNodeDetailResponse {
   node: ObsNodeRow;
   apps: ObsNodeApp[];
   instances: ObsInstanceRow[];
+  drain: ObsNodeDrainStatus;
+}
+
+export interface ObsNodeDrainStatus {
+  total_instances: number;
+  live_instances: number;
+  running_instances: number;
+  waking_instances: number;
+  cold_booting_instances: number;
+  drain_safe: boolean;
+  observed_at: string;
 }
 
 export interface ObsNodeMutationResponse {
@@ -1493,6 +1532,21 @@ export const getObsTenantActivity = (id: string, limit = 50) =>
     `/v1/admin/obs/tenants/${id}/activity?limit=${limit}`,
     { cache: 'no-store' },
   );
+
+const mutateObsAccount = (id: string, action: 'suspend' | 'restore' | 'revoke-sessions', reason: string) =>
+  request<ObsAccountMutationResponse>(
+    `/v1/admin/ops/accounts/${encodeURIComponent(id)}/${action}?confirm=true&reason=${encodeURIComponent(reason)}`,
+    { method: 'POST' },
+  );
+
+export const suspendObsAccount = (id: string, reason = 'operator_console_suspend') =>
+  mutateObsAccount(id, 'suspend', reason);
+
+export const restoreObsAccount = (id: string, reason = 'operator_console_restore') =>
+  mutateObsAccount(id, 'restore', reason);
+
+export const revokeObsAccountSessions = (id: string, reason = 'operator_console_revoke_sessions') =>
+  mutateObsAccount(id, 'revoke-sessions', reason);
 
 export const getObsAppDetail = (id: string) =>
   request<ObsAppDetailResponse>(`/v1/admin/obs/apps/${id}`, { cache: 'no-store' });
@@ -1735,4 +1789,3 @@ export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
     cache: 'no-store',
   });
 };
-

@@ -77,8 +77,8 @@ export default function ComputeNodesPage() {
         : action === 'force-drain'
         ? await forceDrainObsNode(detailNodeName)
         : await activateObsNode(detailNodeName);
-      setNodeFeedback(`${result.node} is ${result.active ? 'active' : 'draining'}. ${result.live_instances} live instance(s) remain.`);
       await openNodeDetail(detailNodeName);
+      setNodeFeedback(`${result.node} is ${result.active ? 'active' : 'draining'}. ${result.live_instances} live instance(s) remain.`);
       reload();
     } catch (err) {
       setNodeFeedback(`Node action failed: ${(err as Error).message}`);
@@ -260,11 +260,12 @@ export default function ComputeNodesPage() {
               <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Fetching node workloads…</div>
             ) : nodeDetail ? (
               <div className="mt-4 space-y-5 text-xs">
-                <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-5">
                   <div><span className="text-[var(--color-ink-muted)]">Status</span><div className="mt-1 font-semibold">{nodeDetail.node.active ? 'Active' : 'Draining'}</div></div>
                   <div><span className="text-[var(--color-ink-muted)]">Live instances</span><div className="mt-1 font-semibold">{nodeDetail.node.instances_live}</div></div>
                   <div><span className="text-[var(--color-ink-muted)]">RAM used</span><div className="mt-1 font-semibold">{(nodeDetail.node.ram_used_mb / 1024).toFixed(1)} GB</div></div>
                   <div><span className="text-[var(--color-ink-muted)]">CPU (60s)</span><div className="mt-1 font-semibold">{nodeDetail.node.cpu_pct_60s == null ? '—' : `${nodeDetail.node.cpu_pct_60s.toFixed(1)}%`}</div></div>
+                  <div><span className="text-[var(--color-ink-muted)]">Drain status</span><div className={`mt-1 font-semibold ${nodeDetail.drain.drain_safe ? 'text-[var(--color-brand-bright)]' : 'text-[var(--color-warning-bold)]'}`}>{nodeDetail.drain.drain_safe ? 'Safe' : `${nodeDetail.drain.live_instances} live remain`}</div></div>
                 </div>
 
                 {nodeFeedback && <div className="rounded bg-[var(--color-surface-subtle)] p-3 text-[var(--color-ink-muted)]">{nodeFeedback}</div>}

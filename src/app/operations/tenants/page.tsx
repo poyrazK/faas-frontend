@@ -6,6 +6,9 @@ import {
   getObsTenantDetail,
   getObsTenantActivity,
   getObsAppDetail,
+  suspendObsAccount,
+  restoreObsAccount,
+  revokeObsAccountSessions,
   issueAccountCredit,
   reconcileAccount,
   forceColdBootApp,
@@ -44,6 +47,8 @@ export default function TenantsPage() {
   // Reconcile state
   const [reconcilingId, setReconcilingId] = useState<string | null>(null);
   const [reconcileFeedback, setReconcileFeedback] = useState<string | null>(null);
+  const [tenantAction, setTenantAction] = useState<string | null>(null);
+  const [tenantFeedback, setTenantFeedback] = useState<string | null>(null);
 
   // Cold boot state
   const [coldBootingSlug, setColdBootingSlug] = useState<string | null>(null);
@@ -119,6 +124,32 @@ export default function TenantsPage() {
       setReconcileFeedback(`Reconcile error: ${(err as Error).message}`);
     } finally {
       setReconcilingId(null);
+    }
+  };
+
+  const handleTenantAction = async (action: 'suspend' | 'restore' | 'revoke-sessions') => {
+    if (!selectedTenantId) return;
+    const warning = action === 'suspend'
+      ? 'Suspend this tenant and revoke all of its active dashboard sessions?'
+      : action === 'revoke-sessions'
+      ? 'Revoke all active dashboard sessions for this tenant?'
+      : 'Restore this tenant account?';
+    if (!window.confirm(warning)) return;
+    setTenantAction(action);
+    setTenantFeedback(null);
+    try {
+      const result = action === 'suspend'
+        ? await suspendObsAccount(selectedTenantId)
+        : action === 'restore'
+        ? await restoreObsAccount(selectedTenantId)
+        : await revokeObsAccountSessions(selectedTenantId);
+      await openInspectDrawer(selectedTenantId);
+      setTenantFeedback(`${result.action} completed; ${result.revoked_sessions} session(s) revoked.`);
+      reload();
+    } catch (err) {
+      setTenantFeedback(`Tenant operation failed: ${(err as Error).message}`);
+    } finally {
+      setTenantAction(null);
     }
   };
 
@@ -355,24 +386,44 @@ export default function TenantsPage() {
                   </div>
                 </div>
 
+                {tenantFeedback && (
+                  <div className="rounded bg-[var(--color-surface-subtle)] p-3 text-xs text-[var(--color-ink-muted)]">
+                    {tenantFeedback}
+                  </div>
+                )}
+
                 {/* Operator Actions */}
-                <div className="flex items-center justify-between rounded-lg border border-[var(--color-line)] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-line)] p-4">
                   <div>
-                    <div className="font-semibold text-xs">Issue Account Credit</div>
+                    <div className="font-semibold text-xs">Tenant Operations</div>
                     <div className="text-xs text-[var(--color-ink-muted)]">
-                      Apply promotional or refund credits to tenant account balance.
+                      Lifecycle, session security, and billing actions are audited.
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      setCreditModalOpen(true);
-                      setCreditFeedback(null);
-                    }}
-                    className="btn btn-secondary btn-sm"
-                  >
-                    <Icon name="plus" size={14} />
-                    Issue Credit
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    {detailData.account.status === 'suspended' ? (
+                      <button onClick={() => handleTenantAction('restore')} disabled={tenantAction !== null} className="btn btn-secondary btn-sm">
+                        {tenantAction === 'restore' ? 'Restoring…' : 'Restore Account'}
+                      </button>
+                    ) : (
+                      <button onClick={() => handleTenantAction('suspend')} disabled={tenantAction !== null} className="btn btn-danger btn-sm">
+                        {tenantAction === 'suspend' ? 'Suspending…' : 'Suspend Account'}
+                      </button>
+                    )}
+                    <button onClick={() => handleTenantAction('revoke-sessions')} disabled={tenantAction !== null} className="btn btn-secondary btn-sm">
+                      {tenantAction === 'revoke-sessions' ? 'Revoking…' : 'Revoke Sessions'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCreditModalOpen(true);
+                        setCreditFeedback(null);
+                      }}
+                      className="btn btn-secondary btn-sm"
+                    >
+                      <Icon name="plus" size={14} />
+                      Issue Credit
+                    </button>
+                  </div>
                 </div>
 
                 {/* Tenant Apps */}
@@ -474,6 +525,19 @@ export default function TenantsPage() {
                           <div><span className="text-[var(--color-ink-muted)]">Runtime</span><div className="font-semibold">{appDetail.app.runtime}</div></div>
                           <div><span className="text-[var(--color-ink-muted)]">Concurrency</span><div className="font-semibold">{appDetail.app.max_concurrency}</div></div>
                           <div><span className="text-[var(--color-ink-muted)]">Instances</span><div className="font-semibold">{appDetail.instances.length}</div></div>
+                        </div>
+                        <div>
+                          <div className="mb-2 font-semibold">Health ({appDetail.health.metrics.range})</div>
+                          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Requests</span><div className="font-semibold">{appDetail.health.metrics.request_count}</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">p95</span><div className="font-semibold">{appDetail.health.metrics.latency_p95_ms.toFixed(0)} ms</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Errors</span><div className="font-semibold">{appDetail.health.metrics.error_rate_pct.toFixed(2)}%</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Queue</span><div className="font-semibold">{appDetail.health.metrics.queue_depth ?? 0}</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Source</span><div className="truncate font-semibold" title={appDetail.health.metrics.source}>{appDetail.health.metrics.source === 'prometheus' ? 'Prometheus' : 'Degraded'}</div></div>
+                          </div>
+                          {appDetail.health.errors.length > 0 && (
+                            <div className="mt-3 overflow-x-auto rounded border border-[var(--color-line)]"><table className="w-full text-left text-xs"><thead className="border-b border-[var(--color-line)]"><tr><th className="px-2 py-1.5">Error</th><th className="px-2 py-1.5">Route</th><th className="px-2 py-1.5">Requests</th><th className="px-2 py-1.5">Last seen</th></tr></thead><tbody className="divide-y divide-[var(--color-line)]">{appDetail.health.errors.map((error) => <tr key={error.fingerprint}><td className="px-2 py-1.5">{error.error_class} ({error.http_status})</td><td className="px-2 py-1.5">{error.route}</td><td className="px-2 py-1.5">{error.request_count}</td><td className="px-2 py-1.5">{relativeTime(error.last_seen_at)}</td></tr>)}</tbody></table></div>
+                          )}
                         </div>
                         <div>
                           <div className="mb-1 font-semibold">Deployments ({appDetail.deployments.length})</div>
