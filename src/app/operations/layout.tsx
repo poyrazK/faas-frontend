@@ -18,6 +18,7 @@ const OPS_NAV: NavItem[] = [
   { href: '/operations/overview', label: 'Fleet Overview', icon: 'overview' },
   { href: '/operations/controls', label: 'Emergency Controls', icon: 'bolt' },
   { href: '/operations/nodes', label: 'Compute Host Nodes', icon: 'storage' },
+  { href: '/operations/capacity', label: 'Capacity Planning', icon: 'metrics' },
   { href: '/operations/tenants', label: 'Tenant Directory', icon: 'user' },
   { href: '/operations/anomalies', label: 'Anomaly Scoring', icon: 'spark' },
   { href: '/operations/rate-limits', label: 'Rate Limits & Shield', icon: 'shield' },
