@@ -1253,6 +1253,82 @@ export interface ObsTenantDetailResponse {
   sessions: ObsTenantCounts;
 }
 
+export interface ObsInvocationRow {
+  id: string;
+  app_id: string;
+  app_slug?: string;
+  state: string;
+  source: string;
+  method: string;
+  path: string;
+  outcome?: string;
+  attempts: number;
+  last_error?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface ObsAuditActivityRow {
+  id: string;
+  at: string;
+  kind: string;
+  actor?: string;
+}
+
+export interface ObsTenantActivityResponse {
+  account_id: string;
+  generated_at: string;
+  invocations: ObsInvocationRow[];
+  audit_events: ObsAuditActivityRow[];
+  limit: number;
+}
+
+export interface ObsDeploymentRow {
+  id: string;
+  status: string;
+  kind: string;
+  image_digest?: string;
+  source_url?: string;
+  commit_sha?: string;
+  error_code?: string;
+  created_at: string;
+}
+
+export interface ObsInstanceRow {
+  id: string;
+  app_id: string;
+  app_slug?: string;
+  account_id?: string;
+  deployment_id: string;
+  node_id?: string;
+  node_name?: string;
+  state: string;
+  ram_mb: number;
+  started_at: string;
+  last_request_at: string;
+  parked_at?: string;
+}
+
+export interface ObsAppDetail {
+  id: string;
+  account_id: string;
+  slug: string;
+  type: string;
+  runtime: string;
+  status: string;
+  ram_mb: number;
+  max_concurrency: number;
+  min_instances: number;
+  created_at: string;
+}
+
+export interface ObsAppDetailResponse {
+  app: ObsAppDetail;
+  deployments: ObsDeploymentRow[];
+  instances: ObsInstanceRow[];
+  invocations: ObsInvocationRow[];
+}
+
 export interface ObsNodeRow {
   id: string;
   name: string;
@@ -1261,6 +1337,14 @@ export interface ObsNodeRow {
   mem_mb: number;
   max_concurrency: number;
   admission_ceiling_mb: number;
+  instances_live: number;
+  instances_running: number;
+  instances_waking: number;
+  instances_cold_booting: number;
+  ram_used_mb: number;
+  admission_margin_mb: number;
+  cpu_pct_60s?: number;
+  disk_used_bytes?: number;
   overlay_ip?: string;
   last_heartbeat_at?: string;
   created_at: string;
@@ -1270,6 +1354,35 @@ export interface ObsNodeListResponse {
   items: ObsNodeRow[];
   next_cursor: string;
   limit: number;
+}
+
+export interface ObsNodeApp {
+  id: string;
+  slug: string;
+  account_id: string;
+  status: string;
+  instances_live: number;
+  instances_running: number;
+  instances_waking: number;
+  instances_cold_booting: number;
+  ram_used_mb: number;
+  last_request_at?: string;
+}
+
+export interface ObsNodeDetailResponse {
+  node: ObsNodeRow;
+  apps: ObsNodeApp[];
+  instances: ObsInstanceRow[];
+}
+
+export interface ObsNodeMutationResponse {
+  ok: boolean;
+  node: string;
+  previous_active: boolean;
+  active: boolean;
+  live_instances: number;
+  forced: boolean;
+  reason: string;
 }
 
 export interface ObsHeartbeatRow {
@@ -1375,6 +1488,15 @@ export const getObsTenantDetail = (id: string, includePii = false) => {
   return request<ObsTenantDetailResponse>(`/v1/admin/obs/tenants/${id}${q}`, { cache: 'no-store' });
 };
 
+export const getObsTenantActivity = (id: string, limit = 50) =>
+  request<ObsTenantActivityResponse>(
+    `/v1/admin/obs/tenants/${id}/activity?limit=${limit}`,
+    { cache: 'no-store' },
+  );
+
+export const getObsAppDetail = (id: string) =>
+  request<ObsAppDetailResponse>(`/v1/admin/obs/apps/${id}`, { cache: 'no-store' });
+
 export const issueAccountCredit = (accountId: string, amountCents: number, reason: string) =>
   request<{ id: string; amount_cents: number; reason: string }>(
     `/v1/admin/accounts/${accountId}/credits`,
@@ -1395,6 +1517,27 @@ export const getObsNodeHeartbeats = (name: string, sinceMinutes = 30) =>
     `/v1/admin/obs/nodes/${encodeURIComponent(name)}/heartbeats?since=${sinceMinutes}m`,
     { cache: 'no-store' },
   );
+
+export const getObsNodeDetail = (name: string) =>
+  request<ObsNodeDetailResponse>(
+    `/v1/admin/obs/nodes/${encodeURIComponent(name)}/detail`,
+    { cache: 'no-store' },
+  );
+
+const mutateObsNode = (name: string, action: 'drain' | 'force-drain' | 'activate', reason: string) =>
+  request<ObsNodeMutationResponse>(
+    `/v1/admin/ops/nodes/${encodeURIComponent(name)}/${action}?confirm=true&reason=${encodeURIComponent(reason)}`,
+    { method: 'POST' },
+  );
+
+export const drainObsNode = (name: string, reason = 'operator_console_drain') =>
+  mutateObsNode(name, 'drain', reason);
+
+export const forceDrainObsNode = (name: string, reason = 'operator_console_force_drain') =>
+  mutateObsNode(name, 'force-drain', reason);
+
+export const activateObsNode = (name: string, reason = 'operator_console_activate') =>
+  mutateObsNode(name, 'activate', reason);
 
 export const getObsAnomalies = (windowHours = 24) =>
   request<ObsAnomalyListResponse>(`/v1/admin/obs/anomalies?window_hours=${windowHours}`, { cache: 'no-store' });
@@ -1592,6 +1735,4 @@ export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
     cache: 'no-store',
   });
 };
-
-
 

@@ -4,9 +4,14 @@ import React, { useState } from 'react';
 import {
   listObsNodes,
   getObsNodeHeartbeats,
+  getObsNodeDetail,
+  drainObsNode,
+  forceDrainObsNode,
+  activateObsNode,
   getObsWakeLatencies,
   getObsBuilderHeartbeats,
   type ObsNodeRow,
+  type ObsNodeDetailResponse,
   type ObsHeartbeatListResponse,
   type ObsWakeLatencyRow,
 } from '@/lib/api';
@@ -26,6 +31,13 @@ export default function ComputeNodesPage() {
   const [hbData, setHbData] = useState<ObsHeartbeatListResponse | null>(null);
   const [hbLoading, setHbLoading] = useState(false);
 
+  // Node workload and lifecycle drawer state
+  const [detailNodeName, setDetailNodeName] = useState<string | null>(null);
+  const [nodeDetail, setNodeDetail] = useState<ObsNodeDetailResponse | null>(null);
+  const [nodeDetailLoading, setNodeDetailLoading] = useState(false);
+  const [nodeAction, setNodeAction] = useState<string | null>(null);
+  const [nodeFeedback, setNodeFeedback] = useState<string | null>(null);
+
   const openHeartbeatDrawer = async (nodeName: string) => {
     setSelectedNodeName(nodeName);
     setHbLoading(true);
@@ -37,6 +49,41 @@ export default function ComputeNodesPage() {
       /* error */
     } finally {
       setHbLoading(false);
+    }
+  };
+
+  const openNodeDetail = async (nodeName: string) => {
+    setDetailNodeName(nodeName);
+    setNodeDetailLoading(true);
+    setNodeDetail(null);
+    setNodeFeedback(null);
+    try {
+      setNodeDetail(await getObsNodeDetail(nodeName));
+    } catch (err) {
+      setNodeFeedback(`Could not load node detail: ${(err as Error).message}`);
+    } finally {
+      setNodeDetailLoading(false);
+    }
+  };
+
+  const handleNodeAction = async (action: 'drain' | 'force-drain' | 'activate') => {
+    if (!detailNodeName) return;
+    if (action === 'force-drain' && !window.confirm('Force-drain this node? Live instances may be disrupted.')) return;
+    setNodeAction(action);
+    setNodeFeedback(null);
+    try {
+      const result = action === 'drain'
+        ? await drainObsNode(detailNodeName)
+        : action === 'force-drain'
+        ? await forceDrainObsNode(detailNodeName)
+        : await activateObsNode(detailNodeName);
+      setNodeFeedback(`${result.node} is ${result.active ? 'active' : 'draining'}. ${result.live_instances} live instance(s) remain.`);
+      await openNodeDetail(detailNodeName);
+      reload();
+    } catch (err) {
+      setNodeFeedback(`Node action failed: ${(err as Error).message}`);
+    } finally {
+      setNodeAction(null);
     }
   };
 
@@ -84,6 +131,7 @@ export default function ComputeNodesPage() {
                   <th className="px-4 py-3">RAM Capacity</th>
                   <th className="px-4 py-3">Admission Ceiling</th>
                   <th className="px-4 py-3">Max Concurrency</th>
+                  <th className="px-4 py-3">Live / RAM Used</th>
                   <th className="px-4 py-3">Overlay IP</th>
                   <th className="px-4 py-3">Last Heartbeat</th>
                   <th className="px-4 py-3 text-right">Telemetry</th>
@@ -109,6 +157,12 @@ export default function ComputeNodesPage() {
                       {(node.admission_ceiling_mb / 1024).toFixed(1)} GB (85%)
                     </td>
                     <td className="px-4 py-3 font-mono">{node.max_concurrency} VMs</td>
+                    <td className="px-4 py-3 font-mono">
+                      <div>{node.instances_live} live · {node.instances_running} running</div>
+                      <div className={node.admission_margin_mb < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-ink-muted)]'}>
+                        {(node.ram_used_mb / 1024).toFixed(1)} / {(node.admission_ceiling_mb / 1024).toFixed(1)} GB
+                      </div>
+                    </td>
                     <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">
                       {node.overlay_ip || '—'}
                     </td>
@@ -116,12 +170,14 @@ export default function ComputeNodesPage() {
                       {node.last_heartbeat_at ? relativeTime(node.last_heartbeat_at) : 'Never'}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => openHeartbeatDrawer(node.name)}
-                        className="btn btn-secondary btn-xs"
-                      >
-                        Heartbeats
-                      </button>
+                      <div className="flex justify-end gap-1.5">
+                        <button onClick={() => openNodeDetail(node.name)} className="btn btn-secondary btn-xs">
+                          Inspect
+                        </button>
+                        <button onClick={() => openHeartbeatDrawer(node.name)} className="btn btn-secondary btn-xs">
+                          Heartbeats
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -187,6 +243,71 @@ export default function ComputeNodesPage() {
           )}
         </SectionCard>
       </div>
+
+      {/* Node workload and lifecycle drawer */}
+      {detailNodeName && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card max-h-[88vh] w-full max-w-4xl overflow-y-auto p-6">
+            <div className="flex items-center justify-between border-b border-[var(--color-line)] pb-3">
+              <div>
+                <h3 className="text-base font-bold">Node Workload Inspect</h3>
+                <span className="text-xs text-[var(--color-ink-muted)]">Host: <strong>{detailNodeName}</strong></span>
+              </div>
+              <button onClick={() => setDetailNodeName(null)} className="btn-icon"><Icon name="x" size={18} /></button>
+            </div>
+
+            {nodeDetailLoading ? (
+              <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Fetching node workloads…</div>
+            ) : nodeDetail ? (
+              <div className="mt-4 space-y-5 text-xs">
+                <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-4">
+                  <div><span className="text-[var(--color-ink-muted)]">Status</span><div className="mt-1 font-semibold">{nodeDetail.node.active ? 'Active' : 'Draining'}</div></div>
+                  <div><span className="text-[var(--color-ink-muted)]">Live instances</span><div className="mt-1 font-semibold">{nodeDetail.node.instances_live}</div></div>
+                  <div><span className="text-[var(--color-ink-muted)]">RAM used</span><div className="mt-1 font-semibold">{(nodeDetail.node.ram_used_mb / 1024).toFixed(1)} GB</div></div>
+                  <div><span className="text-[var(--color-ink-muted)]">CPU (60s)</span><div className="mt-1 font-semibold">{nodeDetail.node.cpu_pct_60s == null ? '—' : `${nodeDetail.node.cpu_pct_60s.toFixed(1)}%`}</div></div>
+                </div>
+
+                {nodeFeedback && <div className="rounded bg-[var(--color-surface-subtle)] p-3 text-[var(--color-ink-muted)]">{nodeFeedback}</div>}
+
+                <div className="flex flex-wrap gap-2">
+                  {nodeDetail.node.active ? (
+                    <>
+                      <button onClick={() => handleNodeAction('drain')} disabled={nodeAction !== null} className="btn btn-secondary btn-sm">
+                        {nodeAction === 'drain' ? 'Draining…' : 'Drain Node'}
+                      </button>
+                      <button onClick={() => handleNodeAction('force-drain')} disabled={nodeAction !== null} className="btn btn-danger btn-sm">
+                        {nodeAction === 'force-drain' ? 'Force-draining…' : 'Force Drain'}
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => handleNodeAction('activate')} disabled={nodeAction !== null} className="btn btn-secondary btn-sm">
+                      {nodeAction === 'activate' ? 'Activating…' : 'Activate Node'}
+                    </button>
+                  )}
+                </div>
+
+                <section>
+                  <h4 className="mb-2 font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">Applications ({nodeDetail.apps.length})</h4>
+                  {nodeDetail.apps.length === 0 ? <div className="text-[var(--color-ink-muted)]">No applications are placed on this node.</div> : (
+                    <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
+                      <table className="w-full text-left"><thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)]"><tr><th className="px-3 py-2">App</th><th className="px-3 py-2">Customer</th><th className="px-3 py-2">Instances</th><th className="px-3 py-2">RAM</th><th className="px-3 py-2">Last request</th></tr></thead>
+                        <tbody className="divide-y divide-[var(--color-line)]">{nodeDetail.apps.map((app) => <tr key={app.id}><td className="px-3 py-2 font-semibold">{app.slug}</td><td className="px-3 py-2 font-mono">{app.account_id.slice(0, 13)}…</td><td className="px-3 py-2">{app.instances_live} live · {app.instances_running} running · {app.instances_cold_booting} cold</td><td className="px-3 py-2 font-mono">{app.ram_used_mb} MB</td><td className="px-3 py-2 text-[var(--color-ink-muted)]">{app.last_request_at ? relativeTime(app.last_request_at) : '—'}</td></tr>)}</tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+
+                <section>
+                  <h4 className="mb-2 font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">Instances ({nodeDetail.instances.length})</h4>
+                  {nodeDetail.instances.length === 0 ? <div className="text-[var(--color-ink-muted)]">No instance rows are currently assigned.</div> : (
+                    <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]"><table className="w-full text-left"><thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)]"><tr><th className="px-3 py-2">App</th><th className="px-3 py-2">State</th><th className="px-3 py-2">RAM</th><th className="px-3 py-2">Last request</th></tr></thead><tbody className="divide-y divide-[var(--color-line)]">{nodeDetail.instances.map((instance) => <tr key={instance.id}><td className="px-3 py-2">{instance.app_slug || instance.app_id.slice(0, 13) + '…'}</td><td className="px-3 py-2"><span className="badge badge-neutral">{instance.state}</span></td><td className="px-3 py-2 font-mono">{instance.ram_mb} MB</td><td className="px-3 py-2 text-[var(--color-ink-muted)]">{instance.last_request_at ? relativeTime(instance.last_request_at) : '—'}</td></tr>)}</tbody></table></div>
+                  )}
+                </section>
+              </div>
+            ) : <div className="p-8 text-center text-sm text-[var(--color-danger)]">Could not fetch node detail.</div>}
+          </div>
+        </div>
+      )}
 
       {/* Node Heartbeat Telemetry Modal */}
       {selectedNodeName && (

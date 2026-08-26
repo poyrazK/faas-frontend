@@ -4,11 +4,15 @@ import React, { useState } from 'react';
 import {
   listObsTenants,
   getObsTenantDetail,
+  getObsTenantActivity,
+  getObsAppDetail,
   issueAccountCredit,
   reconcileAccount,
   forceColdBootApp,
   type ObsTenantRow,
   type ObsTenantDetailResponse,
+  type ObsTenantActivityResponse,
+  type ObsAppDetailResponse,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
@@ -25,6 +29,10 @@ export default function TenantsPage() {
   const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<ObsTenantDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [activityData, setActivityData] = useState<ObsTenantActivityResponse | null>(null);
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [appDetail, setAppDetail] = useState<ObsAppDetailResponse | null>(null);
+  const [appDetailLoading, setAppDetailLoading] = useState(false);
 
   // Credit issue modal
   const [creditModalOpen, setCreditModalOpen] = useState(false);
@@ -50,13 +58,33 @@ export default function TenantsPage() {
     setSelectedTenantId(tenantId);
     setDetailLoading(true);
     setDetailData(null);
+    setActivityData(null);
+    setSelectedAppId(null);
+    setAppDetail(null);
     try {
-      const res = await getObsTenantDetail(tenantId, includePii);
+      const [res, activity] = await Promise.all([
+        getObsTenantDetail(tenantId, includePii),
+        getObsTenantActivity(tenantId),
+      ]);
       setDetailData(res);
+      setActivityData(activity);
     } catch {
       /* fetch failed */
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const openAppDetail = async (appId: string) => {
+    setSelectedAppId(appId);
+    setAppDetailLoading(true);
+    setAppDetail(null);
+    try {
+      setAppDetail(await getObsAppDetail(appId));
+    } catch {
+      /* fetch failed */
+    } finally {
+      setAppDetailLoading(false);
     }
   };
 
@@ -374,6 +402,12 @@ export default function TenantsPage() {
                           <div className="flex items-center gap-2">
                             <span className="badge badge-neutral">{app.status}</span>
                             <button
+                              onClick={() => openAppDetail(app.id)}
+                              className="btn btn-secondary btn-xs"
+                            >
+                              Inspect Workload
+                            </button>
+                            <button
                               onClick={() => handleForceColdBootApp(app.slug)}
                               disabled={coldBootingSlug === app.slug}
                               className="btn btn-secondary btn-xs"
@@ -387,6 +421,72 @@ export default function TenantsPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Customer activity */}
+                <div>
+                  <h4 className="mb-2 font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">
+                    Recent Customer Activity
+                  </h4>
+                  {activityData && activityData.invocations.length === 0 && activityData.audit_events.length === 0 ? (
+                    <div className="text-xs text-[var(--color-ink-muted)]">No invocation or audit activity recorded.</div>
+                  ) : (
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="rounded-lg border border-[var(--color-line)]">
+                        <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Invocations</div>
+                        <div className="max-h-64 overflow-y-auto divide-y divide-[var(--color-line)]">
+                          {(activityData?.invocations || []).map((invocation) => (
+                            <div key={invocation.id} className="px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-medium">{invocation.app_slug || invocation.app_id.slice(0, 13) + '…'} · {invocation.method} {invocation.path}</span>
+                                <span className={`badge ${invocation.state === 'completed' ? 'badge-success' : invocation.state === 'failed' ? 'badge-danger' : 'badge-neutral'}`}>{invocation.outcome || invocation.state}</span>
+                              </div>
+                              <div className="mt-1 text-[var(--color-ink-muted)]">{relativeTime(invocation.created_at)} · {invocation.source}{invocation.last_error ? ` · ${invocation.last_error}` : ''}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-[var(--color-line)]">
+                        <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Audit trail</div>
+                        <div className="max-h-64 overflow-y-auto divide-y divide-[var(--color-line)]">
+                          {(activityData?.audit_events || []).map((event) => (
+                            <div key={event.id} className="px-3 py-2">
+                              <div className="font-medium">{event.kind}</div>
+                              <div className="mt-1 text-[var(--color-ink-muted)]">{relativeTime(event.at)}{event.actor ? ` · ${event.actor}` : ''}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected app workload */}
+                {selectedAppId && (
+                  <div className="rounded-lg border border-[var(--color-brand-bright)]/30 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h4 className="font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">App Workload Detail</h4>
+                      <button onClick={() => setSelectedAppId(null)} className="btn btn-secondary btn-xs">Close</button>
+                    </div>
+                    {appDetailLoading ? <div className="py-4 text-center text-xs text-[var(--color-ink-muted)]">Loading workload…</div> : appDetail ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                          <div><span className="text-[var(--color-ink-muted)]">App</span><div className="font-semibold">{appDetail.app.slug}</div></div>
+                          <div><span className="text-[var(--color-ink-muted)]">Runtime</span><div className="font-semibold">{appDetail.app.runtime}</div></div>
+                          <div><span className="text-[var(--color-ink-muted)]">Concurrency</span><div className="font-semibold">{appDetail.app.max_concurrency}</div></div>
+                          <div><span className="text-[var(--color-ink-muted)]">Instances</span><div className="font-semibold">{appDetail.instances.length}</div></div>
+                        </div>
+                        <div>
+                          <div className="mb-1 font-semibold">Deployments ({appDetail.deployments.length})</div>
+                          <div className="overflow-x-auto rounded border border-[var(--color-line)]"><table className="w-full text-left text-xs"><thead className="border-b border-[var(--color-line)]"><tr><th className="px-2 py-1.5">Created</th><th className="px-2 py-1.5">Status</th><th className="px-2 py-1.5">Source</th><th className="px-2 py-1.5">Error</th></tr></thead><tbody className="divide-y divide-[var(--color-line)]">{appDetail.deployments.map((deployment) => <tr key={deployment.id}><td className="px-2 py-1.5">{relativeTime(deployment.created_at)}</td><td className="px-2 py-1.5">{deployment.status}</td><td className="px-2 py-1.5">{deployment.source_url || deployment.commit_sha || deployment.kind}</td><td className="px-2 py-1.5 text-[var(--color-danger)]">{deployment.error_code || '—'}</td></tr>)}</tbody></table></div>
+                        </div>
+                        <div>
+                          <div className="mb-1 font-semibold">Instances & recent invocations</div>
+                          <div className="text-[var(--color-ink-muted)]">{appDetail.instances.filter((instance) => ['RUNNING', 'WAKING', 'COLD_BOOTING'].includes(instance.state)).length} live instance(s), {appDetail.invocations.length} recent invocation(s).</div>
+                        </div>
+                      </div>
+                    ) : <div className="text-xs text-[var(--color-danger)]">Could not fetch app workload detail.</div>}
+                  </div>
+                )}
 
                 {/* Tenant Organizations */}
                 {detailData.orgs.length > 0 && (
