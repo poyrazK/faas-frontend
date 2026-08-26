@@ -5,12 +5,19 @@ import {
   listObsTenants,
   getObsTenantDetail,
   getObsTenant360,
+  getObsTenantActivity,
+  getObsAppDetail,
+  suspendObsAccount,
+  restoreObsAccount,
+  revokeObsAccountSessions,
   issueAccountCredit,
   reconcileAccount,
   forceColdBootApp,
   type ObsTenantRow,
   type ObsTenantDetailResponse,
   type ObsTenant360Response,
+  type ObsTenantActivityResponse,
+  type ObsAppDetailResponse,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
@@ -28,6 +35,10 @@ export default function TenantsPage() {
   const [detailData, setDetailData] = useState<ObsTenantDetailResponse | null>(null);
   const [tenant360Data, setTenant360Data] = useState<ObsTenant360Response | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [activityData, setActivityData] = useState<ObsTenantActivityResponse | null>(null);
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [appDetail, setAppDetail] = useState<ObsAppDetailResponse | null>(null);
+  const [appDetailLoading, setAppDetailLoading] = useState(false);
 
   // Credit issue modal
   const [creditModalOpen, setCreditModalOpen] = useState(false);
@@ -39,6 +50,8 @@ export default function TenantsPage() {
   // Reconcile state
   const [reconcilingId, setReconcilingId] = useState<string | null>(null);
   const [reconcileFeedback, setReconcileFeedback] = useState<string | null>(null);
+  const [tenantAction, setTenantAction] = useState<string | null>(null);
+  const [tenantFeedback, setTenantFeedback] = useState<string | null>(null);
 
   // Cold boot state
   const [coldBootingSlug, setColdBootingSlug] = useState<string | null>(null);
@@ -54,17 +67,35 @@ export default function TenantsPage() {
     setDetailLoading(true);
     setDetailData(null);
     setTenant360Data(null);
+    setActivityData(null);
+    setSelectedAppId(null);
+    setAppDetail(null);
     try {
-      const [detail, tenant360] = await Promise.all([
+      const [res, activity, tenant360] = await Promise.all([
         getObsTenantDetail(tenantId, includePii),
+        getObsTenantActivity(tenantId),
         getObsTenant360(tenantId, undefined, includePii),
       ]);
-      setDetailData(detail);
+      setDetailData(res);
+      setActivityData(activity);
       setTenant360Data(tenant360);
     } catch {
       /* fetch failed */
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const openAppDetail = async (appId: string) => {
+    setSelectedAppId(appId);
+    setAppDetailLoading(true);
+    setAppDetail(null);
+    try {
+      setAppDetail(await getObsAppDetail(appId));
+    } catch {
+      /* fetch failed */
+    } finally {
+      setAppDetailLoading(false);
     }
   };
 
@@ -99,6 +130,32 @@ export default function TenantsPage() {
       setReconcileFeedback(`Reconcile error: ${(err as Error).message}`);
     } finally {
       setReconcilingId(null);
+    }
+  };
+
+  const handleTenantAction = async (action: 'suspend' | 'restore' | 'revoke-sessions') => {
+    if (!selectedTenantId) return;
+    const warning = action === 'suspend'
+      ? 'Suspend this tenant and revoke all of its active dashboard sessions?'
+      : action === 'revoke-sessions'
+      ? 'Revoke all active dashboard sessions for this tenant?'
+      : 'Restore this tenant account?';
+    if (!window.confirm(warning)) return;
+    setTenantAction(action);
+    setTenantFeedback(null);
+    try {
+      const result = action === 'suspend'
+        ? await suspendObsAccount(selectedTenantId)
+        : action === 'restore'
+        ? await restoreObsAccount(selectedTenantId)
+        : await revokeObsAccountSessions(selectedTenantId);
+      await openInspectDrawer(selectedTenantId);
+      setTenantFeedback(`${result.action} completed; ${result.revoked_sessions} session(s) revoked.`);
+      reload();
+    } catch (err) {
+      setTenantFeedback(`Tenant operation failed: ${(err as Error).message}`);
+    } finally {
+      setTenantAction(null);
     }
   };
 
@@ -335,7 +392,6 @@ export default function TenantsPage() {
                   </div>
                 </div>
 
-                {/* Tenant 360: usage, spend signals, and recent invoices */}
                 {tenant360Data && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -350,46 +406,31 @@ export default function TenantsPage() {
                       <div className="rounded-lg border border-[var(--color-line)] p-3">
                         <div className="text-[11px] text-[var(--color-ink-muted)]">RAM usage</div>
                         <div className="mt-1 font-semibold">{tenant360Data.usage.used_gb_hours.toFixed(2)} GB-h</div>
-                        <div className="text-[10px] text-[var(--color-ink-muted)]">
-                          of {tenant360Data.usage.included_gb_hours} included
-                        </div>
+                        <div className="text-[10px] text-[var(--color-ink-muted)]">of {tenant360Data.usage.included_gb_hours} included</div>
                       </div>
                       <div className="rounded-lg border border-[var(--color-line)] p-3">
                         <div className="text-[11px] text-[var(--color-ink-muted)]">Overage</div>
                         <div className="mt-1 font-semibold">{tenant360Data.usage.overage_gb_hours.toFixed(2)} GB-h</div>
-                        <div className="text-[10px] text-[var(--color-ink-muted)]">
-                          €{(tenant360Data.usage.overage_cents / 100).toFixed(2)} derived
-                        </div>
+                        <div className="text-[10px] text-[var(--color-ink-muted)]">€{(tenant360Data.usage.overage_cents / 100).toFixed(2)} derived</div>
                       </div>
                       <div className="rounded-lg border border-[var(--color-line)] p-3">
                         <div className="text-[11px] text-[var(--color-ink-muted)]">Active credits</div>
                         <div className="mt-1 font-semibold">€{(tenant360Data.billing.active_credits_cents / 100).toFixed(2)}</div>
                         <div className="text-[10px] text-[var(--color-ink-muted)]">
-                          {tenant360Data.billing.overage_cap_cents == null
-                            ? 'No overage cap'
-                            : `Cap €${(tenant360Data.billing.overage_cap_cents / 100).toFixed(2)}`}
+                          {tenant360Data.billing.overage_cap_cents == null ? 'No overage cap' : `Cap €${(tenant360Data.billing.overage_cap_cents / 100).toFixed(2)}`}
                         </div>
                       </div>
                       <div className="rounded-lg border border-[var(--color-line)] p-3">
                         <div className="text-[11px] text-[var(--color-ink-muted)]">Current overage</div>
                         <div className="mt-1 font-semibold">€{(tenant360Data.billing.current_month_overage_cents / 100).toFixed(2)}</div>
-                        <div className="text-[10px] text-[var(--color-ink-muted)]">
-                          {tenant360Data.usage.cold_boots} cold boots · {tenant360Data.usage.apps.length} usage apps
-                        </div>
+                        <div className="text-[10px] text-[var(--color-ink-muted)]">{tenant360Data.usage.cold_boots} cold boots · {tenant360Data.usage.apps.length} usage apps</div>
                       </div>
                     </div>
-
                     {tenant360Data.usage.apps.length > 0 && (
                       <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
                         <table className="w-full text-left text-xs">
                           <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] text-[var(--color-ink-muted)]">
-                            <tr>
-                              <th className="px-3 py-2">App</th>
-                              <th className="px-3 py-2">GB-h</th>
-                              <th className="px-3 py-2">Requests</th>
-                              <th className="px-3 py-2">Egress</th>
-                              <th className="px-3 py-2">Cold boots</th>
-                            </tr>
+                            <tr><th className="px-3 py-2">App</th><th className="px-3 py-2">GB-h</th><th className="px-3 py-2">Requests</th><th className="px-3 py-2">Egress</th><th className="px-3 py-2">Cold boots</th></tr>
                           </thead>
                           <tbody className="divide-y divide-[var(--color-line)]">
                             {tenant360Data.usage.apps.map((app) => (
@@ -405,17 +446,13 @@ export default function TenantsPage() {
                         </table>
                       </div>
                     )}
-
                     {tenant360Data.billing.invoices.length > 0 && (
                       <div>
                         <div className="mb-2 text-xs font-semibold text-[var(--color-ink-muted)]">Recent invoices</div>
                         <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
                           {tenant360Data.billing.invoices.slice(0, 5).map((invoice) => (
                             <div key={invoice.id} className="flex items-center justify-between p-3 text-xs">
-                              <div>
-                                <span className="font-semibold">{invoice.number || invoice.id.slice(0, 12)}</span>
-                                <span className="ml-2 text-[var(--color-ink-muted)]">{invoice.status} · {invoice.currency}</span>
-                              </div>
+                              <div><span className="font-semibold">{invoice.number || invoice.id.slice(0, 12)}</span><span className="ml-2 text-[var(--color-ink-muted)]">{invoice.status} · {invoice.currency}</span></div>
                               <span className="font-semibold">{(invoice.total_cents / 100).toFixed(2)}</span>
                             </div>
                           ))}
@@ -425,24 +462,44 @@ export default function TenantsPage() {
                   </div>
                 )}
 
+                {tenantFeedback && (
+                  <div className="rounded bg-[var(--color-surface-subtle)] p-3 text-xs text-[var(--color-ink-muted)]">
+                    {tenantFeedback}
+                  </div>
+                )}
+
                 {/* Operator Actions */}
-                <div className="flex items-center justify-between rounded-lg border border-[var(--color-line)] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-line)] p-4">
                   <div>
-                    <div className="font-semibold text-xs">Issue Account Credit</div>
+                    <div className="font-semibold text-xs">Tenant Operations</div>
                     <div className="text-xs text-[var(--color-ink-muted)]">
-                      Apply promotional or refund credits to tenant account balance.
+                      Lifecycle, session security, and billing actions are audited.
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      setCreditModalOpen(true);
-                      setCreditFeedback(null);
-                    }}
-                    className="btn btn-secondary btn-sm"
-                  >
-                    <Icon name="plus" size={14} />
-                    Issue Credit
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    {detailData.account.status === 'suspended' ? (
+                      <button onClick={() => handleTenantAction('restore')} disabled={tenantAction !== null} className="btn btn-secondary btn-sm">
+                        {tenantAction === 'restore' ? 'Restoring…' : 'Restore Account'}
+                      </button>
+                    ) : (
+                      <button onClick={() => handleTenantAction('suspend')} disabled={tenantAction !== null} className="btn btn-danger btn-sm">
+                        {tenantAction === 'suspend' ? 'Suspending…' : 'Suspend Account'}
+                      </button>
+                    )}
+                    <button onClick={() => handleTenantAction('revoke-sessions')} disabled={tenantAction !== null} className="btn btn-secondary btn-sm">
+                      {tenantAction === 'revoke-sessions' ? 'Revoking…' : 'Revoke Sessions'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCreditModalOpen(true);
+                        setCreditFeedback(null);
+                      }}
+                      className="btn btn-secondary btn-sm"
+                    >
+                      <Icon name="plus" size={14} />
+                      Issue Credit
+                    </button>
+                  </div>
                 </div>
 
                 {/* Tenant Apps */}
@@ -472,6 +529,12 @@ export default function TenantsPage() {
                           <div className="flex items-center gap-2">
                             <span className="badge badge-neutral">{app.status}</span>
                             <button
+                              onClick={() => openAppDetail(app.id)}
+                              className="btn btn-secondary btn-xs"
+                            >
+                              Inspect Workload
+                            </button>
+                            <button
                               onClick={() => handleForceColdBootApp(app.slug)}
                               disabled={coldBootingSlug === app.slug}
                               className="btn btn-secondary btn-xs"
@@ -485,6 +548,85 @@ export default function TenantsPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Customer activity */}
+                <div>
+                  <h4 className="mb-2 font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">
+                    Recent Customer Activity
+                  </h4>
+                  {activityData && activityData.invocations.length === 0 && activityData.audit_events.length === 0 ? (
+                    <div className="text-xs text-[var(--color-ink-muted)]">No invocation or audit activity recorded.</div>
+                  ) : (
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="rounded-lg border border-[var(--color-line)]">
+                        <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Invocations</div>
+                        <div className="max-h-64 overflow-y-auto divide-y divide-[var(--color-line)]">
+                          {(activityData?.invocations || []).map((invocation) => (
+                            <div key={invocation.id} className="px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-medium">{invocation.app_slug || invocation.app_id.slice(0, 13) + '…'} · {invocation.method} {invocation.path}</span>
+                                <span className={`badge ${invocation.state === 'completed' ? 'badge-success' : invocation.state === 'failed' ? 'badge-danger' : 'badge-neutral'}`}>{invocation.outcome || invocation.state}</span>
+                              </div>
+                              <div className="mt-1 text-[var(--color-ink-muted)]">{relativeTime(invocation.created_at)} · {invocation.source}{invocation.last_error ? ` · ${invocation.last_error}` : ''}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-[var(--color-line)]">
+                        <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Audit trail</div>
+                        <div className="max-h-64 overflow-y-auto divide-y divide-[var(--color-line)]">
+                          {(activityData?.audit_events || []).map((event) => (
+                            <div key={event.id} className="px-3 py-2">
+                              <div className="font-medium">{event.kind}</div>
+                              <div className="mt-1 text-[var(--color-ink-muted)]">{relativeTime(event.at)}{event.actor ? ` · ${event.actor}` : ''}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected app workload */}
+                {selectedAppId && (
+                  <div className="rounded-lg border border-[var(--color-brand-bright)]/30 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h4 className="font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">App Workload Detail</h4>
+                      <button onClick={() => setSelectedAppId(null)} className="btn btn-secondary btn-xs">Close</button>
+                    </div>
+                    {appDetailLoading ? <div className="py-4 text-center text-xs text-[var(--color-ink-muted)]">Loading workload…</div> : appDetail ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                          <div><span className="text-[var(--color-ink-muted)]">App</span><div className="font-semibold">{appDetail.app.slug}</div></div>
+                          <div><span className="text-[var(--color-ink-muted)]">Runtime</span><div className="font-semibold">{appDetail.app.runtime}</div></div>
+                          <div><span className="text-[var(--color-ink-muted)]">Concurrency</span><div className="font-semibold">{appDetail.app.max_concurrency}</div></div>
+                          <div><span className="text-[var(--color-ink-muted)]">Instances</span><div className="font-semibold">{appDetail.instances.length}</div></div>
+                        </div>
+                        <div>
+                          <div className="mb-2 font-semibold">Health ({appDetail.health.metrics.range})</div>
+                          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Requests</span><div className="font-semibold">{appDetail.health.metrics.request_count}</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">p95</span><div className="font-semibold">{appDetail.health.metrics.latency_p95_ms.toFixed(0)} ms</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Errors</span><div className="font-semibold">{appDetail.health.metrics.error_rate_pct.toFixed(2)}%</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Queue</span><div className="font-semibold">{appDetail.health.metrics.queue_depth ?? 0}</div></div>
+                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Source</span><div className="truncate font-semibold" title={appDetail.health.metrics.source}>{appDetail.health.metrics.source === 'prometheus' ? 'Prometheus' : 'Degraded'}</div></div>
+                          </div>
+                          {appDetail.health.errors.length > 0 && (
+                            <div className="mt-3 overflow-x-auto rounded border border-[var(--color-line)]"><table className="w-full text-left text-xs"><thead className="border-b border-[var(--color-line)]"><tr><th className="px-2 py-1.5">Error</th><th className="px-2 py-1.5">Route</th><th className="px-2 py-1.5">Requests</th><th className="px-2 py-1.5">Last seen</th></tr></thead><tbody className="divide-y divide-[var(--color-line)]">{appDetail.health.errors.map((error) => <tr key={error.fingerprint}><td className="px-2 py-1.5">{error.error_class} ({error.http_status})</td><td className="px-2 py-1.5">{error.route}</td><td className="px-2 py-1.5">{error.request_count}</td><td className="px-2 py-1.5">{relativeTime(error.last_seen_at)}</td></tr>)}</tbody></table></div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="mb-1 font-semibold">Deployments ({appDetail.deployments.length})</div>
+                          <div className="overflow-x-auto rounded border border-[var(--color-line)]"><table className="w-full text-left text-xs"><thead className="border-b border-[var(--color-line)]"><tr><th className="px-2 py-1.5">Created</th><th className="px-2 py-1.5">Status</th><th className="px-2 py-1.5">Source</th><th className="px-2 py-1.5">Error</th></tr></thead><tbody className="divide-y divide-[var(--color-line)]">{appDetail.deployments.map((deployment) => <tr key={deployment.id}><td className="px-2 py-1.5">{relativeTime(deployment.created_at)}</td><td className="px-2 py-1.5">{deployment.status}</td><td className="px-2 py-1.5">{deployment.source_url || deployment.commit_sha || deployment.kind}</td><td className="px-2 py-1.5 text-[var(--color-danger)]">{deployment.error_code || '—'}</td></tr>)}</tbody></table></div>
+                        </div>
+                        <div>
+                          <div className="mb-1 font-semibold">Instances & recent invocations</div>
+                          <div className="text-[var(--color-ink-muted)]">{appDetail.instances.filter((instance) => ['RUNNING', 'WAKING', 'COLD_BOOTING'].includes(instance.state)).length} live instance(s), {appDetail.invocations.length} recent invocation(s).</div>
+                        </div>
+                      </div>
+                    ) : <div className="text-xs text-[var(--color-danger)]">Could not fetch app workload detail.</div>}
+                  </div>
+                )}
 
                 {/* Tenant Organizations */}
                 {detailData.orgs.length > 0 && (
