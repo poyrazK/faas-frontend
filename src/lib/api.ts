@@ -1788,6 +1788,101 @@ export interface OperatorIntentAcceptedResponse {
   expires_at: string;
 }
 
+export type RuntimeConfigApplyMode = 'hot' | 'graceful' | 'rolling' | 'break_glass';
+export type RuntimeConfigStatus = 'pending' | 'applied' | 'failed' | 'blocked';
+
+export interface OperatorRuntimeConfig {
+  key: string;
+  label: string;
+  description: string;
+  category: string;
+  kind: 'boolean' | 'integer' | 'duration' | 'string' | 'enum' | 'secret_reference';
+  default_value: unknown;
+  desired_value: unknown;
+  effective_value: unknown;
+  source: 'default_or_environment' | 'operator';
+  apply_mode: RuntimeConfigApplyMode;
+  mutable: boolean;
+  sensitive: boolean;
+  status: RuntimeConfigStatus;
+  last_error?: string;
+  version: number;
+  updated_at?: string;
+  applied_at?: string;
+}
+
+export interface OperatorRuntimeConfigListResponse {
+  items: OperatorRuntimeConfig[];
+  generated_at: string;
+}
+
+export interface OperatorRuntimeConfigOperation {
+  id: string;
+  key: string;
+  scope: string;
+  scope_id: string;
+  version: number;
+  desired_value: unknown;
+  effective_value: unknown;
+  apply_mode: Exclude<RuntimeConfigApplyMode, 'hot'>;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled';
+  phase: string;
+  error?: string;
+  reason: string;
+  target_count: number;
+  applied_count: number;
+  failed_count: number;
+  requested_at: string;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export interface OperatorRuntimeConfigRevision {
+  id: number;
+  key: string;
+  scope: string;
+  scope_id: string;
+  version: number;
+  old_value: unknown;
+  new_value: unknown;
+  actor_id?: string;
+  reason: string;
+  created_at: string;
+}
+
+export const getOperatorRuntimeConfig = () =>
+  request<OperatorRuntimeConfigListResponse>('/v1/admin/config', { cache: 'no-store' });
+
+export const updateOperatorRuntimeConfig = (
+  key: string,
+  value: unknown,
+  reason: string,
+  expectedVersion?: number,
+) =>
+  request<OperatorRuntimeConfig | OperatorRuntimeConfigOperation>(
+    `/v1/admin/config/${encodeURIComponent(key)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        value,
+        reason,
+        ...(expectedVersion != null ? { expected_version: expectedVersion } : {}),
+      }),
+    },
+  );
+
+export const getOperatorRuntimeConfigOperation = (operationId: string) =>
+  request<OperatorRuntimeConfigOperation>(
+    `/v1/admin/config-operations/${encodeURIComponent(operationId)}`,
+    { cache: 'no-store' },
+  );
+
+export const getOperatorRuntimeConfigRevisions = (key: string, limit = 20) =>
+  request<{ items: OperatorRuntimeConfigRevision[] }>(
+    `/v1/admin/config/${encodeURIComponent(key)}/revisions?limit=${limit}`,
+    { cache: 'no-store' },
+  );
+
 export interface SweepStuckBuildsResponse {
   ok: boolean;
   swept_count: number;
