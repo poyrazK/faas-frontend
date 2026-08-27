@@ -1881,6 +1881,24 @@ export const updateOperatorRuntimeConfig = (
     },
   );
 
+export const rollbackOperatorRuntimeConfig = (
+  key: string,
+  version: number,
+  reason: string,
+  expectedVersion?: number,
+) =>
+  request<OperatorRuntimeConfig>(
+    `/v1/admin/config/${encodeURIComponent(key)}/rollback`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        version,
+        reason,
+        ...(expectedVersion != null ? { expected_version: expectedVersion } : {}),
+      }),
+    },
+  );
+
 export const getOperatorRuntimeConfigOperation = (operationId: string) =>
   request<OperatorRuntimeConfigOperation>(
     `/v1/admin/config-operations/${encodeURIComponent(operationId)}`,
