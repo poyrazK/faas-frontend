@@ -4,7 +4,8 @@ import type { NextRequest } from 'next/server';
 /**
  * Next.js Middleware for Gregale:
  * - Directs traffic for operations.gregale.dev (and operations.localhost) to the dedicated /operations/* application tree.
- * - Provides clean top-level URLs (/overview, /controls, /nodes, /tenants, /anomalies, /rate-limits, /billing, /audit-log, /login).
+ * - Provides clean top-level URLs for every operator surface.
+ * - Prevents legacy customer dashboard routes from being served on the operations host.
  * - Injects 'x-is-operations' header for server and client components to detect operator context.
  */
 export function middleware(request: NextRequest) {
@@ -22,8 +23,13 @@ export function middleware(request: NextRequest) {
   }
 
   if (isOperationsSubdomain) {
-    // If accessing root '/' or '/dashboard', rewrite to operations overview
-    if (pathname === '/' || pathname === '/dashboard' || pathname === '/dashboard/admin/overview') {
+    // If accessing a legacy root or dashboard URL, rewrite to operations overview.
+    if (
+      pathname === '/' ||
+      pathname === '/dashboard' ||
+      pathname === '/operations' ||
+      pathname === '/dashboard/admin/overview'
+    ) {
       url.pathname = '/operations/overview';
       return NextResponse.rewrite(url, {
         request: {
@@ -37,10 +43,12 @@ export function middleware(request: NextRequest) {
       'overview',
       'controls',
       'nodes',
+      'capacity',
       'tenants',
       'anomalies',
       'rate-limits',
       'billing',
+      'configuration',
       'audit-log',
       'login',
     ];
@@ -62,6 +70,20 @@ export function middleware(request: NextRequest) {
           },
         });
       }
+    }
+
+    // This project still contains the historical customer dashboard tree for
+    // compatibility with old previews. It must never be reachable from the
+    // operator hostname: customer traffic belongs to faas-web/gregale.dev.
+    if (pathname.startsWith('/dashboard')) {
+      return NextResponse.redirect(new URL('/overview', request.url));
+    }
+
+    // Keep the production operations deployment scoped to its operator tree.
+    // Unknown top-level paths should not fall through to the legacy customer
+    // pages or marketing routes.
+    if (!pathname.startsWith('/operations/')) {
+      return NextResponse.redirect(new URL('/overview', request.url));
     }
   }
 

@@ -1,12 +1,14 @@
-# Gregale FaaS — Web Console & Dashboard
+# Gregale Operations Console
 
-The official web console and developer dashboard for **Gregale**, a scale-to-zero Firecracker MicroVM Serverless Platform.
+The operator console for **Gregale**, a scale-to-zero Firecracker MicroVM
+Serverless Platform. Customer-facing pages live in the separate `faas-web`
+project and are deployed at `https://gregale.dev`.
 
 ---
 
 ## 🚀 Live Production Deployment
 
-- **Web Console**: [https://faas-frontend-five.vercel.app](https://faas-frontend-five.vercel.app)
+- **Operations Console**: [https://operations.gregale.dev](https://operations.gregale.dev)
 - **Automatic CI/CD**: Every push to `main` branch automatically deploys to Vercel.
 
 ---
@@ -21,4 +23,5 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the console locally.
+Open [http://operations.localhost:3000](http://operations.localhost:3000) to view
+the operator console locally.
