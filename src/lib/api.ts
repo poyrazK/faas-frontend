@@ -1886,15 +1886,15 @@ export const getOperatorRuntimeConfigRevisions = (key: string, limit = 20) =>
 export interface SweepStuckBuildsResponse {
   ok: boolean;
   swept_count: number;
-  older_than_secs: number;
+  older_than_seconds: number;
   threshold_iso: string;
 }
 
 export interface ObsBuilderHeartbeatRow {
   node_id: string;
   received_at: string;
-  cpu_pct_60s: number;
-  disk_used_bytes: number;
+  cpu_pct_60s: number | null;
+  disk_used_bytes: number | null;
 }
 
 export interface ObsBuilderHeartbeatListResponse {
@@ -1957,9 +1957,9 @@ export const getOperatorIntent = (intentId: string) =>
     cache: 'no-store',
   });
 
-export const sweepStuckBuilds = (olderThan = '15m') =>
+export const sweepStuckBuilds = (olderThan = '15m', reason = 'operator_reclaim_build') =>
   request<SweepStuckBuildsResponse>(
-    `/v1/admin/builds/sweep-stuck?confirm=true&older_than=${encodeURIComponent(olderThan)}`,
+    `/v1/admin/builds/sweep-stuck?confirm=true&older_than=${encodeURIComponent(olderThan)}&reason=${encodeURIComponent(reason)}`,
     { method: 'POST' },
   );
 
