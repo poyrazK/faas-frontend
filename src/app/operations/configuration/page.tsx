@@ -5,6 +5,7 @@ import {
   getOperatorRuntimeConfig,
   getOperatorRuntimeConfigOperation,
   getOperatorRuntimeConfigRevisions,
+  rollbackOperatorRuntimeConfig,
   type OperatorRuntimeConfig,
   type OperatorRuntimeConfigOperation,
   type OperatorRuntimeConfigRevision,
@@ -49,6 +50,7 @@ export default function RuntimeConfigurationPage() {
   const [operation, setOperation] = useState<OperatorRuntimeConfigOperation | null>(null);
   const [historyKey, setHistoryKey] = useState<string | null>(null);
   const [history, setHistory] = useState<OperatorRuntimeConfigRevision[]>([]);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
 
   const groups = useMemo(() => {
     const grouped = new Map<string, OperatorRuntimeConfig[]>();
@@ -100,6 +102,24 @@ export default function RuntimeConfigurationPage() {
       setHistory(response.items);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not load configuration history.');
+    }
+  }
+
+  async function rollback(key: string, version: number) {
+    const item = config.data?.items.find((candidate) => candidate.key === key);
+    if (!item || !item.mutable || item.apply_mode !== 'hot' || version >= item.version) return;
+    if (!window.confirm(`Roll back ${item.label} to revision v${version}? This applies immediately.`)) return;
+    setRollingBack(`${key}:${version}`);
+    setMessage(null);
+    try {
+      const result = await rollbackOperatorRuntimeConfig(key, version, reason, item.version);
+      setMessage(`${item.label} rolled back to v${version}; new effective revision is v${result.version}.`);
+      await showHistory(key);
+      config.reload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Configuration rollback failed.');
+    } finally {
+      setRollingBack(null);
     }
   }
 
@@ -205,14 +225,31 @@ export default function RuntimeConfigurationPage() {
 
       {historyKey && (
         <SectionCard title={`Version history · ${historyKey}`} className="mt-6" action={<button type="button" className="btn btn-secondary btn-sm" onClick={() => setHistoryKey(null)}>Close</button>}>
+          <div className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-4 py-3 text-xs text-[var(--color-ink-muted)]">
+            Rollback is available for older revisions of mutable hot settings. Each rollback creates a new audited revision and uses optimistic concurrency protection.
+          </div>
           {history.length === 0 ? <div className="p-4 text-sm text-[var(--color-ink-muted)]">No revisions recorded.</div> : (
             <div className="divide-y divide-[var(--color-line)]">
               {history.map((revision) => (
-                <div key={revision.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[80px_1fr_1fr_1fr]">
+                <div key={revision.id} className="grid gap-3 p-4 text-xs sm:grid-cols-[80px_1fr_1fr_1fr_auto] sm:items-center">
                   <span className="font-mono font-semibold">v{revision.version}</span>
                   <span><span className="text-[var(--color-ink-muted)]">Old: </span><span className="font-mono">{valueText(revision.old_value)}</span></span>
                   <span><span className="text-[var(--color-ink-muted)]">New: </span><span className="font-mono">{valueText(revision.new_value)}</span></span>
                   <span className="text-[var(--color-ink-muted)]">{revision.reason} · {new Date(revision.created_at).toLocaleString()}</span>
+                  {(() => {
+                    const item = config.data?.items.find((candidate) => candidate.key === historyKey);
+                    const canRollback = !!item && item.mutable && item.apply_mode === 'hot' && revision.version < item.version;
+                    return canRollback ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-xs"
+                        disabled={rollingBack !== null}
+                        onClick={() => rollback(historyKey, revision.version)}
+                      >
+                        {rollingBack === `${historyKey}:${revision.version}` ? 'Rolling back…' : 'Rollback'}
+                      </button>
+                    ) : null;
+                  })()}
                 </div>
               ))}
             </div>

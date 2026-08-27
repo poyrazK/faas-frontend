@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   forceParkInstance,
   forceColdBootApp,
+  forceRestartInstance,
   sweepStuckBuilds,
   getOperatorIntent,
   getObsBuilderHeartbeats,
@@ -48,6 +49,12 @@ export default function OperatorControlsPage() {
   const [bootReason, setBootReason] = useState('operator_force_cold_boot');
   const [bootLoading, setBootLoading] = useState(false);
   const [bootFeedback, setBootFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Form states: Force Restart
+  const [restartInstanceId, setRestartInstanceId] = useState('');
+  const [restartReason, setRestartReason] = useState('operator_force_restart');
+  const [restartLoading, setRestartLoading] = useState(false);
+  const [restartFeedback, setRestartFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Form states: Sweep Stuck Builds
   const [sweepDuration, setSweepDuration] = useState('15m');
@@ -151,6 +158,36 @@ export default function OperatorControlsPage() {
     }
   };
 
+  const handleForceRestart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const instanceId = restartInstanceId.trim();
+    if (!instanceId || !window.confirm('Force-restart this running instance? Its snapshots will be invalidated.')) return;
+    setRestartLoading(true);
+    setRestartFeedback(null);
+    try {
+      const res = await forceRestartInstance(instanceId, restartReason.trim());
+      setRestartFeedback({
+        ok: true,
+        msg: `Intent enqueued (ID: ${res.intent_id}). The instance will restart on the scheduler path.`,
+      });
+      setActiveIntents((prev) => [
+        {
+          intentId: res.intent_id,
+          kind: 'force_restart',
+          targetId: instanceId,
+          status: 'pending',
+          requestedAt: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+      setRestartInstanceId('');
+    } catch (err) {
+      setRestartFeedback({ ok: false, msg: (err as Error).message });
+    } finally {
+      setRestartLoading(false);
+    }
+  };
+
   const handleSweepBuilds = async (e: React.FormEvent) => {
     e.preventDefault();
     setSweepLoading(true);
@@ -174,7 +211,7 @@ export default function OperatorControlsPage() {
     <div>
       <PageHeader
         title="Recovery & Fleet Controls"
-        subtitle="Operator emergency primitives, microVM park/cold-boot interventions, stuck build reclamation, and intent tracking"
+        subtitle="Operator emergency primitives, microVM recovery, stuck build reclamation, and durable intent tracking"
         actions={
           <button
             onClick={() => {
@@ -339,6 +376,70 @@ export default function OperatorControlsPage() {
                 className="btn btn-warning btn-sm"
               >
                 {bootLoading ? 'Invalidating Snapshots…' : 'Force Cold Boot App'}
+              </button>
+            </div>
+          </form>
+        </SectionCard>
+      </div>
+
+      {/* Force Restart Running MicroVM */}
+      <div className="mt-6">
+        <SectionCard
+          title={
+            <div className="flex items-center gap-2">
+              <Icon name="refresh" size={16} className="text-[var(--color-danger)]" />
+              <span>Force-Restart Running MicroVM</span>
+            </div>
+          }
+        >
+          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
+            Destroys a wedged running instance and marks its warm and init snapshots stale so the next wake performs a clean cold boot.
+            This action is restricted to instances currently in the RUNNING state.
+          </div>
+          <form onSubmit={handleForceRestart} className="border-t border-[var(--color-line)] p-4 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold">Instance UUID</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
+                  value={restartInstanceId}
+                  onChange={(e) => setRestartInstanceId(e.target.value)}
+                  className="field field-sm w-full font-mono text-xs"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold">Reason Token (a-z0-9_)</label>
+                <input
+                  type="text"
+                  required
+                  pattern="^[a-z0-9_]{1,64}$"
+                  placeholder="operator_force_restart"
+                  value={restartReason}
+                  onChange={(e) => setRestartReason(e.target.value)}
+                  className="field field-sm w-full font-mono text-xs"
+                />
+              </div>
+            </div>
+            {restartFeedback && (
+              <div
+                className={`rounded p-2 text-xs ${
+                  restartFeedback.ok
+                    ? 'bg-[var(--color-surface-subtle)] text-[var(--color-brand-bright)]'
+                    : 'bg-[var(--color-danger-subtle)] text-[var(--color-danger)]'
+                }`}
+              >
+                {restartFeedback.msg}
+              </div>
+            )}
+            <div className="flex justify-end pt-1">
+              <button
+                type="submit"
+                disabled={restartLoading || !restartInstanceId.trim()}
+                className="btn btn-danger btn-sm"
+              >
+                {restartLoading ? 'Dispatching…' : 'Confirm Force Restart'}
               </button>
             </div>
           </form>

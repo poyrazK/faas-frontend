@@ -1871,6 +1871,24 @@ export const updateOperatorRuntimeConfig = (
     },
   );
 
+export const rollbackOperatorRuntimeConfig = (
+  key: string,
+  version: number,
+  reason: string,
+  expectedVersion?: number,
+) =>
+  request<OperatorRuntimeConfig>(
+    `/v1/admin/config/${encodeURIComponent(key)}/rollback`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        version,
+        reason,
+        ...(expectedVersion != null ? { expected_version: expectedVersion } : {}),
+      }),
+    },
+  );
+
 export const getOperatorRuntimeConfigOperation = (operationId: string) =>
   request<OperatorRuntimeConfigOperation>(
     `/v1/admin/config-operations/${encodeURIComponent(operationId)}`,
@@ -1949,6 +1967,12 @@ export const forceParkInstance = (instanceId: string, reason = 'operator_force_p
 export const forceColdBootApp = (slug: string, reason = 'operator_force_cold_boot') =>
   request<OperatorIntentAcceptedResponse>(
     `/v1/admin/apps/${encodeURIComponent(slug)}/force-cold-boot?confirm=true&reason=${encodeURIComponent(reason)}`,
+    { method: 'POST' },
+  );
+
+export const forceRestartInstance = (instanceId: string, reason = 'operator_force_restart') =>
+  request<OperatorIntentAcceptedResponse>(
+    `/v1/admin/instances/${encodeURIComponent(instanceId)}/force-restart?confirm=true&reason=${encodeURIComponent(reason)}`,
     { method: 'POST' },
   );
 
