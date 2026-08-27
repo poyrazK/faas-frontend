@@ -51,6 +51,7 @@ export default function OperatorControlsPage() {
 
   // Form states: Sweep Stuck Builds
   const [sweepDuration, setSweepDuration] = useState('15m');
+  const [sweepReason, setSweepReason] = useState('operator_reclaim_build');
   const [sweepLoading, setSweepLoading] = useState(false);
   const [sweepResult, setSweepResult] = useState<SweepStuckBuildsResponse | null>(null);
   const [sweepError, setSweepError] = useState<string | null>(null);
@@ -156,7 +157,7 @@ export default function OperatorControlsPage() {
     setSweepResult(null);
     setSweepError(null);
     try {
-      const res = await sweepStuckBuilds(sweepDuration);
+      const res = await sweepStuckBuilds(sweepDuration, sweepReason.trim());
       setSweepResult(res);
       builderQuery.reload();
     } catch (err) {
@@ -377,6 +378,19 @@ export default function OperatorControlsPage() {
               </select>
             </div>
 
+            <div className="flex min-w-64 flex-1 items-center gap-3">
+              <label className="text-xs font-semibold">Reason:</label>
+              <input
+                type="text"
+                required
+                pattern="^[a-z0-9_]{1,64}$"
+                title="Use 1–64 lowercase letters, numbers, or underscores."
+                value={sweepReason}
+                onChange={(e) => setSweepReason(e.target.value)}
+                className="field field-sm min-w-0 flex-1 font-mono text-xs"
+              />
+            </div>
+
             <button type="submit" disabled={sweepLoading} className="btn btn-secondary btn-sm">
               {sweepLoading ? 'Sweeping Builds…' : `Sweep Builds (> ${sweepDuration})`}
             </button>
@@ -389,7 +403,7 @@ export default function OperatorControlsPage() {
                 <span>Successfully swept {sweepResult.swept_count} stuck build(s).</span>
               </div>
               <div className="mt-1 text-[11px] text-[var(--color-ink-muted)]">
-                Threshold cutoff: {new Date(sweepResult.threshold_iso).toLocaleTimeString()} · Older than {sweepResult.older_than_secs}s
+                Threshold cutoff: {new Date(sweepResult.threshold_iso).toLocaleTimeString()} · Older than {sweepResult.older_than_seconds}s
               </div>
             </div>
           )}
@@ -499,9 +513,13 @@ export default function OperatorControlsPage() {
                       <td className="px-4 py-3 text-[var(--color-ink-muted)]">
                         {relativeTime(b.received_at)}
                       </td>
-                      <td className="px-4 py-3 font-mono">{b.cpu_pct_60s.toFixed(1)}%</td>
                       <td className="px-4 py-3 font-mono">
-                        {(b.disk_used_bytes / (1024 * 1024 * 1024)).toFixed(2)} GB
+                        {b.cpu_pct_60s == null ? '—' : `${b.cpu_pct_60s.toFixed(1)}%`}
+                      </td>
+                      <td className="px-4 py-3 font-mono">
+                        {b.disk_used_bytes == null
+                          ? '—'
+                          : `${(b.disk_used_bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`}
                       </td>
                     </tr>
                   ))}
