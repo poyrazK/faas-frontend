@@ -1802,6 +1802,7 @@ export interface OperatorRuntimeConfig {
   effective_value: unknown;
   source: 'default_or_environment' | 'operator';
   apply_mode: RuntimeConfigApplyMode;
+  controller_enabled: boolean;
   mutable: boolean;
   sensitive: boolean;
   status: RuntimeConfigStatus;

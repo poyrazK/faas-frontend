@@ -81,7 +81,9 @@ export default function RuntimeConfigurationPage() {
       );
       if ('id' in result) {
         setOperation(result);
-        setMessage(`${item.label} queued as operation ${result.id}.`);
+        setMessage(result.status === 'blocked'
+          ? `${item.label} blocked: ${result.error ?? 'no controller is enabled for this apply mode.'}`
+          : `${item.label} queued as operation ${result.id}.`);
       } else {
         setMessage(`${item.label} applied immediately.`);
       }
@@ -168,6 +170,7 @@ export default function RuntimeConfigurationPage() {
                         <span className="font-semibold">{item.label}</span>
                         <span className={`badge ${statusClass(item.status)}`}>{item.status}</span>
                         <span className="badge badge-neutral">{item.apply_mode}</span>
+                        {item.mutable && item.controller_enabled === false && <span className="badge badge-danger">controller unavailable</span>}
                       </div>
                       <div className="mt-1 text-xs text-[var(--color-ink-muted)]">{item.description}</div>
                       <div className="mt-2 text-[11px] text-[var(--color-ink-muted)]">
