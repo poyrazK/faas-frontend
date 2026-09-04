@@ -68,7 +68,7 @@ export default function TenantsPage() {
     try {
       const cents = Math.round(parseFloat(creditAmountUsd) * 100);
       const res = await issueAccountCredit(selectedTenantId, cents, creditReason);
-      setCreditFeedback(`Issued $${(res.amount_cents / 100).toFixed(2)} credit to account.`);
+      setCreditFeedback(`Issued $${(res.cents_remaining / 100).toFixed(2)} credit to account.`);
       setTimeout(() => {
         setCreditModalOpen(false);
         setCreditFeedback(null);

@@ -130,6 +130,15 @@ export default function OperationsLayout({ children }: { children: React.ReactNo
           </div>
         )}
 
+        {!collapsed && (
+          <a
+            href="https://gregale.dev/dashboard/security"
+            className="block px-2 text-[11px] text-[var(--color-ink-muted)] transition-colors hover:text-[var(--color-ink)]"
+          >
+            Manage MFA & account security ↗
+          </a>
+        )}
+
         <button
           className={`nav-item mt-2 w-full ${collapsed ? 'justify-center px-0' : ''}`}
           onClick={() => setCollapsed(!collapsed)}

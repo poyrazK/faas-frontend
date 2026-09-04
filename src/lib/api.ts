@@ -577,22 +577,31 @@ async function request<T>(
   init: RequestInit = {},
   parse: 'json' | 'none' = 'json',
 ): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase();
+  const isAdminMutation = path.startsWith('/v1/admin/') && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  const requestHeaders: Record<string, string> = {
+    Accept: 'application/json',
+    // FormData must set its own Content-Type: the browser appends the
+    // multipart boundary, and forcing application/json here would produce
+    // a body the server cannot parse.
+    ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+    ...(typeof window !== 'undefined' && localStorage.getItem('faas_active_org')
+      ? { 'X-Active-Org': localStorage.getItem('faas_active_org')! }
+      : {}),
+    ...(init.headers as Record<string, string>),
+  };
+  if (isAdminMutation && !requestHeaders['Idempotency-Key']) {
+    requestHeaders['Idempotency-Key'] =
+      typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `admin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
   let res: Response;
   try {
     res = await fetch(path, {
       ...init,
       credentials: 'include',
-      headers: {
-        Accept: 'application/json',
-        // FormData must set its own Content-Type: the browser appends the
-        // multipart boundary, and forcing application/json here would produce
-        // a body the server cannot parse.
-        ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-        ...(typeof window !== 'undefined' && localStorage.getItem('faas_active_org')
-          ? { 'X-Active-Org': localStorage.getItem('faas_active_org')! }
-          : {}),
-        ...(init.headers as Record<string, string>),
-      },
+      headers: requestHeaders,
     });
   } catch (err) {
     throw new ApiError(null, 0, `Network error: could not reach the control plane (${(err as Error).message})`);
@@ -1659,9 +1668,9 @@ export const getObsAppDetail = (id: string) =>
   request<ObsAppDetailResponse>(`/v1/admin/obs/apps/${id}`, { cache: 'no-store' });
 
 export const issueAccountCredit = (accountId: string, amountCents: number, reason: string) =>
-  request<{ id: string; amount_cents: number; reason: string }>(
+  request<{ id: string; cents_remaining: number; reason: string }>(
     `/v1/admin/accounts/${accountId}/credits`,
-    { method: 'POST', body: JSON.stringify({ amount_cents: amountCents, reason }) },
+    { method: 'POST', body: JSON.stringify({ cents: amountCents, reason }) },
   );
 
 export const reconcileAccount = (accountId: string) =>
@@ -1802,6 +1811,7 @@ export interface OperatorRuntimeConfig {
   effective_value: unknown;
   source: 'default_or_environment' | 'operator';
   apply_mode: RuntimeConfigApplyMode;
+  controller_enabled: boolean;
   mutable: boolean;
   sensitive: boolean;
   status: RuntimeConfigStatus;
