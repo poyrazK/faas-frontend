@@ -23,10 +23,20 @@ export function middleware(request: NextRequest) {
   }
 
   if (isOperationsSubdomain) {
-    // API requests must reach Next's rewrites so they can be proxied to the
-    // backend. The operations-host catch-all redirect below must not turn an
-    // API response into an HTML navigation response.
-    if (pathname === '/v1' || pathname.startsWith('/v1/')) {
+    // Backend-proxied requests must reach Next's rewrites. The operations-host
+    // catch-all redirect below must not turn an API/auth/health response into
+    // an HTML navigation response.
+    const isBackendProxyPath =
+      pathname === '/v1' ||
+      pathname.startsWith('/v1/') ||
+      pathname === '/oauth' ||
+      pathname.startsWith('/oauth/') ||
+      pathname === '/auth' ||
+      pathname.startsWith('/auth/') ||
+      pathname === '/logout' ||
+      pathname === '/healthz';
+
+    if (isBackendProxyPath) {
       return NextResponse.next({
         request: {
           headers: requestHeaders,
@@ -61,6 +71,7 @@ export function middleware(request: NextRequest) {
       'billing',
       'configuration',
       'audit-log',
+      'incidents',
       'login',
     ];
 
