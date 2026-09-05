@@ -25,11 +25,22 @@ describe('operations host boundary', () => {
     );
   });
 
-  it('passes backend API requests through for Next rewrites', () => {
-    const response = middleware(request('/v1/account'));
+  it.each(['/v1/account', '/oauth/callback', '/auth/session', '/logout', '/healthz'])(
+    'passes %s through for Next rewrites',
+    (path) => {
+      const response = middleware(request(path));
 
-    expect(response.headers.get('location')).toBeNull();
-    expect(response.headers.get('x-middleware-rewrite')).toBeNull();
+      expect(response.headers.get('location')).toBeNull();
+      expect(response.headers.get('x-middleware-rewrite')).toBeNull();
+    },
+  );
+
+  it('maps incidents to the dedicated operations route', () => {
+    const response = middleware(request('/incidents'));
+
+    expect(response.headers.get('x-middleware-rewrite')).toBe(
+      'https://operations.gregale.dev/operations/incidents',
+    );
   });
 
   it('does not expose legacy customer dashboard routes', () => {

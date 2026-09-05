@@ -601,6 +601,10 @@ async function request<T>(
     res = await fetch(path, {
       ...init,
       credentials: 'include',
+      // API calls must never silently follow an HTML navigation redirect.
+      // A redirect usually means middleware or auth routing is misconfigured;
+      // surface it as an API error instead.
+      redirect: 'manual',
       headers: requestHeaders,
     });
   } catch (err) {
@@ -618,6 +622,10 @@ async function request<T>(
   }
 
   if (parse === 'none' || res.status === 204) return undefined as T;
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('json')) {
+    throw new ApiError(null, res.status, `Control plane returned an unexpected response (HTTP ${res.status}; expected JSON).`);
+  }
   return (await res.json()) as T;
 }
 
@@ -644,6 +652,7 @@ async function authPost(path: string, fields: Record<string, string>): Promise<L
     res = await fetch(path, {
       method: 'POST',
       credentials: 'include',
+      redirect: 'manual',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: new URLSearchParams(fields).toString(),
     });
@@ -659,6 +668,11 @@ async function authPost(path: string, fields: Record<string, string>): Promise<L
       /* non-JSON error body */
     }
     throw new ApiError(problem, res.status, `Sign-in failed (HTTP ${res.status})`);
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('json')) {
+    throw new ApiError(null, res.status, 'Authentication service returned an unexpected response.');
   }
 
   return (await res.json().catch(() => ({ account_id: '', plan: 'free' as Plan }))) as LoginResult;
@@ -693,7 +707,22 @@ export async function requestPasswordReset(email: string): Promise<void> {
 }
 
 export async function logout(): Promise<void> {
-  await fetch('/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+  await fetch('/logout', { method: 'POST', credentials: 'include', redirect: 'manual' }).catch(() => {});
+}
+
+/** Lightweight unauthenticated probe used by the operations shell. */
+export async function probeControlPlane(): Promise<boolean> {
+  try {
+    const response = await fetch('/healthz', {
+      credentials: 'include',
+      cache: 'no-store',
+      redirect: 'manual',
+      headers: { Accept: 'text/plain' },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** OAuth consent redirects. Both 302 to the provider; the callback mints the session. */

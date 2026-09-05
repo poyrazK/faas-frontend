@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
+import { probeControlPlane } from '@/lib/api';
 import { Icon, type IconName } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
 
@@ -52,12 +53,36 @@ export default function OperationsLayout({ children }: { children: React.ReactNo
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [controlPlaneState, setControlPlaneState] = useState<'checking' | 'online' | 'degraded'>('checking');
+  const [lastHealthCheck, setLastHealthCheck] = useState<Date | null>(null);
 
   useEffect(() => {
     if (!loading && !account && pathname !== '/operations/login' && pathname !== '/login') {
       router.replace(`/operations/login?next=${encodeURIComponent(pathname)}`);
     }
   }, [loading, account, pathname, router]);
+
+  useEffect(() => {
+    if (pathname === '/operations/login' || pathname === '/login') {
+      return;
+    }
+
+    let cancelled = false;
+    const check = async () => {
+      const healthy = await probeControlPlane();
+      if (!cancelled) {
+        setControlPlaneState(healthy ? 'online' : 'degraded');
+        setLastHealthCheck(new Date());
+      }
+    };
+
+    void check();
+    const timer = window.setInterval(() => void check(), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pathname]);
 
   if (pathname === '/operations/login' || pathname === '/login') {
     return <>{children}</>;
@@ -77,6 +102,10 @@ export default function OperationsLayout({ children }: { children: React.ReactNo
   }
 
   const railW = collapsed ? 60 : 220;
+  const controlPlaneLabel =
+    controlPlaneState === 'online' ? 'ONLINE' : controlPlaneState === 'degraded' ? 'DEGRADED' : 'CHECKING';
+  const controlPlaneColor =
+    controlPlaneState === 'online' ? 'var(--color-brand-bright)' : controlPlaneState === 'degraded' ? 'var(--color-danger)' : 'var(--color-ink-muted)';
 
   const sidebarContent = (
     <div className="flex h-full flex-col justify-between p-3">
@@ -119,13 +148,19 @@ export default function OperationsLayout({ children }: { children: React.ReactNo
           <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-2.5 text-[11px]">
             <div className="flex items-center justify-between text-[var(--color-ink-muted)]">
               <span>Control Plane</span>
-              <span className="flex items-center gap-1.5 text-[var(--color-brand-bright)] font-semibold">
-                <span className="live-dot inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-brand-bright)]" />
-                ONLINE
+              <span className="flex items-center gap-1.5 font-semibold" style={{ color: controlPlaneColor }} aria-live="polite">
+                <span
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${controlPlaneState === 'online' ? 'live-dot' : ''}`}
+                  style={{ background: controlPlaneColor }}
+                />
+                {controlPlaneLabel}
               </span>
             </div>
             <div className="mt-1 font-mono text-[10px] text-[var(--color-ink-muted)]">
               Host: <span className="font-semibold text-[var(--color-ink)]">api.gregale.dev</span>
+            </div>
+            <div className="mt-1 text-[10px] text-[var(--color-ink-muted)]">
+              Checked: {lastHealthCheck ? lastHealthCheck.toLocaleTimeString() : '—'}
             </div>
           </div>
         )}

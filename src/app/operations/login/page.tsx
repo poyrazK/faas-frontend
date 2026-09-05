@@ -4,7 +4,7 @@ import React, { Suspense, useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useAuth } from '@/lib/auth';
+import { AuthRefreshError, useAuth } from '@/lib/auth';
 import { requestPasswordReset, ApiError } from '@/lib/api';
 import { Spinner } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
@@ -54,12 +54,14 @@ function OperationsLoginInner() {
         router.replace(next);
       } else {
         setStatus('error');
-        setMessage('Authentication succeeded but session cookie was not established. Verify browser cookie permissions.');
+        setMessage('Sign-in completed but the operator account could not be verified. Please try again.');
       }
     } catch (err) {
       setStatus('error');
       setMessage(
-        err instanceof ApiError
+        err instanceof AuthRefreshError
+          ? err.message
+          : err instanceof ApiError
           ? err.message
           : 'Sign-in failed. Operator access requires registration in FAAS_ADMIN_EMAILS.',
       );
