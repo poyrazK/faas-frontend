@@ -1799,6 +1799,23 @@ export interface OperatorIntentAcceptedResponse {
 
 export type RuntimeConfigApplyMode = 'hot' | 'graceful' | 'rolling' | 'break_glass';
 export type RuntimeConfigStatus = 'pending' | 'applied' | 'failed' | 'blocked';
+export type RuntimeConfigScope = 'global' | 'control_plane' | 'daemon' | 'node';
+
+export interface OperatorRuntimeConfigAck {
+  consumer: string;
+  node_id?: string;
+  version: number;
+  status: 'applied' | 'failed';
+  effective_value?: unknown;
+  error?: string;
+  updated_at: string;
+  applied_at?: string;
+}
+
+export interface OperatorRuntimeConfigTarget {
+  scope: RuntimeConfigScope;
+  scopeId?: string;
+}
 
 export interface OperatorRuntimeConfig {
   key: string;
@@ -1809,6 +1826,10 @@ export interface OperatorRuntimeConfig {
   default_value: unknown;
   desired_value: unknown;
   effective_value: unknown;
+  /** Present when the backend supports scoped runtime configuration. */
+  scope?: RuntimeConfigScope;
+  scope_id?: string;
+  rollout_percent?: number;
   source: 'default_or_environment' | 'operator';
   apply_mode: RuntimeConfigApplyMode;
   controller_enabled: boolean;
@@ -1819,6 +1840,8 @@ export interface OperatorRuntimeConfig {
   version: number;
   updated_at?: string;
   applied_at?: string;
+  /** Per-daemon observations; omitted when no consumer has acknowledged it. */
+  acks?: OperatorRuntimeConfigAck[];
 }
 
 export interface OperatorRuntimeConfigListResponse {
@@ -1829,7 +1852,7 @@ export interface OperatorRuntimeConfigListResponse {
 export interface OperatorRuntimeConfigOperation {
   id: string;
   key: string;
-  scope: string;
+  scope: RuntimeConfigScope;
   scope_id: string;
   version: number;
   desired_value: unknown;
@@ -1850,9 +1873,10 @@ export interface OperatorRuntimeConfigOperation {
 export interface OperatorRuntimeConfigRevision {
   id: number;
   key: string;
-  scope: string;
+  scope: RuntimeConfigScope;
   scope_id: string;
   version: number;
+  rollout_percent?: number;
   old_value: unknown;
   new_value: unknown;
   actor_id?: string;
@@ -1860,14 +1884,22 @@ export interface OperatorRuntimeConfigRevision {
   created_at: string;
 }
 
-export const getOperatorRuntimeConfig = () =>
-  request<OperatorRuntimeConfigListResponse>('/v1/admin/config', { cache: 'no-store' });
+export const getOperatorRuntimeConfig = (
+  scope: RuntimeConfigScope = 'global',
+  scopeId = '',
+) => {
+  const query = new URLSearchParams({ scope });
+  if (scopeId.trim()) query.set('scope_id', scopeId.trim());
+  return request<OperatorRuntimeConfigListResponse>(`/v1/admin/config?${query.toString()}`, { cache: 'no-store' });
+};
 
 export const updateOperatorRuntimeConfig = (
   key: string,
   value: unknown,
   reason: string,
   expectedVersion?: number,
+  target: OperatorRuntimeConfigTarget = { scope: 'global' },
+  rolloutPercent?: number,
 ) =>
   request<OperatorRuntimeConfig | OperatorRuntimeConfigOperation>(
     `/v1/admin/config/${encodeURIComponent(key)}`,
@@ -1877,6 +1909,9 @@ export const updateOperatorRuntimeConfig = (
         value,
         reason,
         ...(expectedVersion != null ? { expected_version: expectedVersion } : {}),
+        scope: target.scope,
+        ...(target.scopeId?.trim() ? { scope_id: target.scopeId.trim() } : {}),
+        ...(rolloutPercent != null ? { rollout_percent: rolloutPercent } : {}),
       }),
     },
   );
@@ -1886,6 +1921,7 @@ export const rollbackOperatorRuntimeConfig = (
   version: number,
   reason: string,
   expectedVersion?: number,
+  target: OperatorRuntimeConfigTarget = { scope: 'global' },
 ) =>
   request<OperatorRuntimeConfig>(
     `/v1/admin/config/${encodeURIComponent(key)}/rollback`,
@@ -1895,6 +1931,8 @@ export const rollbackOperatorRuntimeConfig = (
         version,
         reason,
         ...(expectedVersion != null ? { expected_version: expectedVersion } : {}),
+        scope: target.scope,
+        ...(target.scopeId?.trim() ? { scope_id: target.scopeId.trim() } : {}),
       }),
     },
   );
@@ -1905,11 +1943,18 @@ export const getOperatorRuntimeConfigOperation = (operationId: string) =>
     { cache: 'no-store' },
   );
 
-export const getOperatorRuntimeConfigRevisions = (key: string, limit = 20) =>
-  request<{ items: OperatorRuntimeConfigRevision[] }>(
-    `/v1/admin/config/${encodeURIComponent(key)}/revisions?limit=${limit}`,
+export const getOperatorRuntimeConfigRevisions = (
+  key: string,
+  limit = 20,
+  target: OperatorRuntimeConfigTarget = { scope: 'global' },
+) => {
+  const query = new URLSearchParams({ limit: String(limit), scope: target.scope });
+  if (target.scopeId?.trim()) query.set('scope_id', target.scopeId.trim());
+  return request<{ items: OperatorRuntimeConfigRevision[] }>(
+    `/v1/admin/config/${encodeURIComponent(key)}/revisions?${query.toString()}`,
     { cache: 'no-store' },
   );
+};
 
 export interface SweepStuckBuildsResponse {
   ok: boolean;
