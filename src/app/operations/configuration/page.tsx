@@ -5,6 +5,7 @@ import {
   getOperatorRuntimeConfig,
   getOperatorRuntimeConfigOperation,
   getOperatorRuntimeConfigRevisions,
+  rollbackOperatorRuntimeConfig,
   type OperatorRuntimeConfig,
   type OperatorRuntimeConfigOperation,
   type OperatorRuntimeConfigRevision,
@@ -49,6 +50,8 @@ export default function RuntimeConfigurationPage() {
   const [operation, setOperation] = useState<OperatorRuntimeConfigOperation | null>(null);
   const [historyKey, setHistoryKey] = useState<string | null>(null);
   const [history, setHistory] = useState<OperatorRuntimeConfigRevision[]>([]);
+
+  const historyItem = config.data?.items.find((item) => item.key === historyKey);
 
   const groups = useMemo(() => {
     const grouped = new Map<string, OperatorRuntimeConfig[]>();
@@ -105,6 +108,23 @@ export default function RuntimeConfigurationPage() {
     }
   }
 
+  async function rollback(item: OperatorRuntimeConfig, revision: OperatorRuntimeConfigRevision) {
+    if (!item.mutable || item.apply_mode !== 'hot' || revision.version >= item.version) return;
+    if (!window.confirm(`Roll back ${item.label} to revision v${revision.version}? This creates a new live revision.`)) return;
+    setSaving(`rollback:${item.key}:${revision.version}`);
+    setMessage(null);
+    try {
+      await rollbackOperatorRuntimeConfig(item.key, revision.version, `Rollback from the operator console to v${revision.version}`, item.version);
+      setMessage(`${item.label} rolled back to v${revision.version} without restarting apid.`);
+      await showHistory(item.key);
+      config.reload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Configuration rollback failed.');
+    } finally {
+      setSaving(null);
+    }
+  }
+
   if (config.loading && !config.data) {
     return <div className="flex h-64 items-center justify-center"><Spinner size={24} /></div>;
   }
@@ -134,7 +154,8 @@ export default function RuntimeConfigurationPage() {
           <div>
             <div className="font-semibold">Safe change workflow</div>
             <p className="mt-1 text-[var(--color-ink-muted)]">
-              Hot settings take effect immediately. Graceful and rolling settings create a durable apply operation;
+              Hot settings take effect immediately, and any earlier hot revision can be restored without restarting apid.
+              Graceful and rolling settings create a durable apply operation;
               the console reports pending or blocked rather than claiming a restart-free change succeeded.
               Bootstrap secrets and topology identity remain deployment-managed.
             </p>
@@ -211,11 +232,23 @@ export default function RuntimeConfigurationPage() {
           {history.length === 0 ? <div className="p-4 text-sm text-[var(--color-ink-muted)]">No revisions recorded.</div> : (
             <div className="divide-y divide-[var(--color-line)]">
               {history.map((revision) => (
-                <div key={revision.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[80px_1fr_1fr_1fr]">
+                <div key={revision.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[80px_1fr_1fr_1fr_auto]">
                   <span className="font-mono font-semibold">v{revision.version}</span>
                   <span><span className="text-[var(--color-ink-muted)]">Old: </span><span className="font-mono">{valueText(revision.old_value)}</span></span>
                   <span><span className="text-[var(--color-ink-muted)]">New: </span><span className="font-mono">{valueText(revision.new_value)}</span></span>
                   <span className="text-[var(--color-ink-muted)]">{revision.reason} · {new Date(revision.created_at).toLocaleString()}</span>
+                  <span>
+                    {historyItem && historyItem.mutable && historyItem.apply_mode === 'hot' && revision.version < historyItem.version ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        disabled={saving === `rollback:${historyItem.key}:${revision.version}`}
+                        onClick={() => rollback(historyItem, revision)}
+                      >
+                        {saving === `rollback:${historyItem.key}:${revision.version}` ? <Spinner size={14} /> : 'Rollback'}
+                      </button>
+                    ) : null}
+                  </span>
                 </div>
               ))}
             </div>
