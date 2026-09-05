@@ -11,6 +11,7 @@ import {
   restoreObsAccount,
   revokeObsAccountSessions,
   issueAccountCredit,
+  refundAccount,
   reconcileAccount,
   forceColdBootApp,
   type ObsTenantRow,
@@ -18,6 +19,7 @@ import {
   type ObsTenant360Response,
   type ObsTenantActivityResponse,
   type ObsAppDetailResponse,
+  type ObsInvoiceSummary,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
@@ -46,6 +48,13 @@ export default function TenantsPage() {
   const [creditReason, setCreditReason] = useState('Operator promotional credit');
   const [creditSubmitting, setCreditSubmitting] = useState(false);
   const [creditFeedback, setCreditFeedback] = useState<string | null>(null);
+
+  // Refund state
+  const [refundInvoice, setRefundInvoice] = useState<ObsInvoiceSummary | null>(null);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('Operator refund');
+  const [refundSubmitting, setRefundSubmitting] = useState(false);
+  const [refundFeedback, setRefundFeedback] = useState<string | null>(null);
 
   // Reconcile state
   const [reconcilingId, setReconcilingId] = useState<string | null>(null);
@@ -116,6 +125,44 @@ export default function TenantsPage() {
       setCreditFeedback(`Error issuing credit: ${(err as Error).message}`);
     } finally {
       setCreditSubmitting(false);
+    }
+  };
+
+  const openRefundModal = (invoice: ObsInvoiceSummary) => {
+    const paidCents = invoice.amount_paid_cents > 0 ? invoice.amount_paid_cents : invoice.total_cents;
+    setRefundInvoice(invoice);
+    setRefundAmount((paidCents / 100).toFixed(2));
+    setRefundReason('Operator refund');
+    setRefundFeedback(null);
+  };
+
+  const handleRefund = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTenantId || !refundInvoice) return;
+    const amount = Number(refundAmount);
+    const amountCents = Math.round(amount * 100);
+    const paidCents = refundInvoice.amount_paid_cents > 0 ? refundInvoice.amount_paid_cents : refundInvoice.total_cents;
+    if (!Number.isFinite(amount) || !Number.isInteger(amountCents) || amountCents <= 0 || amountCents > paidCents) {
+      setRefundFeedback(`Enter an amount between 0.01 and ${(paidCents / 100).toFixed(2)} ${refundInvoice.currency}.`);
+      return;
+    }
+    if (refundReason.trim().length < 3) {
+      setRefundFeedback('Refund reason must be at least 3 characters.');
+      return;
+    }
+    if (!window.confirm(`Refund ${(amountCents / 100).toFixed(2)} ${refundInvoice.currency} for invoice ${refundInvoice.number || refundInvoice.id}? This sends a money-moving request to the billing provider.`)) return;
+    setRefundSubmitting(true);
+    setRefundFeedback(null);
+    try {
+      const result = await refundAccount(selectedTenantId, refundInvoice.id, amountCents, refundReason.trim());
+      const feedback = `Refund accepted: ${(result.amount_cents / 100).toFixed(2)} ${result.currency} · ${result.provider_refund_id}.`;
+      setTenantFeedback(feedback);
+      setRefundInvoice(null);
+      await openInspectDrawer(selectedTenantId);
+    } catch (err) {
+      setRefundFeedback(`Refund failed: ${(err as Error).message}`);
+    } finally {
+      setRefundSubmitting(false);
     }
   };
 
@@ -451,9 +498,19 @@ export default function TenantsPage() {
                         <div className="mb-2 text-xs font-semibold text-[var(--color-ink-muted)]">Recent invoices</div>
                         <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
                           {tenant360Data.billing.invoices.slice(0, 5).map((invoice) => (
-                            <div key={invoice.id} className="flex items-center justify-between p-3 text-xs">
-                              <div><span className="font-semibold">{invoice.number || invoice.id.slice(0, 12)}</span><span className="ml-2 text-[var(--color-ink-muted)]">{invoice.status} · {invoice.currency}</span></div>
-                              <span className="font-semibold">{(invoice.total_cents / 100).toFixed(2)}</span>
+                            <div key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 p-3 text-xs">
+                              <div>
+                                <span className="font-semibold">{invoice.number || invoice.id.slice(0, 12)}</span>
+                                <span className="ml-2 text-[var(--color-ink-muted)]">{invoice.status} · {invoice.currency}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="font-semibold">{(invoice.total_cents / 100).toFixed(2)}</span>
+                                {['paid', 'partially_refunded'].includes(invoice.status.toLowerCase()) && (
+                                  <button type="button" className="btn btn-danger btn-xs" onClick={() => openRefundModal(invoice)}>
+                                    Refund
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -650,6 +707,64 @@ export default function TenantsPage() {
                 Could not fetch details for tenant.
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Refund Modal */}
+      {refundInvoice && selectedTenantId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+          <div className="card w-full max-w-md p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold">Refund invoice</h3>
+                <p className="mt-1 text-xs text-[var(--color-ink-muted)]">
+                  {refundInvoice.number || refundInvoice.id} · {refundInvoice.currency}
+                </p>
+              </div>
+              <button type="button" onClick={() => setRefundInvoice(null)} className="btn-icon" aria-label="Close refund dialog">
+                <Icon name="x" size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleRefund} className="mt-5 space-y-4">
+              <label className="block text-xs">
+                <span className="font-semibold">Amount ({refundInvoice.currency})</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  max={((refundInvoice.amount_paid_cents || refundInvoice.total_cents) / 100).toFixed(2)}
+                  step="0.01"
+                  required
+                  value={refundAmount}
+                  onChange={(event) => setRefundAmount(event.target.value)}
+                  className="field field-sm mt-1 w-full font-mono"
+                />
+              </label>
+              <label className="block text-xs">
+                <span className="font-semibold">Reason</span>
+                <textarea
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  value={refundReason}
+                  onChange={(event) => setRefundReason(event.target.value)}
+                  className="field mt-1 min-h-20 w-full"
+                />
+              </label>
+              {refundFeedback && (
+                <div className={`rounded p-3 text-xs ${refundFeedback.startsWith('Refund accepted') ? 'bg-[var(--color-surface-subtle)] text-[var(--color-brand-bright)]' : 'bg-[var(--color-danger-subtle)] text-[var(--color-danger)]'}`}>
+                  {refundFeedback}
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRefundInvoice(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-danger btn-sm" disabled={refundSubmitting}>
+                  {refundSubmitting ? 'Submitting…' : 'Confirm refund'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
