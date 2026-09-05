@@ -23,6 +23,17 @@ export function middleware(request: NextRequest) {
   }
 
   if (isOperationsSubdomain) {
+    // API requests must reach Next's rewrites so they can be proxied to the
+    // backend. The operations-host catch-all redirect below must not turn an
+    // API response into an HTML navigation response.
+    if (pathname === '/v1' || pathname.startsWith('/v1/')) {
+      return NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      });
+    }
+
     // If accessing a legacy root or dashboard URL, rewrite to operations overview.
     if (
       pathname === '/' ||
