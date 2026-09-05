@@ -1247,6 +1247,16 @@ export interface ObsOverviewResponse {
   recent_failures_1h: ObsOverviewFailureKind[];
 }
 
+export interface ObsHealthResponse {
+  generated_at: string;
+  audit_log_write_total_5m: number;
+  audit_log_write_failures_5m: number;
+  audit_log_coverage_ratio_5m: number;
+  operator_intent_outcome_missing_total: Record<string, number>;
+  trace_id_completeness_ratio: Record<string, number>;
+  alerts_firing: number;
+}
+
 export interface ObsTenantRow {
   account_id: string;
   plan: Plan;
@@ -1646,6 +1656,9 @@ export interface GlobalAuditLogResponse {
 export const getObsOverview = () =>
   request<ObsOverviewResponse>('/v1/admin/obs/overview', { cache: 'no-store' });
 
+export const getObsHealth = () =>
+  request<ObsHealthResponse>('/v1/admin/obs/health', { cache: 'no-store' });
+
 export const listObsTenants = (limit = 200, cursor?: string, includePii = false) => {
   const q = new URLSearchParams({ limit: String(limit) });
   if (cursor) q.set('cursor', cursor);
@@ -1700,6 +1713,31 @@ export const issueAccountCredit = (accountId: string, amountCents: number, reaso
   request<{ id: string; cents_remaining: number; reason: string }>(
     `/v1/admin/accounts/${accountId}/credits`,
     { method: 'POST', body: JSON.stringify({ cents: amountCents, reason }) },
+  );
+
+export interface AdminRefundResponse {
+  account_id: string;
+  invoice_id: string;
+  provider: string;
+  provider_refund_id: string;
+  charge_id: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+}
+
+export const refundAccount = (
+  accountId: string,
+  invoiceId: string,
+  amountCents: number,
+  reason: string,
+) =>
+  request<AdminRefundResponse>(
+    `/v1/admin/accounts/${encodeURIComponent(accountId)}/refunds`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ invoice_id: invoiceId, amount_cents: amountCents, reason }),
+    },
   );
 
 export const reconcileAccount = (accountId: string) =>
@@ -1793,10 +1831,19 @@ export const listObsEvents = (limit = 100, kindPrefix?: string, actor?: string, 
   return request<ObsEventListResponse>(`/v1/admin/obs/events?${q}`, { cache: 'no-store' });
 };
 
-export const setGithubWebhookSecret = (secret: string) =>
-  request<{ ok: boolean }>('/v1/admin/github-webhook-secrets', {
+/** Same-origin SSE feed for app, deployment, instance, and node changes. */
+export const obsNodeEventsUrl = '/v1/admin/obs/nodes/events';
+
+export interface AdminSetGithubWebhookSecretResponse {
+  installation_id: number;
+  upgraded_at: string;
+  upgraded_by: string;
+}
+
+export const setGithubWebhookSecret = (installationId: number, secretHex: string) =>
+  request<AdminSetGithubWebhookSecretResponse>('/v1/admin/github-webhook-secrets', {
     method: 'POST',
-    body: JSON.stringify({ secret }),
+    body: JSON.stringify({ installation_id: installationId, secret_hex: secretHex }),
   });
 
 export const listGlobalAuditLog = (limit = 100, before?: string, includeAnonymous = true) => {
@@ -2045,6 +2092,12 @@ export interface ObsAuditLogSearchResponse {
 export const forceParkInstance = (instanceId: string, reason = 'operator_force_park') =>
   request<OperatorIntentAcceptedResponse>(
     `/v1/admin/instances/${encodeURIComponent(instanceId)}/force-park?confirm=true&reason=${encodeURIComponent(reason)}`,
+    { method: 'POST' },
+  );
+
+export const forceRestartInstance = (instanceId: string, reason = 'operator_force_restart') =>
+  request<OperatorIntentAcceptedResponse>(
+    `/v1/admin/instances/${encodeURIComponent(instanceId)}/force-restart?confirm=true&reason=${encodeURIComponent(reason)}`,
     { method: 'POST' },
   );
 

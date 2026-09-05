@@ -1,22 +1,25 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   getObsAnomalies,
   getObsBuilderHeartbeats,
   getObsOverview,
+  getObsHealth,
   getObsRateLimits,
   getObsWakeLatencies,
   listObsEvents,
   listObsNodes,
   searchObsAuditLog,
+  obsNodeEventsUrl,
   type ObsAnomalyRow,
   type ObsBuilderHeartbeatRow,
   type ObsEventRow,
   type ObsOverviewResponse,
   type ObsRateLimitResponse,
   type ObsWakeLatencyRow,
+  type ObsHealthResponse,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { PageHeader, Mono } from '@/components/ui/bits';
@@ -46,8 +49,90 @@ function builderDisk(builder: ObsBuilderHeartbeatRow): string {
     : `${(builder.disk_used_bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+const NODE_EVENT_NAMES = ['app_changed', 'deployment_changed', 'instance_changed', 'compute_node_changed'];
+
+interface StreamEntry {
+  event: string;
+  data: string;
+  receivedAt: string;
+}
+
+function formatStreamData(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function FleetEventStream() {
+  const [connection, setConnection] = useState<'connecting' | 'open' | 'error'>('connecting');
+  const [entries, setEntries] = useState<StreamEntry[]>([]);
+  const [generation, setGeneration] = useState(0);
+
+  useEffect(() => {
+    const source = new EventSource(obsNodeEventsUrl, { withCredentials: true });
+    const listeners = NODE_EVENT_NAMES.map((eventName) => {
+      const listener = (event: Event) => {
+        const message = event as MessageEvent<string>;
+        if (!message.data) return;
+        setEntries((current) => [
+          { event: eventName, data: message.data, receivedAt: new Date().toISOString() },
+          ...current,
+        ].slice(0, 30));
+      };
+      source.addEventListener(eventName, listener);
+      return { eventName, listener };
+    });
+    source.onopen = () => setConnection('open');
+    source.onerror = () => setConnection('error');
+    return () => {
+      for (const { eventName, listener } of listeners) source.removeEventListener(eventName, listener);
+      source.close();
+    };
+  }, [generation]);
+
+  return (
+    <SectionCard
+      title="Live Fleet Event Stream"
+      action={
+        <div className="flex items-center gap-2">
+          <span className={`badge ${connection === 'open' ? 'badge-success' : connection === 'error' ? 'badge-danger' : 'badge-warning'}`}>
+            {connection === 'open' ? 'Streaming' : connection === 'error' ? 'Disconnected' : 'Connecting…'}
+          </span>
+          <button type="button" className="btn btn-secondary btn-xs" onClick={() => { setConnection('connecting'); setGeneration((value) => value + 1); }}>
+            Reconnect
+          </button>
+        </div>
+      }
+    >
+      <div className="border-b border-[var(--color-line)] p-4 text-xs text-[var(--color-ink-muted)]">
+        Server-sent app, deployment, instance, and compute-node changes. Heartbeats keep the connection alive but are not rendered as events.
+      </div>
+      {entries.length === 0 ? (
+        <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">
+          {connection === 'error' ? 'The live feed is unavailable or operator authentication has expired.' : 'Waiting for a fleet event…'}
+        </div>
+      ) : (
+        <div className="max-h-80 divide-y divide-[var(--color-line)] overflow-y-auto">
+          {entries.map((entry, index) => (
+            <div key={`${entry.receivedAt}-${index}`} className="grid gap-2 p-3 text-xs sm:grid-cols-[170px_1fr]">
+              <div>
+                <div className="font-mono font-semibold text-[var(--color-brand-bright)]">{entry.event}</div>
+                <div className="text-[var(--color-ink-muted)]">{new Date(entry.receivedAt).toLocaleTimeString()}</div>
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[var(--color-ink-muted)]">{formatStreamData(entry.data)}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 export default function IncidentCenterPage() {
   const overview = useAsync(getObsOverview, [], 30000);
+  const health = useAsync(getObsHealth, [], 30000);
   const nodes = useAsync(listObsNodes, [], 30000);
   const builders = useAsync(getObsBuilderHeartbeats, [], 30000);
   const wake = useAsync(() => getObsWakeLatencies(24), [], 30000);
@@ -78,6 +163,7 @@ export default function IncidentCenterPage() {
 
   const refreshAll = () => {
     overview.reload();
+    health.reload();
     nodes.reload();
     builders.reload();
     wake.reload();
@@ -86,6 +172,10 @@ export default function IncidentCenterPage() {
     events.reload();
     audit.reload();
   };
+
+  const healthData: ObsHealthResponse | null = health.data;
+  const missingOutcomes = Object.entries(healthData?.operator_intent_outcome_missing_total ?? {});
+  const incompleteTraceKinds = Object.entries(healthData?.trace_id_completeness_ratio ?? {}).filter(([, ratio]) => ratio < 1);
 
   return (
     <div>
@@ -125,6 +215,38 @@ export default function IncidentCenterPage() {
           sub="24h rolling node latency"
           color={maxP95 != null && maxP95 > 1000 ? 'var(--color-danger)' : 'var(--color-chart)'}
         />
+      </div>
+
+      <div className="mt-6">
+        <SectionCard
+          title="Observability Pipeline Health"
+          action={<span className={`badge ${health.error ? 'badge-danger' : healthData && (healthData.alerts_firing > 0 || missingOutcomes.some(([, count]) => count > 0) || incompleteTraceKinds.length > 0) ? 'badge-warning' : 'badge-success'}`}>{health.error ? 'Unavailable' : healthData ? 'Reporting' : 'Loading…'}</span>}
+        >
+          {health.loading && !healthData ? (
+            <LoadingState label="Checking audit and trace health" />
+          ) : health.error ? (
+            <ErrorState message={health.error.message || 'Could not load observability health.'} />
+          ) : healthData ? (
+            <div className="p-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Audit writes (5m)</div><div className="mt-1 font-semibold">{healthData.audit_log_write_total_5m.toLocaleString()}</div><div className="text-[var(--color-ink-muted)]">{healthData.audit_log_write_failures_5m} failed</div></div>
+                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Audit trace coverage</div><div className="mt-1 font-semibold">{(healthData.audit_log_coverage_ratio_5m * 100).toFixed(1)}%</div><div className="text-[var(--color-ink-muted)]">last five minutes</div></div>
+                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Firing alerts</div><div className={`mt-1 font-semibold ${healthData.alerts_firing > 0 ? 'text-[var(--color-danger)]' : ''}`}>{healthData.alerts_firing}</div><div className="text-[var(--color-ink-muted)]">Prometheus alert state</div></div>
+                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Snapshot generated</div><div className="mt-1 font-semibold">{relativeTime(healthData.generated_at)}</div><div className="text-[var(--color-ink-muted)]">{new Date(healthData.generated_at).toLocaleTimeString()}</div></div>
+              </div>
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <div>
+                  <div className="mb-2 text-xs font-semibold">Missing operator outcomes</div>
+                  {missingOutcomes.length === 0 ? <div className="text-xs text-[var(--color-ink-muted)]">No intent kinds reported.</div> : <div className="space-y-1">{missingOutcomes.map(([kind, count]) => <div key={kind} className="flex items-center justify-between text-xs"><span className="font-mono">{kind}</span><span className={`badge ${count > 0 ? 'badge-danger' : 'badge-success'}`}>{count}</span></div>)}</div>}
+                </div>
+                <div>
+                  <div className="mb-2 text-xs font-semibold">Trace completeness by action kind</div>
+                  {Object.entries(healthData.trace_id_completeness_ratio).length === 0 ? <div className="text-xs text-[var(--color-ink-muted)]">No operator action kinds reported.</div> : <div className="space-y-1">{Object.entries(healthData.trace_id_completeness_ratio).map(([kind, ratio]) => <div key={kind} className="flex items-center justify-between text-xs"><span className="font-mono">{kind}</span><span className={`badge ${ratio < 1 ? 'badge-warning' : 'badge-success'}`}>{(ratio * 100).toFixed(1)}%</span></div>)}</div>}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </SectionCard>
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
@@ -219,6 +341,10 @@ export default function IncidentCenterPage() {
             </div>
           </div>
         </SectionCard>
+      </div>
+
+      <div className="mt-6">
+        <FleetEventStream />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

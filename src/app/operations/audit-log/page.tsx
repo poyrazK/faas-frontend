@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import {
   searchObsAuditLog,
   listObsEvents,
+  listGlobalAuditLog,
   type GlobalAuditLogEntry,
   type ObsEventRow,
 } from '@/lib/api';
@@ -13,7 +14,7 @@ import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
 
-type LogView = 'audit' | 'events';
+type LogView = 'audit' | 'events' | 'global';
 
 export default function GlobalAuditLogPage() {
   const [view, setView] = useState<LogView>('audit');
@@ -50,6 +51,11 @@ export default function GlobalAuditLogPage() {
     15000,
   );
 
+  // 3. Append-only global audit feed. This is intentionally kept as a
+  // separate view because it has cursor pagination but no server-side
+  // filtering contract like the newer observability search endpoint.
+  const globalQuery = useAsync(() => listGlobalAuditLog(150), [], 30000);
+
   const filteredAudit = (auditQuery.data?.items || []).filter((entry: GlobalAuditLogEntry) => {
     if (!search.trim()) return true;
     const s = search.toLowerCase();
@@ -71,9 +77,23 @@ export default function GlobalAuditLogPage() {
     );
   });
 
+  const filteredGlobal = (globalQuery.data?.items || []).filter((entry: GlobalAuditLogEntry) => {
+    const text = search.trim().toLowerCase();
+    return (
+      (!text || entry.kind.toLowerCase().includes(text) || entry.actor.toLowerCase().includes(text) ||
+        (entry.account_id && entry.account_id.toLowerCase().includes(text)) ||
+        (entry.subject && entry.subject.toLowerCase().includes(text))) &&
+      (!actorEmail.trim() || entry.actor.toLowerCase().includes(actorEmail.trim().toLowerCase())) &&
+      (!targetAccountId.trim() || entry.account_id === targetAccountId.trim() || entry.subject === targetAccountId.trim()) &&
+      (!kindPrefix.trim() || entry.kind.startsWith(kindPrefix.trim())) &&
+      (!operatorOnly || entry.kind.startsWith('operator.'))
+    );
+  });
+
   const handleRefresh = () => {
     if (view === 'audit') auditQuery.reload();
-    else eventsQuery.reload();
+    else if (view === 'events') eventsQuery.reload();
+    else globalQuery.reload();
   };
 
   return (
@@ -113,6 +133,18 @@ export default function GlobalAuditLogPage() {
         >
           <Icon name="bolt" size={14} />
           <span>Live Diagnostic Events (/v1/admin/obs/events)</span>
+        </button>
+
+        <button
+          onClick={() => setView('global')}
+          className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+            view === 'global'
+              ? 'bg-[var(--color-brand)] text-white'
+              : 'text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-subtle)]'
+          }`}
+        >
+          <Icon name="invoices" size={14} />
+          <span>Append-only Global Feed (/v1/audit-log/all)</span>
         </button>
       </div>
 
@@ -241,7 +273,7 @@ export default function GlobalAuditLogPage() {
             </div>
           )}
         </SectionCard>
-      ) : (
+      ) : view === 'events' ? (
         <SectionCard title="Live Diagnostic Events Stream">
           {eventsQuery.loading && !eventsQuery.data ? (
             <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
@@ -292,6 +324,39 @@ export default function GlobalAuditLogPage() {
                           '—'
                         )}
                       </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+      ) : (
+        <SectionCard title="Append-only Global Audit Feed">
+          <div className="border-b border-[var(--color-line)] p-4 text-xs text-[var(--color-ink-muted)]">
+            Direct view of the operator-only global audit endpoint. Filters are applied to the loaded page because this legacy contract exposes cursor pagination rather than search parameters.
+          </div>
+          {globalQuery.loading && !globalQuery.data ? (
+            <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading append-only audit feed…</div>
+          ) : globalQuery.error ? (
+            <div className="p-8 text-center text-sm text-[var(--color-danger)]">{globalQuery.error.message || 'Could not load the global audit feed.'}</div>
+          ) : filteredGlobal.length === 0 ? (
+            <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">No global audit entries match the current filters.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] font-medium text-[var(--color-ink-muted)]">
+                  <tr><th className="px-4 py-3">Timestamp</th><th className="px-4 py-3">Action Kind</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Target Account</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Payload Data</th></tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-line)]">
+                  {filteredGlobal.map((entry) => (
+                    <tr key={entry.id} className="hover:bg-[var(--color-surface-subtle)]">
+                      <td className="px-4 py-3 font-mono"><div>{new Date(entry.at).toLocaleTimeString()}</div><div className="text-[11px] text-[var(--color-ink-muted)]">{relativeTime(entry.at)}</div></td>
+                      <td className="px-4 py-3 font-mono font-semibold text-[var(--color-brand-bright)]">{entry.kind}</td>
+                      <td className="px-4 py-3 font-mono">{entry.actor}</td>
+                      <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.account_id ? <Mono>{entry.account_id.slice(0, 13)}…</Mono> : 'Anonymous'}</td>
+                      <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.subject || '—'}</td>
+                      <td className="px-4 py-3 font-mono text-[11px]"><span className="block max-w-xs truncate text-[var(--color-ink-muted)]">{entry.data && Object.keys(entry.data).length > 0 ? JSON.stringify(entry.data) : '—'}</span></td>
                     </tr>
                   ))}
                 </tbody>

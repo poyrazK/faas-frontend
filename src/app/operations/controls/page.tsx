@@ -3,11 +3,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   forceParkInstance,
+  forceRestartInstance,
   forceColdBootApp,
   sweepStuckBuilds,
   getOperatorIntent,
   getObsBuilderHeartbeats,
   getRekeyProgress,
+  setGithubWebhookSecret,
   type ObsBuilderHeartbeatListResponse,
   type RekeyProgressResponse,
   type SweepStuckBuildsResponse,
@@ -43,6 +45,12 @@ export default function OperatorControlsPage() {
   const [parkLoading, setParkLoading] = useState(false);
   const [parkFeedback, setParkFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
+  // Form states: Force Restart
+  const [restartInstanceId, setRestartInstanceId] = useState('');
+  const [restartReason, setRestartReason] = useState('operator_force_restart');
+  const [restartLoading, setRestartLoading] = useState(false);
+  const [restartFeedback, setRestartFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+
   // Form states: Force Cold Boot
   const [bootSlug, setBootSlug] = useState('');
   const [bootReason, setBootReason] = useState('operator_force_cold_boot');
@@ -55,6 +63,12 @@ export default function OperatorControlsPage() {
   const [sweepLoading, setSweepLoading] = useState(false);
   const [sweepResult, setSweepResult] = useState<SweepStuckBuildsResponse | null>(null);
   const [sweepError, setSweepError] = useState<string | null>(null);
+
+  // Form states: GitHub webhook secret rotation
+  const [installationId, setInstallationId] = useState('');
+  const [webhookSecretHex, setWebhookSecretHex] = useState('');
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [webhookFeedback, setWebhookFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Poll pending intents
   useEffect(() => {
@@ -151,6 +165,36 @@ export default function OperatorControlsPage() {
     }
   };
 
+  const handleForceRestart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restartInstanceId.trim()) return;
+    if (!window.confirm('Force-restart this running microVM? Its current process will be terminated and the next wake will cold-boot.')) return;
+    setRestartLoading(true);
+    setRestartFeedback(null);
+    try {
+      const res = await forceRestartInstance(restartInstanceId.trim(), restartReason.trim());
+      setRestartFeedback({
+        ok: true,
+        msg: `Intent enqueued (ID: ${res.intent_id}). The running microVM will be terminated and cold-booted on its next wake.`,
+      });
+      setActiveIntents((prev) => [
+        {
+          intentId: res.intent_id,
+          kind: 'force_restart',
+          targetId: restartInstanceId.trim(),
+          status: 'pending',
+          requestedAt: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+      setRestartInstanceId('');
+    } catch (err) {
+      setRestartFeedback({ ok: false, msg: (err as Error).message });
+    } finally {
+      setRestartLoading(false);
+    }
+  };
+
   const handleSweepBuilds = async (e: React.FormEvent) => {
     e.preventDefault();
     setSweepLoading(true);
@@ -164,6 +208,34 @@ export default function OperatorControlsPage() {
       setSweepError((err as Error).message);
     } finally {
       setSweepLoading(false);
+    }
+  };
+
+  const handleWebhookSecret = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedInstallationId = Number(installationId.trim());
+    const secret = webhookSecretHex.trim();
+    if (!Number.isSafeInteger(parsedInstallationId) || parsedInstallationId <= 0) {
+      setWebhookFeedback({ ok: false, msg: 'Installation ID must be a positive integer.' });
+      return;
+    }
+    if (!/^[0-9a-fA-F]{32,128}$/.test(secret)) {
+      setWebhookFeedback({ ok: false, msg: 'Secret must be 32–128 hexadecimal characters (16–64 bytes).' });
+      return;
+    }
+    setWebhookLoading(true);
+    setWebhookFeedback(null);
+    try {
+      const res = await setGithubWebhookSecret(parsedInstallationId, secret);
+      setWebhookFeedback({
+        ok: true,
+        msg: `Secret rotated for installation ${res.installation_id} at ${new Date(res.upgraded_at).toLocaleString()}.`,
+      });
+      setWebhookSecretHex('');
+    } catch (err) {
+      setWebhookFeedback({ ok: false, msg: (err as Error).message });
+    } finally {
+      setWebhookLoading(false);
     }
   };
 
@@ -284,6 +356,66 @@ export default function OperatorControlsPage() {
           </form>
         </SectionCard>
 
+        {/* Force-Restart Live MicroVM */}
+        <SectionCard
+          title={
+            <div className="flex items-center gap-2">
+              <Icon name="refresh" size={16} className="text-[var(--color-danger)]" />
+              <span>Force-Restart Live MicroVM</span>
+            </div>
+          }
+        >
+          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
+            Terminates a running microVM and marks its snapshots stale so the next wake performs a clean cold boot.
+            Requires an instance currently in the RUNNING state.
+          </div>
+          <form onSubmit={handleForceRestart} className="border-t border-[var(--color-line)] p-4 space-y-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold">Instance UUID</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
+                value={restartInstanceId}
+                onChange={(e) => setRestartInstanceId(e.target.value)}
+                className="field field-sm w-full font-mono text-xs"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold">Reason Token (a-z0-9_)</label>
+              <input
+                type="text"
+                required
+                pattern="^[a-z0-9_]{1,64}$"
+                placeholder="operator_force_restart"
+                value={restartReason}
+                onChange={(e) => setRestartReason(e.target.value)}
+                className="field field-sm w-full font-mono text-xs"
+              />
+            </div>
+            {restartFeedback && (
+              <div
+                className={`rounded p-2 text-xs ${
+                  restartFeedback.ok
+                    ? 'bg-[var(--color-surface-subtle)] text-[var(--color-brand-bright)]'
+                    : 'bg-[var(--color-danger-subtle)] text-[var(--color-danger)]'
+                }`}
+              >
+                {restartFeedback.msg}
+              </div>
+            )}
+            <div className="flex justify-end pt-1">
+              <button
+                type="submit"
+                disabled={restartLoading || !restartInstanceId.trim()}
+                className="btn btn-danger btn-sm"
+              >
+                {restartLoading ? 'Dispatching…' : 'Confirm Force Restart'}
+              </button>
+            </div>
+          </form>
+        </SectionCard>
+
         {/* Force Cold Boot Next Wake */}
         <SectionCard
           title={
@@ -342,6 +474,61 @@ export default function OperatorControlsPage() {
               </button>
             </div>
           </form>
+        </SectionCard>
+      </div>
+
+      {/* GitHub webhook secret rotation */}
+      <div className="mt-6">
+        <SectionCard
+          title={
+            <div className="flex items-center gap-2">
+              <Icon name="keys" size={16} className="text-[var(--color-ink)]" />
+              <span>Rotate GitHub Webhook Secret</span>
+            </div>
+          }
+        >
+          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
+            Replaces the encrypted webhook secret for one GitHub App installation. The secret is accepted only as
+            32–128 hexadecimal characters and is never shown again after submission.
+          </div>
+          <form onSubmit={handleWebhookSecret} className="grid gap-4 border-t border-[var(--color-line)] p-4 md:grid-cols-[220px_1fr_auto] md:items-end">
+            <label className="text-xs">
+              <span className="font-semibold">Installation ID</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                required
+                placeholder="e.g. 12345678"
+                value={installationId}
+                onChange={(e) => setInstallationId(e.target.value)}
+                className="field field-sm mt-1 w-full font-mono text-xs"
+              />
+            </label>
+            <label className="text-xs">
+              <span className="font-semibold">New secret (hex)</span>
+              <input
+                type="password"
+                required
+                minLength={32}
+                maxLength={128}
+                pattern="^[0-9a-fA-F]{32,128}$"
+                placeholder="32–128 hexadecimal characters"
+                value={webhookSecretHex}
+                onChange={(e) => setWebhookSecretHex(e.target.value)}
+                className="field field-sm mt-1 w-full font-mono text-xs"
+                autoComplete="new-password"
+              />
+            </label>
+            <button type="submit" disabled={webhookLoading} className="btn btn-secondary btn-sm">
+              {webhookLoading ? 'Rotating…' : 'Rotate Secret'}
+            </button>
+          </form>
+          {webhookFeedback && (
+            <div className={`border-t border-[var(--color-line)] p-4 text-xs ${webhookFeedback.ok ? 'text-[var(--color-brand-bright)]' : 'text-[var(--color-danger)]'}`}>
+              {webhookFeedback.msg}
+            </div>
+          )}
         </SectionCard>
       </div>
 
