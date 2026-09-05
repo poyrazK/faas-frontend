@@ -5,14 +5,14 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { requestPasswordReset, PASSWORD_MIN_LENGTH, ApiError } from '@/lib/api';
+import { requestPasswordReset, ApiError } from '@/lib/api';
 import { Spinner } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
 
-type Mode = 'signin' | 'signup' | 'forgot';
+type Mode = 'signin' | 'forgot';
 
 function OperationsLoginInner() {
-  const { account, loading, signIn, signUp } = useAuth();
+  const { account, loading, signIn } = useAuth();
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get('next') || '/operations/overview';
@@ -27,8 +27,6 @@ function OperationsLoginInner() {
   useEffect(() => {
     if (!loading && account) router.replace(next);
   }, [loading, account, next, router]);
-
-  const tooShort = mode === 'signup' && password.length > 0 && password.length < PASSWORD_MIN_LENGTH;
 
   function switchMode(m: Mode) {
     setMode(m);
@@ -50,7 +48,7 @@ function OperationsLoginInner() {
         return;
       }
 
-      const acct = mode === 'signup' ? await signUp(email.trim(), password) : await signIn(email.trim(), password);
+      const acct = await signIn(email.trim(), password);
 
       if (acct) {
         router.replace(next);
@@ -63,26 +61,17 @@ function OperationsLoginInner() {
       setMessage(
         err instanceof ApiError
           ? err.message
-          : mode === 'signup'
-            ? 'Could not create operator account. Please try again.'
-            : 'Sign-in failed. Operator access requires registration in FAAS_ADMIN_EMAILS.',
+          : 'Sign-in failed. Operator access requires registration in FAAS_ADMIN_EMAILS.',
       );
     }
   }
 
-  const heading =
-    mode === 'signup'
-      ? 'Create operator account'
-      : mode === 'forgot'
-        ? 'Reset operator password'
-        : 'Sign in to Operations';
+  const heading = mode === 'forgot' ? 'Reset operator password' : 'Sign in to Operations';
 
   const blurb =
-    mode === 'signup'
-      ? `Pick a password of at least ${PASSWORD_MIN_LENGTH} characters.`
-      : mode === 'forgot'
-        ? 'Enter your operator email and we’ll send a reset link.'
-        : 'Access is restricted to authorized addresses listed in FAAS_ADMIN_EMAILS.';
+    mode === 'forgot'
+      ? 'Enter your operator email and we’ll send a reset link.'
+      : 'Access is restricted to authorized addresses listed in FAAS_ADMIN_EMAILS.';
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -149,12 +138,11 @@ function OperationsLoginInner() {
                     id="password"
                     name="password"
                     type={showPassword ? 'text' : 'password'}
-                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                    autoComplete="current-password"
                     className="field"
                     style={{ paddingRight: '2.5rem' }}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    minLength={mode === 'signup' ? PASSWORD_MIN_LENGTH : undefined}
                     maxLength={256}
                     required
                   />
@@ -168,33 +156,22 @@ function OperationsLoginInner() {
                     <Icon name={showPassword ? 'x' : 'user'} size={15} />
                   </button>
                 </div>
-                {mode === 'signup' && (
-                  <p className="mt-1 text-xs" style={{ color: tooShort ? 'var(--color-warn)' : 'var(--color-ink-muted)' }}>
-                    {tooShort
-                      ? `${PASSWORD_MIN_LENGTH - password.length} more character${PASSWORD_MIN_LENGTH - password.length === 1 ? '' : 's'} needed`
-                      : `At least ${PASSWORD_MIN_LENGTH} characters.`}
-                  </p>
-                )}
               </div>
             )}
 
             <button
               type="submit"
               className="btn btn-primary w-full"
-              disabled={status === 'submitting' || tooShort}
+              disabled={status === 'submitting'}
             >
               {status === 'submitting' ? <Spinner size={15} /> : null}
               {status === 'submitting'
-                ? mode === 'signup'
-                  ? 'Creating operator account…'
-                  : mode === 'forgot'
-                    ? 'Sending…'
-                    : 'Signing in…'
-                : mode === 'signup'
-                  ? 'Create operator account'
-                  : mode === 'forgot'
-                    ? 'Send reset link'
-                    : 'Sign in to Operations'}
+                ? mode === 'forgot'
+                  ? 'Sending…'
+                  : 'Signing in…'
+                : mode === 'forgot'
+                  ? 'Send reset link'
+                  : 'Sign in to Operations'}
             </button>
           </form>
 
@@ -212,30 +189,6 @@ function OperationsLoginInner() {
           )}
 
           <div className="mt-6 text-center text-xs" style={{ color: 'var(--color-ink-muted)' }}>
-            {mode === 'signin' && (
-              <span>
-                First-time operator setup?{' '}
-                <button
-                  type="button"
-                  onClick={() => switchMode('signup')}
-                  className="font-semibold text-[var(--color-brand-bright)] hover:underline"
-                >
-                  Create account
-                </button>
-              </span>
-            )}
-            {mode === 'signup' && (
-              <span>
-                Already have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => switchMode('signin')}
-                  className="font-semibold text-[var(--color-brand-bright)] hover:underline"
-                >
-                  Sign in
-                </button>
-              </span>
-            )}
             {mode === 'forgot' && (
               <span>
                 Remembered your password?{' '}
