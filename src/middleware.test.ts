@@ -25,6 +25,13 @@ describe('operations host boundary', () => {
     );
   });
 
+  it('passes backend API requests through for Next rewrites', () => {
+    const response = middleware(request('/v1/account'));
+
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('x-middleware-rewrite')).toBeNull();
+  });
+
   it('does not expose legacy customer dashboard routes', () => {
     const response = middleware(request('/dashboard/apps'));
 
