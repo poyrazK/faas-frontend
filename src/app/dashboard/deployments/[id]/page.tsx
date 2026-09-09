@@ -14,12 +14,14 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import {
-  getDeployment, listApps, getBuildProvenance, getBuildSbom, deploymentLogsUrl, ApiError,
+  getDeployment, listApps, getBuildProvenance, getBuildSbom, getAppDeploymentSummary,
+  deploymentLogsUrl, rollbackApp, ApiError,
+  type DeploymentSummaryResponse,
 } from '@/lib/api';
-import { useAsync } from '@/lib/useAsync';
+import { useAsync, type AsyncState } from '@/lib/useAsync';
 import { PageHeader, StatusBadge, Mono, CopyButton } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
-import { AsyncBoundary, EmptyState, SkeletonBlock } from '@/components/ui/States';
+import { AsyncBoundary, EmptyState, ErrorState, SkeletonBlock } from '@/components/ui/States';
 import { LogStream } from '@/components/LogStream';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
@@ -34,12 +36,42 @@ function isTerminal(status: string): boolean {
 export default function DeploymentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [tab, setTab] = useState<Tab>('Build log');
+  const [rollbackBusy, setRollbackBusy] = useState(false);
+  const [rollbackMessage, setRollbackMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   const deployment = useAsync(() => getDeployment(id), [id]);
   const apps = useAsync(listApps, []);
 
   const slug = apps.data?.find((a) => a.id === deployment.data?.app_id)?.slug;
   const running = deployment.data ? !isTerminal(deployment.data.status) : false;
+  const releaseSummary = useAsync<DeploymentSummaryResponse | null>(
+    () => (slug ? getAppDeploymentSummary(slug, id) : Promise.resolve(null)),
+    [slug, id],
+  );
+
+  async function rollbackTo(targetDeploymentId: string) {
+    if (!slug || rollbackBusy) return;
+    if (!window.confirm(`Roll back ${slug} to deployment ${targetDeploymentId.slice(0, 12)}?`)) return;
+
+    setRollbackBusy(true);
+    setRollbackMessage(null);
+    try {
+      const created = await rollbackApp(slug, targetDeploymentId);
+      setRollbackMessage({
+        kind: 'success',
+        text: `Rollback queued as deployment ${created.id.slice(0, 12)}.`,
+      });
+      releaseSummary.reload();
+      deployment.reload();
+    } catch (err) {
+      setRollbackMessage({
+        kind: 'error',
+        text: err instanceof ApiError ? err.message : 'Rollback could not be queued.',
+      });
+    } finally {
+      setRollbackBusy(false);
+    }
+  }
 
   return (
     <div>
@@ -115,6 +147,13 @@ export default function DeploymentDetailPage() {
               )}
             </SectionCard>
 
+            <ReleaseCockpit
+              state={releaseSummary}
+              onRollback={rollbackTo}
+              rollbackBusy={rollbackBusy}
+              rollbackMessage={rollbackMessage}
+            />
+
             {/* Tabs */}
             <div className="mb-5 mt-6 flex gap-1 overflow-x-auto" style={{ borderBottom: '1px solid var(--color-line)' }}>
               {(['Build log', 'Provenance', 'SBOM'] as Tab[]).map((t) => (
@@ -154,6 +193,133 @@ export default function DeploymentDetailPage() {
       </AsyncBoundary>
     </div>
   );
+}
+
+function ReleaseCockpit({
+  state,
+  onRollback,
+  rollbackBusy,
+  rollbackMessage,
+}: {
+  state: AsyncState<DeploymentSummaryResponse | null>;
+  onRollback: (targetDeploymentId: string) => void;
+  rollbackBusy: boolean;
+  rollbackMessage: { kind: 'success' | 'error'; text: string } | null;
+}) {
+  if (state.loading && state.data === null) {
+    return (
+      <SectionCard title="Release cockpit" className="mt-5">
+        <SkeletonBlock height={190} />
+      </SectionCard>
+    );
+  }
+
+  if (state.error) {
+    return (
+      <div className="card mt-5">
+        <ErrorState error={state.error} onRetry={state.reload} />
+      </div>
+    );
+  }
+
+  if (!state.data) return null;
+
+  const { previous, changes, rollback_target_id: rollbackTargetID } = state.data;
+  return (
+    <SectionCard title="Release cockpit" className="mt-5">
+      <div className="grid grid-cols-1 gap-4 px-5 py-5 text-sm sm:grid-cols-2">
+        <Field k="Current release" v={<Mono>{state.data.deployment.id.slice(0, 12)}</Mono>} />
+        <Field
+          k="Previous release"
+          v={
+            previous ? (
+              <Link href={`/dashboard/deployments/${previous.id}`} style={{ color: 'var(--color-brand)' }}>
+                <Mono>{previous.id.slice(0, 12)}</Mono>
+              </Link>
+            ) : (
+              <span style={{ color: 'var(--color-ink-muted)' }}>Initial release</span>
+            )
+          }
+        />
+      </div>
+
+      {previous && changes.length > 0 ? (
+        <div className="overflow-x-auto border-t" style={{ borderColor: 'var(--color-line)' }}>
+          <table className="dtable">
+            <thead>
+              <tr><th>Changed field</th><th>Before</th><th>After</th></tr>
+            </thead>
+            <tbody>
+              {changes.map((change) => (
+                <tr key={change.field}>
+                  <td className="cell-primary"><Mono>{change.field}</Mono></td>
+                  <td className="max-w-xs break-all text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+                    {formatChangeValue(change.before)}
+                  </td>
+                  <td className="max-w-xs break-all text-xs">{formatChangeValue(change.after)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="border-t px-5 py-4 text-sm" style={{ borderColor: 'var(--color-line)', color: 'var(--color-ink-muted)' }}>
+          {previous ? 'No non-secret release fields changed.' : 'There is no earlier release to compare.'}
+        </div>
+      )}
+
+      <div className="border-t px-5 py-4" style={{ borderColor: 'var(--color-line)' }}>
+        {rollbackTargetID ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-medium" style={{ color: 'var(--color-ink-muted)' }}>
+                Eligible rollback target
+              </div>
+              <Link href={`/dashboard/deployments/${rollbackTargetID}`} style={{ color: 'var(--color-brand)' }}>
+                <Mono>{rollbackTargetID.slice(0, 12)}</Mono>
+              </Link>
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              disabled={rollbackBusy}
+              onClick={() => onRollback(rollbackTargetID)}
+            >
+              {rollbackBusy ? 'Rolling back…' : 'Roll back to target'}
+            </button>
+          </div>
+        ) : (
+          <p className="m-0 text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+            No eligible rollback target for this release.
+          </p>
+        )}
+        {rollbackMessage && (
+          <div
+            className="mt-3 rounded-lg px-3 py-2 text-sm"
+            role={rollbackMessage.kind === 'error' ? 'alert' : 'status'}
+            style={
+              rollbackMessage.kind === 'error'
+                ? { background: '#fdf1f1', color: '#b91c1c', border: '1px solid #f5d5d5' }
+                : { background: '#eefbf3', color: '#16713b', border: '1px solid #c9efd6' }
+            }
+          >
+            {rollbackMessage.text}
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+function formatChangeValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '[unserializable]';
+    }
+  }
+  return String(value);
 }
 
 /* ─────────────────────────────── Provenance ────────────────────────────── */

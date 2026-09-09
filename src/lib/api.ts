@@ -73,6 +73,33 @@ export interface Deployment {
   error?: string | null;
   error_code?: string | null;
   created_at: string;
+  stage_state?: Record<string, unknown>;
+  source_url?: string | null;
+  commit_sha?: string | null;
+  source_root?: string;
+  scope?: string | null;
+  build_plan?: Record<string, unknown> | null;
+  min_instances?: number;
+  traffic_percent?: number;
+  has_overrides?: boolean;
+  canary_preset?: string;
+  rollback_on_5xx?: boolean;
+  rollout_state?: string;
+}
+
+/** One non-secret release field that changed from the previous deployment. */
+export interface DeploymentChange {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
+/** App-scoped release cockpit returned by the deployment summary endpoint. */
+export interface DeploymentSummaryResponse {
+  deployment: Deployment;
+  previous?: Deployment | null;
+  changes: DeploymentChange[];
+  rollback_target_id?: string | null;
 }
 
 export interface DeploymentList {
@@ -780,8 +807,20 @@ export const parkApp = (slug: string) =>
 export const wakeApp = (slug: string) =>
   request<Instance>(`/v1/apps/${slug}/wake`, { method: 'POST' });
 
-export const rollbackApp = (slug: string) =>
-  request<Deployment>(`/v1/apps/${slug}/rollback`, { method: 'POST' });
+/** Roll back to the latest eligible deployment or to an explicit target. */
+export const rollbackApp = (slug: string, targetDeploymentId?: string) => {
+  const idempotencyKey =
+    typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `rollback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return request<Deployment>(`/v1/apps/${slug}/rollback`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    ...(targetDeploymentId
+      ? { body: JSON.stringify({ target_deployment_id: targetDeploymentId }) }
+      : {}),
+  });
+};
 
 export const listInstances = (slug: string) =>
   request<Instance[]>(`/v1/apps/${slug}/instances`, { cache: 'no-store' });
@@ -907,6 +946,9 @@ export const listInvoices = (limit = 25, before?: string, month?: string) => {
 export const listDeployments = () => request<DeploymentList>('/v1/deployments', { cache: 'no-store' });
 
 export const getDeployment = (id: string) => request<Deployment>(`/v1/deployments/${id}`);
+
+export const getAppDeploymentSummary = (slug: string, id: string) =>
+  request<DeploymentSummaryResponse>(`/v1/apps/${slug}/deployments/${id}/summary`, { cache: 'no-store' });
 
 export const listAppDeployments = (slug: string) =>
   request<DeploymentList>(`/v1/apps/${slug}/deployments`, { cache: 'no-store' });
