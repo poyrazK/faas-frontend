@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   searchObsAuditLog,
   listObsEvents,
@@ -23,6 +23,28 @@ export default function GlobalAuditLogPage() {
   const [targetAccountId, setTargetAccountId] = useState('');
   const [operatorOnly, setOperatorOnly] = useState(false);
   const [kindPrefix, setKindPrefix] = useState('');
+  const [olderAudit, setOlderAudit] = useState<GlobalAuditLogEntry[]>([]);
+  const [olderAuditFilterKey, setOlderAuditFilterKey] = useState<string | null>(null);
+  const [nextBefore, setNextBefore] = useState<string | null>(null);
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [olderError, setOlderError] = useState<Error | null>(null);
+  const [olderErrorFilterKey, setOlderErrorFilterKey] = useState<string | null>(null);
+  const [olderGlobal, setOlderGlobal] = useState<GlobalAuditLogEntry[]>([]);
+  const [globalNextBefore, setGlobalNextBefore] = useState<string | null>(null);
+  const [globalPageLoaded, setGlobalPageLoaded] = useState(false);
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [globalError, setGlobalError] = useState<Error | null>(null);
+  const auditFilterKey = [
+    actorEmail.trim(),
+    targetAccountId.trim(),
+    operatorOnly ? 'true' : 'false',
+    kindPrefix.trim(),
+  ].join('\u0000');
+  const auditFilterKeyRef = useRef(auditFilterKey);
+
+  useEffect(() => {
+    auditFilterKeyRef.current = auditFilterKey;
+  }, [auditFilterKey]);
 
   // 1. Audit log search query
   const auditQuery = useAsync(
@@ -33,7 +55,7 @@ export default function GlobalAuditLogPage() {
         target_account_id: targetAccountId.trim() || undefined,
         operator_only: operatorOnly ? true : undefined,
         kind_prefix: kindPrefix.trim() || undefined,
-      }),
+    }),
     [actorEmail, targetAccountId, operatorOnly, kindPrefix],
     20000,
   );
@@ -56,16 +78,30 @@ export default function GlobalAuditLogPage() {
   // filtering contract like the newer observability search endpoint.
   const globalQuery = useAsync(() => listGlobalAuditLog(150), [], 30000);
 
-  const filteredAudit = (auditQuery.data?.items || []).filter((entry: GlobalAuditLogEntry) => {
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (
-      entry.kind.toLowerCase().includes(s) ||
-      entry.actor.toLowerCase().includes(s) ||
-      (entry.account_id && entry.account_id.toLowerCase().includes(s)) ||
-      (entry.subject && entry.subject.toLowerCase().includes(s))
-    );
-  });
+  const auditCursor =
+    olderAuditFilterKey === auditFilterKey
+      ? nextBefore
+      : (auditQuery.data?.next_before ?? null);
+  const globalCursor = globalPageLoaded
+    ? globalNextBefore
+    : (globalQuery.data?.next_before ?? null);
+
+  const visibleOlderAudit = olderAuditFilterKey === auditFilterKey ? olderAudit : [];
+  const visibleOlderError = olderErrorFilterKey === auditFilterKey ? olderError : null;
+  const filteredAudit = [...(auditQuery.data?.items || []), ...visibleOlderAudit]
+    .filter((entry: GlobalAuditLogEntry, index, rows) =>
+      rows.findIndex((candidate) => candidate.id === entry.id) === index,
+    )
+    .filter((entry: GlobalAuditLogEntry) => {
+      if (!search.trim()) return true;
+      const s = search.toLowerCase();
+      return (
+        entry.kind.toLowerCase().includes(s) ||
+        entry.actor.toLowerCase().includes(s) ||
+        (entry.account_id && entry.account_id.toLowerCase().includes(s)) ||
+        (entry.subject && entry.subject.toLowerCase().includes(s))
+      );
+    });
 
   const filteredEvents = (eventsQuery.data?.items || []).filter((event: ObsEventRow) => {
     if (!search.trim()) return true;
@@ -77,7 +113,11 @@ export default function GlobalAuditLogPage() {
     );
   });
 
-  const filteredGlobal = (globalQuery.data?.items || []).filter((entry: GlobalAuditLogEntry) => {
+  const filteredGlobal = [...(globalQuery.data?.items || []), ...olderGlobal]
+    .filter((entry: GlobalAuditLogEntry, index, rows) =>
+      rows.findIndex((candidate) => candidate.id === entry.id) === index,
+    )
+    .filter((entry: GlobalAuditLogEntry) => {
     const text = search.trim().toLowerCase();
     return (
       (!text || entry.kind.toLowerCase().includes(text) || entry.actor.toLowerCase().includes(text) ||
@@ -88,12 +128,71 @@ export default function GlobalAuditLogPage() {
       (!kindPrefix.trim() || entry.kind.startsWith(kindPrefix.trim())) &&
       (!operatorOnly || entry.kind.startsWith('operator.'))
     );
-  });
+    });
+
+  const loadOlderAudit = async () => {
+    const cursor = auditCursor;
+    if (!cursor || olderLoading) return;
+    const filterKeyAtStart = auditFilterKey;
+    setOlderLoading(true);
+    setOlderError(null);
+    try {
+      const page = await searchObsAuditLog({
+        before: cursor,
+        limit: 150,
+        actor_email: actorEmail.trim() || undefined,
+        target_account_id: targetAccountId.trim() || undefined,
+        operator_only: operatorOnly ? true : undefined,
+        kind_prefix: kindPrefix.trim() || undefined,
+      });
+      if (auditFilterKeyRef.current === filterKeyAtStart) {
+        setOlderAudit((current) => [...current, ...(page.items || [])]);
+        setOlderAuditFilterKey(filterKeyAtStart);
+        setNextBefore(page.next_before ?? null);
+      }
+    } catch (err) {
+      if (auditFilterKeyRef.current === filterKeyAtStart) {
+        setOlderErrorFilterKey(filterKeyAtStart);
+        setOlderError(err instanceof Error ? err : new Error('Could not load older audit records.'));
+      }
+    } finally {
+      setOlderLoading(false);
+    }
+  };
+
+  const loadOlderGlobal = async () => {
+    const cursor = globalCursor;
+    if (!cursor || globalLoading) return;
+    setGlobalLoading(true);
+    setGlobalError(null);
+    try {
+      const page = await listGlobalAuditLog(150, cursor);
+      setOlderGlobal((current) => [...current, ...(page.items || [])]);
+      setGlobalNextBefore(page.next_before ?? null);
+      setGlobalPageLoaded(true);
+    } catch (err) {
+      setGlobalError(err instanceof Error ? err : new Error('Could not load older global audit records.'));
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
 
   const handleRefresh = () => {
-    if (view === 'audit') auditQuery.reload();
-    else if (view === 'events') eventsQuery.reload();
-    else globalQuery.reload();
+    if (view === 'audit') {
+      setOlderAudit([]);
+      setOlderAuditFilterKey(null);
+      setNextBefore(null);
+      setOlderError(null);
+      setOlderErrorFilterKey(null);
+      auditQuery.reload();
+    } else if (view === 'events') eventsQuery.reload();
+    else {
+      setOlderGlobal([]);
+      setGlobalNextBefore(null);
+      setGlobalPageLoaded(false);
+      setGlobalError(null);
+      globalQuery.reload();
+    }
   };
 
   return (
@@ -268,8 +367,27 @@ export default function GlobalAuditLogPage() {
                       </td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
+              </tbody>
+            </table>
+          </div>
+          )}
+          {visibleOlderError && (
+            <div className="flex flex-wrap items-center justify-center gap-3 border-t border-[var(--color-line)] p-4 text-sm text-[var(--color-danger)]">
+              <span role="alert">Could not load older audit records: {visibleOlderError.message}</span>
+              <button onClick={() => void loadOlderAudit()} className="btn btn-secondary btn-xs">
+                Retry
+              </button>
+            </div>
+          )}
+          {!auditQuery.loading && !auditQuery.error && auditCursor && (
+            <div className="flex justify-center border-t border-[var(--color-line)] p-4">
+              <button
+                onClick={() => void loadOlderAudit()}
+                disabled={olderLoading}
+                className="btn btn-secondary btn-sm"
+              >
+                {olderLoading ? 'Loading older events…' : 'Load older events'}
+              </button>
             </div>
           )}
         </SectionCard>
@@ -361,6 +479,25 @@ export default function GlobalAuditLogPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {globalError && (
+            <div className="flex flex-wrap items-center justify-center gap-3 border-t border-[var(--color-line)] p-4 text-sm text-[var(--color-danger)]">
+              <span role="alert">Could not load older global records: {globalError.message}</span>
+              <button onClick={() => void loadOlderGlobal()} className="btn btn-secondary btn-xs">
+                Retry
+              </button>
+            </div>
+          )}
+          {!globalQuery.loading && !globalQuery.error && globalCursor && (
+            <div className="flex justify-center border-t border-[var(--color-line)] p-4">
+              <button
+                onClick={() => void loadOlderGlobal()}
+                disabled={globalLoading}
+                className="btn btn-secondary btn-sm"
+              >
+                {globalLoading ? 'Loading older events…' : 'Load older events'}
+              </button>
             </div>
           )}
         </SectionCard>
