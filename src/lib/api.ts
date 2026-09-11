@@ -2117,6 +2117,7 @@ export interface ObsWakeLatencyResponse {
 
 export interface AuditLogSearchParams {
   since?: string;
+  before?: string;
   kind_prefix?: string;
   include_anon?: boolean;
   limit?: number;
@@ -2127,6 +2128,7 @@ export interface AuditLogSearchParams {
 
 export interface ObsAuditLogSearchResponse {
   items: GlobalAuditLogEntry[];
+  next_before?: string | null;
   total?: number;
   has_more?: boolean;
 }
@@ -2178,6 +2180,7 @@ export const getObsWakeLatencies = (windowHours = 24) =>
 export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
   const q = new URLSearchParams();
   if (params.since) q.set('since', params.since);
+  if (params.before) q.set('before', params.before);
   if (params.kind_prefix) q.set('kind_prefix', params.kind_prefix);
   if (params.include_anon !== undefined) q.set('include_anon', String(params.include_anon));
   if (params.limit) q.set('limit', String(params.limit));
