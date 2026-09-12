@@ -131,10 +131,22 @@ It is labelled a content preview, not a visual mock. Claiming pixel parity acros
 would be a lie, and the failure this guards against — wrong wording, wrong components, going
 out to every customer at once — is a content failure.
 
+### And the real page, after the fact
+
+Every published event carries a **"view on status page"** link to
+`/status/incidents/{public_id}` — the page customers actually read.
+
+This is deliberate compensation for what a content preview cannot show. One concrete example:
+the public list renders resolved incidents with `compact`, which hides the message entirely
+(`faas-web` `status-page.tsx:187, 308`) — it survives only on the detail page. No content
+preview would ever reveal that. The link gives true fidelity a moment later, and pairs with
+the append path: publish, look at the real thing, append a correction if it reads wrong.
+
 ## The lifecycle is append-only
 
-There is no edit and no delete in the API. An event is created, then updates accumulate, then
-a terminal state closes it. **A published mistake is permanent and public.**
+There is no edit, no delete and no PATCH on status events — verified against `#1864`'s
+OpenAPI. An event is created, then updates accumulate, then a terminal state closes it.
+**A published mistake is permanent and public.**
 
 The UI must not pretend otherwise:
 
@@ -143,6 +155,32 @@ The UI must not pretend otherwise:
   — rather than asking a generic "are you sure".
 - After publishing, the composer clears. A form still holding the text of something already
   public invites a double publish.
+- `cancelled` is the documented recovery path for an accidental publish, surfaced as such
+  rather than left as one state among eight. It closes the event; it does not unsay it.
+
+### Two of these are backend gaps, not virtues
+
+An earlier draft of this spec called the missing edit endpoint correct. That conflated two
+different things, and only one of them is correct:
+
+- **Deleting a published event** is correctly absent. Erasing an outage you admitted to is
+  dishonest, and no status page should offer it.
+- **Fixing the text of your own message** is not the same act, and every serious status page
+  supports it. Its absence is a gap.
+
+Two consequences follow, and both are worth raising on `#1864` while its contract is still
+open — a `PATCH` added now is far cheaper than one added after the shape ships:
+
+1. **Typos are permanent.** A title published at 02:14 with a spelling mistake stays on the
+   page customers refresh during an outage. The only recourse is a follow-up update reading
+   "correction: …", which makes the page look worse rather than better.
+2. **Component attribution can never be corrected.** `AdminStatusEventUpdateRequest` carries
+   only `{state, message}`, so the `components` array is frozen at creation. An event tagged
+   `networking` when it was `deployments` misattributes itself permanently, and customers
+   reasoning by component get a wrong answer forever.
+
+This UI stays append-only regardless, because it must match the API it has. The point of
+recording these here is so the constraint is understood as borrowed rather than chosen.
 
 ## Error handling
 
@@ -179,7 +217,9 @@ Vitest, beside the code, matching the repo's layout.
 - **Component health overrides.** Computed from telemetry; see the table above.
 - **Draft or scheduled-publish state.** The API has neither. Maintenance can be *scheduled*
   (`scheduled_start_at`), but the event itself publishes immediately.
-- **Deleting or editing published events.** No endpoint, and correctly so.
+- **Deleting or editing published events.** No endpoint exists. Deletion should stay absent;
+  message editing is a gap worth closing upstream (see above), but not something this UI can
+  work around.
 - **Templates for common maintenance.** Worth revisiting once there is evidence of repetition.
 - **A deep link from Incident Center.** Considered and deferred: it matches how the job goes —
   notice something in telemetry, then tell customers — but it is additive and can follow.
