@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import {
   ApiError,
+  appendAdminStatusUpdate,
   createAdminStatusEvent,
   getPublicStatusSnapshot,
   listAdminStatusEvents,
@@ -17,6 +18,7 @@ import {
   type StatusComponent,
   type StatusDraft,
   type StatusEventKind,
+  type StatusState,
 } from '@/lib/status-events';
 import { useToast } from '@/components/ui/Toast';
 import { useAsync } from '@/lib/useAsync';
@@ -35,7 +37,69 @@ import { relativeTime } from '@/lib/format';
  * suggests otherwise.
  */
 
-function EventRow({ event }: { event: AdminStatusEvent }) {
+const OPEN_STATES: StatusState[] = [
+  'investigating',
+  'identified',
+  'monitoring',
+  'in_progress',
+  'resolved',
+  'completed',
+  'cancelled',
+];
+
+function UpdateForm({ event, onPosted }: { event: AdminStatusEvent; onPosted: () => void }) {
+  const toast = useToast();
+  const [state, setState] = useState<StatusState>(event.state);
+  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function post() {
+    setSubmitting(true);
+    try {
+      await appendAdminStatusUpdate(event.public_id, { state, message: message.trim() });
+      toast.success(isTerminalState(state) ? 'Event closed.' : 'Update posted.');
+      setMessage('');
+      onPosted();
+    } catch (err) {
+      // The message stays in the box: it was written during an incident and
+      // must not be lost to a transient failure.
+      toast.error(err instanceof Error ? err.message : 'Posting the update failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-start gap-2 pt-2">
+      <select value={state} onChange={(e) => setState(e.currentTarget.value as StatusState)}>
+        {OPEN_STATES.map((s) => (
+          <option key={s} value={s}>
+            {s}
+            {isTerminalState(s) ? ' (closes)' : ''}
+          </option>
+        ))}
+      </select>
+      {state === 'cancelled' && (
+        // The only recovery for something published by mistake. It closes the
+        // event; it does not remove it, and the API offers nothing that would.
+        <p className="w-full text-xs text-[var(--color-ink-muted)]">
+          Cancelling closes this event on the status page. It stays visible in history.
+        </p>
+      )}
+      <input
+        className="flex-1"
+        value={message}
+        placeholder="What changed"
+        onChange={(e) => setMessage(e.currentTarget.value)}
+      />
+      <button type="button" disabled={submitting || !message.trim()} onClick={post}>
+        {submitting ? 'Posting…' : 'Post update'}
+      </button>
+    </div>
+  );
+}
+
+function EventRow({ event, onPosted }: { event: AdminStatusEvent; onPosted: () => void }) {
   const open = !isTerminalState(event.state);
   const latest = event.updates[event.updates.length - 1];
   return (
@@ -60,7 +124,7 @@ function EventRow({ event }: { event: AdminStatusEvent }) {
         </a>
       </div>
       {latest && <p className="text-xs text-[var(--color-ink-muted)]">{latest.message}</p>}
-      {open && <p className="text-xs text-[var(--color-ink-muted)]">Open — post an update below.</p>}
+      {open && <UpdateForm event={event} onPosted={onPosted} />}
     </li>
   );
 }
@@ -270,7 +334,7 @@ export default function StatusPage() {
           {(rows) => (
             <ul className="flex flex-col">
               {rows.map((event) => (
-                <EventRow key={event.public_id} event={event} />
+                <EventRow key={event.public_id} event={event} onPosted={events.reload} />
               ))}
             </ul>
           )}
