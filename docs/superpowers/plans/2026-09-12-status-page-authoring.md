@@ -167,8 +167,11 @@ Expected: FAIL — `Failed to resolve import "./status-events"`
    Status-page events — the decidable half.
 
    Everything here is pure so it can be tested: this repo's vitest runs in a
-   node environment over `src/**/*.test.ts` only, deliberately (see
-   vitest.config.ts). Components stay thin wiring over these functions.
+   node environment and collects only `.test.ts` files under src, deliberately
+   (see vitest.config.ts). Components stay thin wiring over these functions.
+
+   (Do not write the glob literally in this block comment — the `*` `/` pair
+   inside it terminates the comment and the file stops parsing.)
 
    Wire vocabulary is copied from faas/api/openapi.yaml (PR #1864), not
    inferred.
@@ -272,7 +275,7 @@ export function resolveComponentNames(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run src/lib/status-events.test.ts`
-Expected: PASS — 11 tests
+Expected: PASS — 10 tests
 
 - [ ] **Step 5: Commit**
 
