@@ -261,9 +261,10 @@ Vitest, beside the code, matching the repo's layout.
 
 ## Risks
 
-**The public page is still unmerged.** `faas-web#69` is open. Nothing here depends on it at
-runtime — both read the same API independently — but end-to-end verification needs all three
-deployed together.
+**The public page has landed.** `faas-web#69` merged 2026-09-12, so `gregale.dev/status`
+answers 200 and the "view on status page" link has a real destination. It is a client-rendered
+SPA, so an unknown incident id returns 200 with the not-found state rendered in the browser —
+worth knowing before reading that status code as a working link.
 
 **The publish path is unexercised from here.** `GET /v1/admin/status/incidents` returns 403
 for a session without operator scope, which is every session available during development.
