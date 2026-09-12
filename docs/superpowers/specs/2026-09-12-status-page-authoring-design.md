@@ -133,7 +133,7 @@ What each kind must carry differs, and the composer differs with it:
 |---|---|---|
 | Required | `title`, `impact`, `components`, `message` | `title`, `components`, `message`, `scheduled_start_at`, `scheduled_end_at` |
 | `state` at creation | optional; defaults to `investigating` | optional; defaults to `scheduled` |
-| Rejected outright | any `scheduled_*` field | `impact` |
+| Rejected outright | any `scheduled_*` field | `starts_at`; any `impact` but `maintenance` |
 
 `impact` is required on an incident, so the composer asks for it rather than defaulting —
 there is no honest default between "degraded" and "major outage", and guessing on the
@@ -199,16 +199,17 @@ different things, and only one of them is correct:
 - **Fixing the text of your own message** is not the same act, and every serious status page
   supports it. Its absence is a gap.
 
-Two consequences follow, and both are worth raising on `#1864` while its contract is still
-open — a `PATCH` added now is far cheaper than one added after the shape ships:
+Two consequences follow. `#1864` shipped without addressing either, so both are now filed
+against the merged contract — `poyrazK/faas#2376` and `poyrazK/faas#2377`:
 
 1. **Typos are permanent.** A title published at 02:14 with a spelling mistake stays on the
    page customers refresh during an outage. The only recourse is a follow-up update reading
    "correction: …", which makes the page look worse rather than better.
-2. **Component attribution can never be corrected.** `AdminStatusEventUpdateRequest` carries
-   only `{state, message}`, so the `components` array is frozen at creation. An event tagged
-   `networking` when it was `deployments` misattributes itself permanently, and customers
-   reasoning by component get a wrong answer forever.
+2. **Component attribution and severity can never be corrected.** `AdminStatusEventUpdateRequest`
+   carries only `{state, message}`, so `components` *and* `impact` are frozen at creation. An event
+   tagged `networking` when it was `deployments` misattributes itself permanently. Worse, an
+   incident opened as `degraded` stays labelled `degraded` while the platform is fully down —
+   escalation is the normal shape of an outage and the contract has no way to express it.
 
 This UI stays append-only regardless, because it must match the API it has. The point of
 recording these here is so the constraint is understood as borrowed rather than chosen.
