@@ -2,7 +2,11 @@
 
 **Date:** 2026-09-12
 **Repos touched:** `poyrazK/faas-frontend` (this one)
-**Depends on:** `poyrazK/faas#1864` — unmerged at time of writing
+**Depends on:** `poyrazK/faas#1864` — merged 2026-09-12 (`a7dca2b9`)
+
+> **Amended after the merge.** This spec was written against the open PR. Four things in
+> its contract changed before it landed; the sections below carry the shipped shapes, and
+> [What changed at merge](#what-changed-at-merge) records the difference.
 
 ## Problem
 
@@ -74,16 +78,31 @@ Added to the `/v1/admin/*` section:
 export type StatusEventKind = 'incident' | 'maintenance';
 export type StatusComponent =
   | 'api_console' | 'deployments' | 'app_execution' | 'networking' | 'observability';
-export type StatusImpact = 'maintenance' | 'degraded' | 'partial_outage' | 'major_outage';
+
+// Impact is an incident's alone. Maintenance carries the fixed value `maintenance`,
+// which is why it is not offered here and not sent.
+export type IncidentImpact = 'degraded' | 'partial_outage' | 'major_outage';
+// The states an event may be *created* in. Terminal states are reachable only by update.
+export type IncidentOpenState = 'investigating' | 'identified' | 'monitoring';
 export type StatusState =
-  | 'investigating' | 'identified' | 'monitoring' | 'resolved'
+  | IncidentOpenState | 'resolved'
   | 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 
 listAdminStatusEvents(): Promise<AdminStatusEvent[]>
-createAdminStatusEvent(input: CreateStatusEventInput): Promise<AdminStatusEvent>
-appendAdminStatusUpdate(publicId: string, input: { state: StatusState; message: string }): Promise<AdminStatusEvent>
-getPublicStatus(): Promise<PublicStatusOverview>   // read-only, for component display names
+createAdminStatusEvent(body: CreateStatusEventBody): Promise<AdminStatusEvent>
+appendAdminStatusUpdate(eventId: string, input: { state: StatusState; message: string }): Promise<AdminStatusEvent>
+getPublicStatusSnapshot(): Promise<PublicStatusSnapshot>   // read-only, for component display names
 ```
+
+`CreateStatusEventBody` is a discriminated union on `kind`, mirroring
+`AdminStatusIncidentCreateRequest` and `AdminStatusMaintenanceCreateRequest`. Both are
+`additionalProperties: false`, so the two kinds do not merely ignore each other's fields —
+sending one is a 400. `toCreateRequest` builds the body per kind for that reason, rather
+than spreading a draft that may still hold fields from a kind the operator switched away
+from.
+
+The identifier on `AdminStatusEvent` is **`id`**. The path parameter is spelled
+`{public_id}`, which is a real trap: it reads as a field name and there is no such field.
 
 Auth rides the existing model: same-origin through the Vercel rewrite, `faas_sid` cookie,
 `credentials: 'include'`. No new auth work.
@@ -106,11 +125,23 @@ Each is presentational over data passed in, so each can be tested without a netw
 than a fourth hand-rolled spinner.
 
 **Publishing.** Composer → preview → confirm → `createAdminStatusEvent` → toast → reload the
-list. Only `kind`, `title`, `components` and `message` are required by the API; `impact` and
-`state` are optional, so the composer supplies sensible defaults per kind (an incident opens
-`investigating`, maintenance opens `scheduled`) rather than sending nothing and letting the
-server decide silently. The preview is a step, not a modal afterthought: it is the only place the operator sees
-the customer's version of what they wrote.
+list.
+
+What each kind must carry differs, and the composer differs with it:
+
+| | Incident | Maintenance |
+|---|---|---|
+| Required | `title`, `impact`, `components`, `message` | `title`, `components`, `message`, `scheduled_start_at`, `scheduled_end_at` |
+| `state` at creation | optional; defaults to `investigating` | optional; defaults to `scheduled` |
+| Rejected outright | any `scheduled_*` field | `impact` |
+
+`impact` is required on an incident, so the composer asks for it rather than defaulting —
+there is no honest default between "degraded" and "major outage", and guessing on the
+operator's behalf publishes a severity nobody chose. `state` does have an honest default
+per kind, and is supplied rather than left to the server to decide silently.
+
+The preview is a step, not a modal afterthought: it is the only place the operator sees the
+customer's version of what they wrote.
 
 **Appending.** An open event's row expands to a `StatusUpdateForm`; submitting posts an update
 and reloads. Selecting a terminal state (`resolved`, `completed`, `cancelled`) closes the
@@ -199,11 +230,15 @@ That last row is the load-bearing one. Every failure path here has to degrade to
 
 Vitest, beside the code, matching the repo's layout.
 
-- **Composer validation** — the API's required fields (`kind`, `title`, `components`,
-  `message`) and the closed enums. Note that `impact`, `state` and the scheduled window are
-  *optional* in the API; requiring a window when `kind=maintenance` is a rule this UI adds,
-  because scheduling maintenance without saying when is not useful to a reader. Tested as
-  ours, not as the API's.
+- **Composer validation** — the API's required fields per kind (see the table above) and the
+  closed enums. Every one of these is the API's own rule, so each test names it as such: an
+  incident with no `impact`, or a maintenance window missing either end, is a 400 at publish
+  time — the worst possible moment to find out. The one rule this UI adds on top is that a
+  window must end after it starts, which the API does not check.
+- **Body construction per kind** — an incident sends no `scheduled_*` field even when the
+  draft still holds one from a switched kind, and maintenance sends no `impact`. This is the
+  test that guards `additionalProperties: false`, and it cannot be replaced by a type: the
+  draft is one shape and the wire is two.
 - **Preview resolution** — component ids render as their public display names; unresolvable
   ids fall back to the raw id rather than rendering blank.
 - **Append lifecycle** — a terminal state closes the event; a non-terminal one leaves it open.
@@ -226,10 +261,27 @@ Vitest, beside the code, matching the repo's layout.
 
 ## Risks
 
-**The contract is unmerged.** `#1864` is 96 files and ~7,600 lines and has not landed. If its
-admin schemas change before merge, the client types and composer fields change with them. The
-blast radius is contained to `src/lib/api.ts` and the composer, both of which are new code.
-
-**The public page is also unmerged.** `faas-web#69` is open. Nothing here depends on it at
+**The public page is still unmerged.** `faas-web#69` is open. Nothing here depends on it at
 runtime — both read the same API independently — but end-to-end verification needs all three
 deployed together.
+
+**The publish path is unexercised from here.** `GET /v1/admin/status/incidents` returns 403
+for a session without operator scope, which is every session available during development.
+The 403 branch is therefore the only admin path verified against the live API; create and
+append are verified against the schema, not against a response.
+
+## What changed at merge
+
+Recorded because the cost fell entirely on the parts that types could not defend. The client
+is hand-written against the OpenAPI, so a field the API does not have type-checks perfectly —
+inventing `public_id` compiled cleanly and would have failed at runtime in three places.
+
+| Designed against | Shipped | Consequence |
+|---|---|---|
+| `public_id` on the event | `id` | React key, status-page link and the update call all read `undefined` |
+| `impact` optional, includes `maintenance` | required on incidents, enum narrowed to three | every publish 400s; the composer never asked for it |
+| `scheduled_start_at` alone | both ends required | a window with no end 400s |
+| One create body | discriminated `oneOf`, both `additionalProperties: false` | a carried-over field is a 400, not an ignored key |
+
+The lesson worth keeping: the risk of building against an open PR is not that the shapes
+move — it is that a hand-written client cannot tell you when they have.

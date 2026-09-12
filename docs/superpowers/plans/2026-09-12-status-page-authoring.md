@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Executed and superseded — do not implement from the code blocks below.** This plan was
+> written against `poyrazK/faas#1864` while it was open. Four things in that contract changed
+> before it merged, so the snippets here still say `public_id` (the field is `id`), treat
+> `impact` as optional (it is required on incidents), and require only one end of a
+> maintenance window (both are required). The shipped code is correct; the record of what
+> moved is in the spec under **What changed at merge**.
+
 **Goal:** Give operators a surface at `/operations/status` to publish incidents, schedule maintenance, and append lifecycle updates to the public status page.
 
 **Architecture:** All decidable logic — validation, defaults, terminal-state detection, component-name resolution — lives in one pure module (`src/lib/status-events.ts`) that is unit-tested. The page and its local components are thin wiring over that module plus the existing `request<T>` client, `useAsync`, `AsyncBoundary` and `useToast` primitives. Publishing is compose → preview → confirm; the preview resolves component display names from `GET /v1/status` so it shows the words customers read.
@@ -16,7 +23,7 @@
 - **Do not introduce codegen.** `src/lib/api.ts` is hand-written; its header names `faas/api/openapi.yaml` as the contract source of truth. Add types by hand, copied from that contract.
 - **Append-only.** The API has no PATCH, PUT or DELETE on status events. Render no edit or delete affordance anywhere.
 - **Every failure path must leave the operator able to publish.** This tool is used when the platform is unhealthy.
-- Backend contract comes from `poyrazK/faas#1864`, unmerged at time of writing. Paths: `GET/POST /v1/admin/status/incidents`, `POST /v1/admin/status/incidents/{public_id}/updates`, `GET /v1/status`.
+- Backend contract comes from `poyrazK/faas#1864` (merged 2026-09-12, `a7dca2b9`). Paths: `GET/POST /v1/admin/status/incidents`, `POST /v1/admin/status/incidents/{public_id}/updates`, `GET /v1/status`. Note that `{public_id}` is the *path parameter's* name; the field on the event is `id`.
 - `request<T>` already attaches an `Idempotency-Key` to every `/v1/admin/*` mutation. Do not add one.
 
 ## File Structure
