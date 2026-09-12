@@ -11,6 +11,13 @@
    store the raw API key in the browser.
    ========================================================================== */
 
+import type {
+  CreateStatusEventBody,
+  StatusComponent,
+  StatusEventKind,
+  StatusState,
+} from './status-events';
+
 /* ────────────────────────────── Models ─────────────────────────────────── */
 
 export type Plan = 'free' | 'hobby' | 'pro' | 'scale';
@@ -2188,3 +2195,63 @@ export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
     cache: 'no-store',
   });
 };
+
+/* ── Public status page + operator authoring ─────────────────────────────── */
+
+export interface StatusUpdateEntry {
+  id: string;
+  state: StatusState;
+  message: string;
+  posted_at: string;
+}
+
+/**
+ * `PublicStatusEvent` from the contract — the shape the admin endpoints return
+ * too, so there is no separate admin model.
+ *
+ * The identifier is `id`. The path parameter is spelled `{public_id}`, which
+ * makes it easy to reach for a `public_id` field that does not exist: the
+ * schema is `additionalProperties: false` and has only `id`.
+ */
+export interface AdminStatusEvent {
+  id: string;
+  kind: StatusEventKind;
+  title: string;
+  impact: string;
+  components: StatusComponent[];
+  state: StatusState;
+  starts_at?: string;
+  scheduled_start_at?: string;
+  scheduled_end_at?: string;
+  resolved_at?: string;
+  updated_at: string;
+  updates: StatusUpdateEntry[];
+}
+
+/** Only the fields the preview needs: component ids and their public names. */
+export interface PublicStatusSnapshot {
+  components: { id: string; name: string }[];
+}
+
+export const listAdminStatusEvents = () =>
+  request<AdminStatusEvent[]>('/v1/admin/status/incidents', { cache: 'no-store' });
+
+/** Body built by `toCreateRequest`, which owns the per-kind field split. */
+export const createAdminStatusEvent = (input: CreateStatusEventBody) =>
+  request<AdminStatusEvent>('/v1/admin/status/incidents', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+
+export const appendAdminStatusUpdate = (
+  eventId: string,
+  input: { state: StatusState; message: string },
+) =>
+  request<AdminStatusEvent>(`/v1/admin/status/incidents/${encodeURIComponent(eventId)}/updates`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+
+/** Read-only, and public: the preview borrows the customer-facing names from it. */
+export const getPublicStatusSnapshot = () =>
+  request<PublicStatusSnapshot>('/v1/status', { cache: 'no-store' });
