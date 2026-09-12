@@ -18,6 +18,7 @@ interface NavItem {
 const OPS_NAV: NavItem[] = [
   { href: '/operations/overview', label: 'Fleet Overview', icon: 'overview' },
   { href: '/operations/incidents', label: 'Incident Center', icon: 'alerts' },
+  { href: '/operations/status', label: 'Status Page', icon: 'alerts' },
   { href: '/operations/controls', label: 'Emergency Controls', icon: 'bolt' },
   { href: '/operations/nodes', label: 'Compute Host Nodes', icon: 'storage' },
   { href: '/operations/capacity', label: 'Capacity Planning', icon: 'metrics' },
