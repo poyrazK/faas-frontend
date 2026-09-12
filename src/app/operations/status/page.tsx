@@ -14,7 +14,9 @@ import {
   emptyDraft,
   isTerminalState,
   resolveComponentNames,
+  toCreateRequest,
   validateDraft,
+  type IncidentImpact,
   type StatusComponent,
   type StatusDraft,
   type StatusEventKind,
@@ -56,7 +58,7 @@ function UpdateForm({ event, onPosted }: { event: AdminStatusEvent; onPosted: ()
   async function post() {
     setSubmitting(true);
     try {
-      await appendAdminStatusUpdate(event.public_id, { state, message: message.trim() });
+      await appendAdminStatusUpdate(event.id, { state, message: message.trim() });
       toast.success(isTerminalState(state) ? 'Event closed.' : 'Update posted.');
       setMessage('');
       onPosted();
@@ -115,7 +117,7 @@ function EventRow({ event, onPosted }: { event: AdminStatusEvent; onPosted: () =
             — the public list hides a resolved event's message entirely — so the
             way to see the truth is to look at it. */}
         <a
-          href={`https://gregale.dev/status/incidents/${event.public_id}`}
+          href={`https://gregale.dev/status/incidents/${event.id}`}
           target="_blank"
           rel="noreferrer"
           className="text-xs underline"
@@ -149,20 +151,7 @@ function Composer({ onPublished }: { onPublished: () => void }) {
   async function publish() {
     setSubmitting(true);
     try {
-      await createAdminStatusEvent({
-        kind: draft.kind,
-        title: draft.title.trim(),
-        components: draft.components,
-        message: draft.message.trim(),
-        ...(draft.impact ? { impact: draft.impact } : {}),
-        ...(draft.state ? { state: draft.state } : {}),
-        ...(draft.scheduledStartAt
-          ? { scheduled_start_at: new Date(draft.scheduledStartAt).toISOString() }
-          : {}),
-        ...(draft.scheduledEndAt
-          ? { scheduled_end_at: new Date(draft.scheduledEndAt).toISOString() }
-          : {}),
-      });
+      await createAdminStatusEvent(toCreateRequest(draft));
       toast.success('Published to the status page.');
       // Clear only on success. A form still holding text that is already
       // public invites a double publish; a form emptied after a failure
@@ -230,6 +219,23 @@ function Composer({ onPublished }: { onPublished: () => void }) {
         />
         {errors.title && <p className="text-xs text-[var(--color-danger)]">{errors.title}</p>}
 
+        {draft.kind === 'incident' && (
+          // Required by AdminStatusIncidentCreateRequest. Maintenance has no
+          // choice here — its impact is the single value `maintenance`.
+          <select
+            value={draft.impact ?? ''}
+            onChange={(e) =>
+              setDraft({ ...draft, impact: (e.currentTarget.value || undefined) as IncidentImpact })
+            }
+          >
+            <option value="">Impact…</option>
+            <option value="degraded">Degraded performance</option>
+            <option value="partial_outage">Partial outage</option>
+            <option value="major_outage">Major outage</option>
+          </select>
+        )}
+        {errors.impact && <p className="text-xs text-[var(--color-danger)]">{errors.impact}</p>}
+
         <fieldset className="flex flex-wrap gap-3">
           {COMPONENTS.map(({ id, fallback }) => (
             <label key={id} className="flex items-center gap-1.5 text-xs">
@@ -275,6 +281,9 @@ function Composer({ onPublished }: { onPublished: () => void }) {
         )}
         {errors.scheduledStartAt && (
           <p className="text-xs text-[var(--color-danger)]">{errors.scheduledStartAt}</p>
+        )}
+        {errors.scheduledEndAt && (
+          <p className="text-xs text-[var(--color-danger)]">{errors.scheduledEndAt}</p>
         )}
 
         <textarea
@@ -334,7 +343,7 @@ export default function StatusPage() {
           {(rows) => (
             <ul className="flex flex-col">
               {rows.map((event) => (
-                <EventRow key={event.public_id} event={event} onPosted={events.reload} />
+                <EventRow key={event.id} event={event} onPosted={events.reload} />
               ))}
             </ul>
           )}

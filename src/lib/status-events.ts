@@ -5,8 +5,11 @@
    node environment and collects only `.test.ts` files under src, deliberately
    (see vitest.config.ts). Components stay thin wiring over these functions.
 
-   Wire vocabulary is copied from faas/api/openapi.yaml (PR #1864), not
-   inferred.
+   Wire vocabulary is copied from faas/api/openapi.yaml, not inferred. The
+   create body is a discriminated union there — `AdminStatusIncidentCreateRequest`
+   and `AdminStatusMaintenanceCreateRequest`, both `additionalProperties: false`
+   — so the two kinds genuinely accept different fields and a stray one is a
+   400, not an ignored key. `toCreateRequest` is where that split is enforced.
    ========================================================================== */
 
 export type StatusEventKind = 'incident' | 'maintenance';
@@ -18,12 +21,14 @@ export type StatusComponent =
   | 'networking'
   | 'observability';
 
-export type StatusImpact = 'maintenance' | 'degraded' | 'partial_outage' | 'major_outage';
+/** What an incident may claim. `maintenance` is not among them — it belongs to the other kind. */
+export type IncidentImpact = 'degraded' | 'partial_outage' | 'major_outage';
+
+/** Lifecycle states an event may be *created* in; terminal states are not valid at creation. */
+export type IncidentOpenState = 'investigating' | 'identified' | 'monitoring';
 
 export type StatusState =
-  | 'investigating'
-  | 'identified'
-  | 'monitoring'
+  | IncidentOpenState
   | 'resolved'
   | 'scheduled'
   | 'in_progress'
@@ -50,7 +55,8 @@ export interface StatusDraft {
   title: string;
   components: StatusComponent[];
   message: string;
-  impact?: StatusImpact;
+  /** Required for an incident; ignored for maintenance, whose impact is fixed. */
+  impact?: IncidentImpact;
   state?: StatusState;
   /** Local datetime strings from `<input type="datetime-local">`. */
   scheduledStartAt?: string;
@@ -58,7 +64,7 @@ export interface StatusDraft {
 }
 
 export type DraftErrors = Partial<
-  Record<'title' | 'components' | 'message' | 'scheduledStartAt', string>
+  Record<'title' | 'components' | 'message' | 'impact' | 'scheduledStartAt' | 'scheduledEndAt', string>
 >;
 
 export function emptyDraft(kind: StatusEventKind): StatusDraft {
@@ -79,12 +85,80 @@ export function validateDraft(draft: StatusDraft): DraftErrors {
   else if (message.length > MESSAGE_MAX)
     errors.message = `Messages are at most ${MESSAGE_MAX} characters.`;
 
-  // Ours, not the API's: `scheduled_start_at` is optional upstream, but
-  // scheduling maintenance without saying when is not useful to a reader.
-  if (draft.kind === 'maintenance' && !draft.scheduledStartAt)
-    errors.scheduledStartAt = 'Scheduled maintenance needs a start time.';
+  if (draft.kind === 'incident') {
+    // Required upstream. Catching it here keeps the failure in the form rather
+    // than in a 400 at the moment of publishing.
+    if (!draft.impact) errors.impact = 'Choose the impact this incident has.';
+  } else {
+    // Both ends are required upstream: a window with no end is not a window.
+    if (!draft.scheduledStartAt) errors.scheduledStartAt = 'Maintenance needs a start time.';
+    if (!draft.scheduledEndAt) errors.scheduledEndAt = 'Maintenance needs an end time.';
+    if (
+      draft.scheduledStartAt &&
+      draft.scheduledEndAt &&
+      new Date(draft.scheduledEndAt).getTime() <= new Date(draft.scheduledStartAt).getTime()
+    ) {
+      errors.scheduledEndAt = 'The window must end after it starts.';
+    }
+  }
 
   return errors;
+}
+
+export type CreateStatusEventBody =
+  | {
+      kind: 'incident';
+      title: string;
+      impact: IncidentImpact;
+      components: StatusComponent[];
+      state?: IncidentOpenState;
+      message: string;
+    }
+  | {
+      kind: 'maintenance';
+      title: string;
+      components: StatusComponent[];
+      scheduled_start_at: string;
+      scheduled_end_at: string;
+      state?: 'scheduled';
+      message: string;
+    };
+
+/**
+ * The wire body for a validated draft.
+ *
+ * Built per kind rather than by spreading the draft: the two create schemas are
+ * `additionalProperties: false`, so carrying a scheduled window onto an incident
+ * — which happens the moment someone switches kind mid-compose — is a 400 and
+ * not a harmless extra key.
+ *
+ * Call only on a draft that `validateDraft` accepts; the non-null assertions
+ * below are that precondition.
+ */
+export function toCreateRequest(draft: StatusDraft): CreateStatusEventBody {
+  const title = draft.title.trim();
+  const message = draft.message.trim();
+
+  if (draft.kind === 'maintenance') {
+    return {
+      kind: 'maintenance',
+      title,
+      components: draft.components,
+      scheduled_start_at: new Date(draft.scheduledStartAt!).toISOString(),
+      scheduled_end_at: new Date(draft.scheduledEndAt!).toISOString(),
+      state: 'scheduled',
+      message,
+    };
+  }
+
+  return {
+    kind: 'incident',
+    title,
+    impact: draft.impact!,
+    components: draft.components,
+    state: (draft.state ?? 'investigating') as IncidentOpenState,
+    message,
+  };
 }
 
 /**

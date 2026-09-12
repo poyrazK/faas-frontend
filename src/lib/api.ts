@@ -12,9 +12,9 @@
    ========================================================================== */
 
 import type {
+  CreateStatusEventBody,
   StatusComponent,
   StatusEventKind,
-  StatusImpact,
   StatusState,
 } from './status-events';
 
@@ -2196,7 +2196,7 @@ export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
   });
 };
 
-/* ── Public status page + operator authoring (faas#1864) ─────────────────── */
+/* ── Public status page + operator authoring ─────────────────────────────── */
 
 export interface StatusUpdateEntry {
   id: string;
@@ -2205,12 +2205,19 @@ export interface StatusUpdateEntry {
   posted_at: string;
 }
 
+/**
+ * `PublicStatusEvent` from the contract — the shape the admin endpoints return
+ * too, so there is no separate admin model.
+ *
+ * The identifier is `id`. The path parameter is spelled `{public_id}`, which
+ * makes it easy to reach for a `public_id` field that does not exist: the
+ * schema is `additionalProperties: false` and has only `id`.
+ */
 export interface AdminStatusEvent {
   id: string;
-  public_id: string;
   kind: StatusEventKind;
   title: string;
-  impact?: StatusImpact;
+  impact: string;
   components: StatusComponent[];
   state: StatusState;
   starts_at?: string;
@@ -2221,18 +2228,6 @@ export interface AdminStatusEvent {
   updates: StatusUpdateEntry[];
 }
 
-export interface CreateStatusEventInput {
-  kind: StatusEventKind;
-  title: string;
-  components: StatusComponent[];
-  message: string;
-  impact?: StatusImpact;
-  state?: StatusState;
-  starts_at?: string;
-  scheduled_start_at?: string;
-  scheduled_end_at?: string;
-}
-
 /** Only the fields the preview needs: component ids and their public names. */
 export interface PublicStatusSnapshot {
   components: { id: string; name: string }[];
@@ -2241,20 +2236,21 @@ export interface PublicStatusSnapshot {
 export const listAdminStatusEvents = () =>
   request<AdminStatusEvent[]>('/v1/admin/status/incidents', { cache: 'no-store' });
 
-export const createAdminStatusEvent = (input: CreateStatusEventInput) =>
+/** Body built by `toCreateRequest`, which owns the per-kind field split. */
+export const createAdminStatusEvent = (input: CreateStatusEventBody) =>
   request<AdminStatusEvent>('/v1/admin/status/incidents', {
     method: 'POST',
     body: JSON.stringify(input),
   });
 
 export const appendAdminStatusUpdate = (
-  publicId: string,
+  eventId: string,
   input: { state: StatusState; message: string },
 ) =>
-  request<AdminStatusEvent>(
-    `/v1/admin/status/incidents/${encodeURIComponent(publicId)}/updates`,
-    { method: 'POST', body: JSON.stringify(input) },
-  );
+  request<AdminStatusEvent>(`/v1/admin/status/incidents/${encodeURIComponent(eventId)}/updates`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 
 /** Read-only, and public: the preview borrows the customer-facing names from it. */
 export const getPublicStatusSnapshot = () =>
