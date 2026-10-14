@@ -1291,6 +1291,7 @@ export interface ObsOverviewResponse {
 
 export interface ObsHealthResponse {
   generated_at: string;
+  prometheus_available: boolean;
   audit_log_write_total_5m: number;
   audit_log_write_failures_5m: number;
   audit_log_coverage_ratio_5m: number;
@@ -1788,12 +1789,12 @@ export const reconcileAccount = (accountId: string) =>
     { method: 'POST' },
   );
 
-export const listObsNodes = () =>
-  request<ObsNodeListResponse>('/v1/admin/obs/nodes', { cache: 'no-store' });
+export const listObsNodes = (cursor?: string) =>
+  request<ObsNodeListResponse>(`/v1/admin/obs/nodes${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { cache: 'no-store' });
 
 export const getObsNodeHeartbeats = (name: string, sinceMinutes = 30) =>
   request<ObsHeartbeatListResponse>(
-    `/v1/admin/obs/nodes/${encodeURIComponent(name)}/heartbeats?since=${sinceMinutes}m`,
+    `/v1/admin/obs/nodes/${encodeURIComponent(name)}/heartbeats?since=${encodeURIComponent(new Date(Date.now() - sinceMinutes * 60000).toISOString())}`,
     { cache: 'no-store' },
   );
 
@@ -2103,17 +2104,49 @@ export interface RekeyProgressResponse {
 }
 
 export interface ObsWakeLatencyRow {
-  node: string;
+  node_id: string;
+  node_name: string;
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
   sample_count: number;
-  window_hours: number;
 }
 
 export interface ObsWakeLatencyResponse {
-  items: ObsWakeLatencyRow[];
+  window: string;
+  quantiles: ObsWakeLatencyRow[];
+  fleet_p95_ms: number;
+  as_of: string;
+  prometheus_available: boolean;
 }
+
+export interface ObsIncident {
+  id: string;
+  type: 'deployment' | 'job_run' | 'compute_node' | 'platform_alert';
+  severity: 'warning' | 'error' | 'critical';
+  status: string;
+  summary: string;
+  resource_id: string;
+  resource_name?: string;
+  observed_at: string;
+  dedupe_key: string;
+  action_path?: string;
+  runbook_url?: string;
+}
+
+export interface ObsIncidentListResponse {
+  generated_at: string;
+  items: ObsIncident[];
+  next_cursor: string;
+  unavailable_sources: string[];
+}
+
+export const getObsIncidents = (cursor = '', severity = '') => {
+  const query = new URLSearchParams({ limit: '50' });
+  if (cursor) query.set('cursor', cursor);
+  if (severity) query.set('severity', severity);
+  return request<ObsIncidentListResponse>(`/v1/admin/obs/incidents?${query}`, { cache: 'no-store' });
+};
 
 export interface AuditLogSearchParams {
   since?: string;
@@ -2170,8 +2203,8 @@ export const getRekeyProgress = () =>
     cache: 'no-store',
   });
 
-export const getObsWakeLatencies = (windowHours = 24) =>
-  request<ObsWakeLatencyResponse>(`/v1/admin/obs/nodes/wake-latency?window_hours=${windowHours}`, {
+export const getObsWakeLatencies = () =>
+  request<ObsWakeLatencyResponse>('/v1/admin/obs/nodes/wake-latency', {
     cache: 'no-store',
   });
 
