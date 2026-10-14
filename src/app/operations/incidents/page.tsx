@@ -22,6 +22,8 @@ import {
   type ObsHealthResponse,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
+import { OperatorIncidentInbox } from '@/components/ui/OperatorIncidentInbox';
 import { PageHeader, Mono } from '@/components/ui/bits';
 import { SectionCard, StatTile } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
@@ -135,7 +137,7 @@ export default function IncidentCenterPage() {
   const health = useAsync(getObsHealth, [], 30000);
   const nodes = useAsync(listObsNodes, [], 30000);
   const builders = useAsync(getObsBuilderHeartbeats, [], 30000);
-  const wake = useAsync(() => getObsWakeLatencies(24), [], 30000);
+  const wake = useAsync(() => getObsWakeLatencies(), [], 30000);
   const anomalies = useAsync(() => getObsAnomalies(24), [], 30000);
   const rateLimits = useAsync(() => getObsRateLimits(24), [], 15000);
   const events = useAsync(() => listObsEvents(25), [], 15000);
@@ -148,7 +150,7 @@ export default function IncidentCenterPage() {
   const data: ObsOverviewResponse | null = overview.data;
   const nodeRows = nodes.data?.items ?? [];
   const builderRows = builders.data?.items ?? [];
-  const wakeRows = wake.data?.items ?? [];
+  const wakeRows = wake.data?.quantiles ?? [];
   const anomalyRows = anomalies.data?.items ?? [];
   const rateLimitData: ObsRateLimitResponse | null = rateLimits.data;
   const eventRows = events.data?.items ?? [];
@@ -157,7 +159,7 @@ export default function IncidentCenterPage() {
   const unhealthyNodes = data?.node_health.filter((node) => !node.active || node.stale) ?? [];
   const severeAnomalies = anomalyRows.filter((row) => (row.z_score ?? 0) >= 3.5);
   const activeBlocks = rateLimitData?.live.filter((row) => row.currently_rate_limited) ?? [];
-  const recentFailureCount = data?.recent_failures_1h.reduce((sum, row) => sum + row.count, 0) ?? 0;
+  const recentFailureCount = data?.recent_failures_1h?.reduce((sum, row) => sum + row.count, 0) ?? 0;
   const incidentCount = unhealthyNodes.length + severeAnomalies.length + activeBlocks.length;
   const maxP95 = wakeRows.length > 0 ? Math.max(...wakeRows.map((row) => row.p95_ms)) : null;
 
@@ -176,6 +178,8 @@ export default function IncidentCenterPage() {
   const healthData: ObsHealthResponse | null = health.data;
   const missingOutcomes = Object.entries(healthData?.operator_intent_outcome_missing_total ?? {});
   const incompleteTraceKinds = Object.entries(healthData?.trace_id_completeness_ratio ?? {}).filter(([, ratio]) => ratio < 1);
+  const healthUnavailable = !!health.error || health.stale || (healthData !== null && healthData.prometheus_available !== true);
+  const healthDegraded = !!healthData && (healthData.alerts_firing > 0 || healthData.audit_log_write_failures_5m > 0 || healthData.audit_log_coverage_ratio_5m < 1 || missingOutcomes.some(([, count]) => count > 0) || incompleteTraceKinds.length > 0);
 
   return (
     <div>
@@ -190,6 +194,8 @@ export default function IncidentCenterPage() {
         }
       />
 
+      <SnapshotFreshness snapshots={[overview, health, nodes, builders, wake, anomalies, rateLimits, events, audit]} />
+      <OperatorIncidentInbox />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label="Open Health Signals"
@@ -200,7 +206,7 @@ export default function IncidentCenterPage() {
         <StatTile
           label="Failure Events (1h)"
           value={recentFailureCount}
-          sub={`${data?.recent_failures_1h.length ?? 0} failure categories`}
+          sub={`${data?.recent_failures_1h?.length ?? 0} failure categories`}
           color="var(--color-warning)"
         />
         <StatTile
@@ -212,7 +218,7 @@ export default function IncidentCenterPage() {
         <StatTile
           label="Highest Wake p95"
           value={maxP95 == null ? '—' : `${maxP95.toFixed(0)} ms`}
-          sub="24h rolling node latency"
+          sub="five-minute node latency"
           color={maxP95 != null && maxP95 > 1000 ? 'var(--color-danger)' : 'var(--color-chart)'}
         />
       </div>
@@ -220,7 +226,7 @@ export default function IncidentCenterPage() {
       <div className="mt-6">
         <SectionCard
           title="Observability Pipeline Health"
-          action={<span className={`badge ${health.error ? 'badge-danger' : healthData && (healthData.alerts_firing > 0 || missingOutcomes.some(([, count]) => count > 0) || incompleteTraceKinds.length > 0) ? 'badge-warning' : 'badge-success'}`}>{health.error ? 'Unavailable' : healthData ? 'Reporting' : 'Loading…'}</span>}
+          action={<span className={`badge ${healthUnavailable ? 'badge-danger' : healthDegraded ? 'badge-warning' : 'badge-success'}`}>{healthUnavailable ? 'Telemetry unavailable' : healthData ? 'Reporting' : 'Loading…'}</span>}
         >
           {health.loading && !healthData ? (
             <LoadingState label="Checking audit and trace health" />
@@ -229,9 +235,9 @@ export default function IncidentCenterPage() {
           ) : healthData ? (
             <div className="p-4">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Audit writes (5m)</div><div className="mt-1 font-semibold">{healthData.audit_log_write_total_5m.toLocaleString()}</div><div className="text-[var(--color-ink-muted)]">{healthData.audit_log_write_failures_5m} failed</div></div>
+                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Audit writes (5m)</div><div className="mt-1 font-semibold">{healthData.prometheus_available ? healthData.audit_log_write_total_5m.toLocaleString() : 'Unavailable'}</div><div className="text-[var(--color-ink-muted)]">{healthData.prometheus_available ? `${healthData.audit_log_write_failures_5m} failed` : 'Prometheus could not be queried'}</div></div>
                 <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Audit trace coverage</div><div className="mt-1 font-semibold">{(healthData.audit_log_coverage_ratio_5m * 100).toFixed(1)}%</div><div className="text-[var(--color-ink-muted)]">last five minutes</div></div>
-                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Firing alerts</div><div className={`mt-1 font-semibold ${healthData.alerts_firing > 0 ? 'text-[var(--color-danger)]' : ''}`}>{healthData.alerts_firing}</div><div className="text-[var(--color-ink-muted)]">Prometheus alert state</div></div>
+                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Firing alerts</div><div className={`mt-1 font-semibold ${healthData.alerts_firing > 0 ? 'text-[var(--color-danger)]' : ''}`}>{healthData.prometheus_available ? healthData.alerts_firing : 'Unavailable'}</div><div className="text-[var(--color-ink-muted)]">Prometheus alert state</div></div>
                 <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Snapshot generated</div><div className="mt-1 font-semibold">{relativeTime(healthData.generated_at)}</div><div className="text-[var(--color-ink-muted)]">{new Date(healthData.generated_at).toLocaleTimeString()}</div></div>
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -331,8 +337,8 @@ export default function IncidentCenterPage() {
             </div>
             <div className="flex items-center justify-between p-4 text-xs">
               <span>Node wake SLO (&lt;350ms p50)</span>
-              <span className={`badge ${wakeRows.length > 0 && wakeRows.every((row) => row.p50_ms <= 350) ? 'badge-success' : 'badge-warning'}`}>
-                {wakeRows.length === 0 ? 'No samples' : wakeRows.every((row) => row.p50_ms <= 350) ? 'Within SLO' : 'Elevated'}
+              <span className={`badge ${wakeRows.length > 0 && wakeRows.every((row) => row.p95_ms <= 350) ? 'badge-success' : 'badge-warning'}`}>
+                {wakeRows.length === 0 ? 'No samples' : wakeRows.every((row) => row.p95_ms <= 350) ? 'Within SLO' : 'Elevated'}
               </span>
             </div>
             <div className="flex items-center justify-between p-4 text-xs">
@@ -383,13 +389,15 @@ export default function IncidentCenterPage() {
             <LoadingState label="Loading wake latency" />
           ) : wake.error ? (
             <ErrorState message={wake.error.message || 'Could not load wake latency.'} />
+          ) : wake.data?.prometheus_available === false ? (
+            <EmptyState>Wake latency telemetry is unavailable.</EmptyState>
           ) : wakeRows.length === 0 ? (
-            <EmptyState>No wake latency samples in the selected 24h window.</EmptyState>
+            <EmptyState>No wake latency samples in the five-minute window.</EmptyState>
           ) : (
             <div className="divide-y divide-[var(--color-line)]">
               {wakeRows.map((row: ObsWakeLatencyRow) => (
-                <div key={row.node} className="flex items-center justify-between p-4 text-xs">
-                  <div><div className="font-semibold">{row.node}</div><div className="text-[var(--color-ink-muted)]">{row.sample_count} samples</div></div>
+                <div key={row.node_name} className="flex items-center justify-between p-4 text-xs">
+                  <div><div className="font-semibold">{row.node_name}</div><div className="text-[var(--color-ink-muted)]">{row.sample_count} samples</div></div>
                   <div className="text-right font-mono"><div>p50 {row.p50_ms.toFixed(0)} ms</div><div className="text-[var(--color-ink-muted)]">p95 {row.p95_ms.toFixed(0)} · p99 {row.p99_ms.toFixed(0)}</div></div>
                 </div>
               ))}

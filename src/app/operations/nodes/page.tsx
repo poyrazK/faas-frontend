@@ -16,14 +16,17 @@ import {
   type ObsWakeLatencyRow,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { PageHeader } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
 
 export default function ComputeNodesPage() {
-  const { data, loading, error, reload } = useAsync(listObsNodes);
-  const wakeQuery = useAsync(() => getObsWakeLatencies(24), [], 30000);
+  const [cursor, setCursor] = useState('');
+  const nodeQuery = useAsync(() => listObsNodes(cursor), [cursor], 30000);
+  const { data, loading, error, reload } = nodeQuery;
+  const wakeQuery = useAsync(() => getObsWakeLatencies(), [], 30000);
   const builderQuery = useAsync(getObsBuilderHeartbeats, [], 30000);
 
   // Heartbeat drawer state
@@ -106,6 +109,7 @@ export default function ComputeNodesPage() {
         }
       />
 
+      <SnapshotFreshness snapshots={[nodeQuery, wakeQuery, builderQuery]} />
       {/* Compute Host Inventory */}
       <SectionCard title="Host Compute Nodes">
         {loading && !data ? (
@@ -187,14 +191,18 @@ export default function ComputeNodesPage() {
         )}
       </SectionCard>
 
+      <div className="mt-3 flex gap-2">
+        {cursor && <button className="btn btn-secondary btn-xs" onClick={() => setCursor('')}>First nodes</button>}
+        {data?.next_cursor && <button className="btn btn-secondary btn-xs" disabled={loading} onClick={() => setCursor(data.next_cursor)}>More nodes</button>}
+      </div>
       {/* Wake Latency Quantiles */}
       <div className="mt-6">
         <SectionCard
           title={
             <div className="flex items-center justify-between">
-              <span>Wake Latency Quantiles (24h Rolling)</span>
+              <span>Wake Latency Quantiles (5m Rolling)</span>
               <span className="text-xs font-normal text-[var(--color-ink-muted)]">
-                Target: &lt; 350 ms p50
+                Target: &lt; 350 ms p95
               </span>
             </div>
           }
@@ -203,9 +211,11 @@ export default function ComputeNodesPage() {
             <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">
               Measuring per-node wake latencies…
             </div>
-          ) : !wakeQuery.data?.items || wakeQuery.data.items.length === 0 ? (
+          ) : wakeQuery.data?.prometheus_available === false ? (
+            <div className="p-8 text-center text-xs">Wake latency telemetry is unavailable.</div>
+          ) : !wakeQuery.data?.quantiles || wakeQuery.data.quantiles.length === 0 ? (
             <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">
-              No wake latency samples recorded in the last 24h window.
+              No wake latency samples recorded in the five-minute window.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -221,9 +231,9 @@ export default function ComputeNodesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--color-line)]">
-                  {wakeQuery.data.items.map((w: ObsWakeLatencyRow) => (
-                    <tr key={w.node} className="hover:bg-[var(--color-surface-subtle)]">
-                      <td className="px-4 py-3 font-semibold">{w.node}</td>
+                  {wakeQuery.data.quantiles.map((w: ObsWakeLatencyRow) => (
+                    <tr key={w.node_name} className="hover:bg-[var(--color-surface-subtle)]">
+                      <td className="px-4 py-3 font-semibold">{w.node_name}</td>
                       <td className="px-4 py-3 font-mono font-bold text-[var(--color-brand-bright)]">
                         {w.p50_ms.toFixed(0)} ms
                       </td>
