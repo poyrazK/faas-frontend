@@ -599,7 +599,7 @@ export class ApiError extends Error {
  * the DO backend, so the browser sees one origin and the session cookie is
  * first-party.
  */
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   parse: 'json' | 'none' = 'json',

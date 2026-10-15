@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware } from './middleware';
+
+vi.mock('./lib/hosting-flag', () => ({ hostingDashboardEnabled: true }));
 
 function request(pathname: string) {
   return new NextRequest(`https://operations.gregale.dev${pathname}`, {
@@ -9,6 +11,12 @@ function request(pathname: string) {
 }
 
 describe('operations host boundary', () => {
+  it('maps hosting to the guarded operations page and preserves internal API routes', () => {
+    expect(middleware(request('/hosting')).headers.get('x-middleware-rewrite')).toBe(
+      'https://operations.gregale.dev/operations/hosting',
+    );
+    expect(middleware(request('/v1/internal/hosting/capabilities')).headers.get('x-middleware-rewrite')).toBeNull();
+  });
   it('maps runtime configuration to the dedicated operations route', () => {
     const response = middleware(request('/configuration'));
 

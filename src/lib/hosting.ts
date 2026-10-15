@@ -1,0 +1,112 @@
+import { request } from './api';
+
+// Contract: faas/pkg/api/hosting.go. All routes independently enforce the
+// backend feature flag, operator allowlist, MFA, scopes, and account ownership.
+export interface HostingCapabilities {
+  upload_base_url: string;
+  files_max: number;
+  file_max_bytes: number;
+  release_max_bytes: number;
+  manifest_max_bytes: number;
+  path_max_bytes: number;
+  content_type_max_bytes: number;
+  name_max_bytes: number;
+  sites_per_account: number;
+  releases_per_site: number;
+  upload_ttl_seconds: number;
+  storage_timeout_seconds: number;
+  finalize_timeout_seconds: number;
+}
+
+export interface HostingSite {
+  id: string;
+  account_id: string;
+  project_id: string;
+  environment: string;
+  name: string;
+  hostname: string;
+  status: 'active' | 'deleting';
+  active_release_id: string;
+  revision: number;
+  durable_routing: boolean;
+  suspended: boolean;
+  created_at: string;
+}
+
+export interface HostingFile {
+  path: string;
+  sha256: string;
+  size: number;
+  content_type: string;
+}
+
+export interface HostingManifest { files: HostingFile[]; spa_fallback: boolean }
+
+export interface HostingRelease {
+  id: string;
+  site_id: string;
+  state: 'pending' | 'ready' | 'retiring';
+  manifest: HostingManifest;
+  created_at: string;
+  retired_at?: string;
+}
+
+export interface HostingSiteStatus {
+  site: HostingSite;
+  publication: {
+    state: 'pending' | 'published' | 'untracked';
+    generation?: number;
+    published_generation?: number;
+    published_at?: string;
+    pending_since?: string;
+    next_attempt_at?: string;
+    last_attempt_at?: string;
+    retry_count: number;
+    last_error_code?: string;
+  };
+}
+
+export interface HostingUpload { path: string; url: string; headers: Record<string, string[]> }
+export interface HostingUploadResponse { release: HostingRelease; uploads: HostingUpload[] }
+export interface HostingProject { id: string; slug: string }
+export interface HostingEnvironment { id: string; project_id: string; slug: string }
+
+const root = '/v1/internal/hosting';
+const sitePath = (id: string) => `${root}/sites/${encodeURIComponent(id)}`;
+const releasePath = (id: string, release: string) => `${sitePath(id)}/releases/${encodeURIComponent(release)}`;
+// A stalled control-plane connection must become an explicit refresh failure.
+// This browser transport budget is separate from provider/publication limits.
+const deadline = (signal?: AbortSignal, timeout = 30000) => signal
+  ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
+const read = <T>(path: string, signal?: AbortSignal) => request<T>(path, { cache: 'no-store', signal: deadline(signal) });
+
+function mutate<T>(path: string, method: string, body?: unknown, signal?: AbortSignal, timeout?: number): Promise<T> {
+  // Each user intent has a distinct key. No automatic retries of ambiguous
+  // creation/promotion failures: refresh the inventory before another intent.
+  return request<T>(path, {
+    method, signal: deadline(signal, timeout), cache: 'no-store',
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+export const getHostingCapabilities = (signal?: AbortSignal) => read<HostingCapabilities>(`${root}/capabilities`, signal);
+export const listHostingSites = (signal?: AbortSignal) => read<HostingSite[] | null>(`${root}/sites`, signal).then((sites) => sites ?? []);
+export const listHostingProjects = (signal?: AbortSignal) => read<HostingProject[]>('/v1/projects', signal);
+export const listHostingEnvironments = (project: string, signal?: AbortSignal) => read<HostingEnvironment[]>(`/v1/projects/${encodeURIComponent(project)}/environments`, signal);
+export const getHostingStatus = (id: string, signal?: AbortSignal) => read<HostingSiteStatus>(`${sitePath(id)}/status`, signal);
+export const listHostingReleases = (id: string, signal?: AbortSignal) => read<HostingRelease[] | null>(`${sitePath(id)}/releases`, signal).then((releases) => releases ?? []);
+export const createHostingSite = (project: string, environment: string, name: string, signal?: AbortSignal) => mutate<HostingSite>(`${root}/sites`, 'POST', { project, environment, name }, signal);
+export const createHostingRelease = (id: string, manifest: HostingManifest, signal?: AbortSignal) => mutate<HostingRelease>(`${sitePath(id)}/releases`, 'POST', manifest, signal);
+export const getHostingUploads = (id: string, release: string, signal?: AbortSignal) => mutate<HostingUploadResponse>(`${releasePath(id, release)}/uploads`, 'POST', undefined, signal);
+export const finalizeHostingRelease = (id: string, release: string, limits: HostingCapabilities, signal?: AbortSignal) => mutate<HostingRelease>(`${releasePath(id, release)}/finalize`, 'POST', undefined, signal, (limits.finalize_timeout_seconds + limits.storage_timeout_seconds) * 1000);
+export const promoteHostingRelease = (id: string, release: string, revision: number, signal?: AbortSignal) => mutate<HostingSite>(`${sitePath(id)}/promotions`, 'POST', { release_id: release, expected_revision: revision }, signal);
+export const suspendHostingSite = (id: string, suspended: boolean, revision: number) => mutate<HostingSite>(`${sitePath(id)}/suspension`, 'PUT', { suspended, expected_revision: revision });
+export const retireHostingRelease = (id: string, release: string) => mutate<HostingRelease>(releasePath(id, release), 'DELETE');
+export const deleteHostingSite = (id: string) => mutate<HostingSite>(sitePath(id), 'DELETE');
+
+export function hostingSiteURL(hostname: string): string | null {
+  // Only render an external HTTPS link, including when API data is malformed.
+  if (!/^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(hostname)) return null;
+  return `https://${hostname}`;
+}

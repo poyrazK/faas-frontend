@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { hostingDashboardEnabled } from './lib/hosting-flag';
 
 /**
  * Next.js Middleware for Gregale:
@@ -16,6 +17,13 @@ export function middleware(request: NextRequest) {
   // Detect operations subdomain (e.g., operations.gregale.dev, operations.localhost:3000)
   const isOperationsSubdomain =
     host.startsWith('operations.') || host.includes('.operations.');
+
+  const isHostingPage = pathname === '/operations/hosting' || pathname.startsWith('/operations/hosting/') ||
+    (isOperationsSubdomain && (pathname === '/hosting' || pathname.startsWith('/hosting/') ||
+      pathname === '/dashboard/admin/hosting' || pathname.startsWith('/dashboard/admin/hosting/')));
+  // Enforce the build gate before streaming layouts. notFound() alone can
+  // appear in a streamed 200 response beneath a client-side auth layout.
+  if (isHostingPage && !hostingDashboardEnabled) return new NextResponse('Not found', { status: 404 });
 
   const requestHeaders = new Headers(request.headers);
   if (isOperationsSubdomain) {
@@ -72,6 +80,7 @@ export function middleware(request: NextRequest) {
       'configuration',
       'audit-log',
       'incidents',
+      'hosting',
       'login',
     ];
 

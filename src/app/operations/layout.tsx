@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { probeControlPlane } from '@/lib/api';
 import { Icon, type IconName } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
+import { hostingDashboardEnabled } from '@/lib/hosting-flag';
 
 interface NavItem {
   href: string;
@@ -16,6 +17,7 @@ interface NavItem {
 }
 
 const OPS_NAV: NavItem[] = [
+  ...(hostingDashboardEnabled ? [{ href: '/operations/hosting', label: 'Frontend Hosting', icon: 'domains' as const }] : []),
   { href: '/operations/overview', label: 'Fleet Overview', icon: 'overview' },
   { href: '/operations/incidents', label: 'Incident Center', icon: 'alerts' },
   { href: '/operations/controls', label: 'Emergency Controls', icon: 'bolt' },
@@ -355,8 +357,8 @@ export default function OperationsLayout({ children }: { children: React.ReactNo
 
       {/* ── Main content surface ───────────────────────────────────────── */}
       <main
-        className="pt-14 transition-[margin-left] duration-200"
-        style={{ marginLeft: railW }}
+        className="pt-14 transition-[margin-left] duration-200 md:ml-[var(--operations-rail-width)]"
+        style={{ '--operations-rail-width': `${railW}px` } as React.CSSProperties}
       >
         <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
           {children}
