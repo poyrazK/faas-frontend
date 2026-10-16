@@ -17,6 +17,7 @@ import { AsyncBoundary, EmptyState, SkeletonBlock } from '@/components/ui/States
 import { Icon } from '@/components/ui/Icons';
 import { PLANS, euros } from '@/lib/format';
 import { compact } from '@/lib/series';
+import BudgetPanel from '@/components/BudgetPanel';
 
 /** The last six billing months, newest first, as YYYY-MM. */
 function recentMonths(count = 6): string[] {
@@ -120,6 +121,8 @@ export default function UsagePage() {
           );
         }}
       </AsyncBoundary>
+
+      <BudgetPanel apps={apps.data ?? []} />
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <SectionCard className="xl:col-span-2" title="Usage by workflow">

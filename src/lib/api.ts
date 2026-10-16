@@ -11,6 +11,8 @@
    store the raw API key in the browser.
    ========================================================================== */
 
+import type { BudgetPolicy, BudgetSpec } from './budgets';
+
 /* ────────────────────────────── Models ─────────────────────────────────── */
 
 export type Plan = 'free' | 'hobby' | 'pro' | 'scale';
@@ -655,6 +657,26 @@ async function request<T>(
   }
   return (await res.json()) as T;
 }
+
+export const listFinancialBudgets = () =>
+  request<{ budgets: BudgetPolicy[] }>('/v1/billing/budgets', { cache: 'no-store' });
+
+export const createFinancialBudget = (spec: BudgetSpec, operationKey: string) =>
+  request<BudgetPolicy>('/v1/billing/budgets', {
+    method: 'POST', headers: { 'Idempotency-Key': operationKey }, body: JSON.stringify({ spec }),
+  });
+
+export const updateFinancialBudget = (policy: BudgetPolicy, spec: BudgetSpec, operationKey: string) =>
+  request<BudgetPolicy>(`/v1/billing/budgets/${encodeURIComponent(policy.id)}`, {
+    method: 'PUT', headers: { 'Idempotency-Key': operationKey },
+    body: JSON.stringify({ expected_revision: policy.revision, spec }),
+  });
+
+export const deleteFinancialBudget = (policy: BudgetPolicy, operationKey: string) =>
+  request<BudgetPolicy>(`/v1/billing/budgets/${encodeURIComponent(policy.id)}`, {
+    method: 'DELETE', headers: { 'Idempotency-Key': operationKey },
+    body: JSON.stringify({ expected_revision: policy.revision }),
+  });
 
 /* ─────────────────────────────── Auth ──────────────────────────────────── */
 
