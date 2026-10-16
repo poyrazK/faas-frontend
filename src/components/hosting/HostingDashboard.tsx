@@ -10,6 +10,7 @@ import { useAuth } from '@/lib/auth';
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { PageHeader } from '@/components/ui/bits';
 import { ErrorState, EmptyState, Spinner } from '@/components/ui/States';
+import { HostingUsage } from './HostingUsage';
 import { HostingSiteDetail } from './HostingSiteDetail';
 
 export function HostingDashboard() {
@@ -43,6 +44,7 @@ function HostingInventory({ capabilities }: { capabilities: HostingCapabilities 
       <button className="btn btn-primary btn-sm" disabled={stale || !inventory.data || !projects.data?.length || sites.length >= capabilities.sites_per_account} onClick={() => setCreating((value) => !value)}>{creating ? 'Close form' : 'Create site'}</button>
     </>} />
     <p className="text-sm text-[var(--color-ink-muted)]">Sites belong to {account?.email}&apos;s account. Site visits require a separate Cloudflare Access sign-in.</p>
+    {!!capabilities.account_storage_max_bytes && <HostingUsage />}
     {inventory.error && <QueryError error={inventory.error} retry={inventory.refresh} />}
     {projects.error && <QueryError error={projects.error} retry={projects.refresh} />}
     {projects.data?.length === 0 && <p className="card p-4 text-sm">Create a project in the customer console or CLI first, then return here to add its frontend.</p>}

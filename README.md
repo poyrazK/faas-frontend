@@ -102,3 +102,21 @@ for provider setup, independent flags, failure recovery, and live qualification.
 The backend uses standard Cloudflare for SaaS APIs without Enterprise custom metadata.
 An uncertain hostname-create result requires explicit operator recovery using a reviewed
 provider hostname ID; Gregale never automatically adopts a hostname match.
+
+
+### Hosting account storage
+
+The internal hosting dashboard shows account-wide reserved storage, ready release
+payload, pending upload slots and bytes awaiting cleanup. The backend enforces a
+1 GiB reservation cap and four pending releases across all projects/environments.
+Reservations cover staging and published copies plus a maximum manifest; rollback
+reuses them and retirement retains them until cleanup succeeds. The dashboard
+marks failed usage reads unavailable rather than reporting zero.
+
+An expandable calculator estimates hypothetical monthly R2/Worker usage costs.
+It uses operator-entered operations, requests and CPU counts and assumes current
+reserved storage is held for a full month. It uses integer USD millicents and
+public rates checked 2026-10-16, including R2 billing-unit rounding before allowances. It
+excludes the shared Workers base and other provider/platform charges. It is not
+measured traffic, billing or a customer price. Existing flags remain default-off.
+See the backend [storage runbook](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-usage.md).

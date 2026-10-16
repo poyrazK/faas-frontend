@@ -3,6 +3,8 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+  account_storage_max_bytes?: number;
+  account_pending_uploads_max?: number;
   domains_enabled?: boolean;
   domains_per_site?: number;
   domain_hostname_max_bytes?: number;
@@ -128,3 +130,10 @@ export function hostingSiteURL(hostname: string): string | null {
 }
 
 export const recoverHostingDomain = (id: string, domain: string, revision: number, hostname: string, providerID: string) => mutate<HostingDomain>(`${sitePath(id)}/domains/${encodeURIComponent(domain)}/recover`, 'POST', { expected_revision: revision, expected_hostname: hostname, provider_id: providerID });
+
+export interface HostingUsage {
+  account_id: string; reserved_bytes: number; storage_limit_bytes: number;
+  payload_bytes: number; ready_payload_bytes: number; retiring_reserved_bytes: number;
+  pending_uploads: number; pending_uploads_limit: number; releases: number; observed_at: string;
+}
+export const getHostingUsage = (signal?: AbortSignal) => read<HostingUsage>(`${root}/usage`, signal);
