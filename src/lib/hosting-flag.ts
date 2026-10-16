@@ -6,3 +6,5 @@ export const hostingDomainsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_H
 export const hostingAnalyticsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_ANALYTICS_ENABLED === 'true';
 
 export const hostingConfigDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_CONFIG_ENABLED === 'true';
+
+export const hostingPreviewsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_PREVIEWS_ENABLED === 'true';

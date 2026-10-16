@@ -27,3 +27,8 @@ it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('release configuration re
   vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_CONFIG_ENABLED', value); vi.resetModules();
   expect((await import('./hosting-flag')).hostingConfigDashboardEnabled).toBe(value === 'true');
 });
+
+it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('private previews require a separate explicit build opt-in (%s)', async (value) => {
+ vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_PREVIEWS_ENABLED', value); vi.resetModules();
+ expect((await import('./hosting-flag')).hostingPreviewsDashboardEnabled).toBe(value === 'true');
+});

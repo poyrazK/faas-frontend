@@ -11,9 +11,10 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled } from '@/lib/hosting-flag';
 import { HostingTraffic } from './HostingTraffic';
 import { HostingDomains } from './HostingDomains';
+import { HostingPreviews } from './HostingPreviews';
 import { HostingReleaseReview } from './HostingReleaseReview';
 import { reviewHostingRelease, hostingReviewIsCurrent } from '@/lib/hosting-review';
 
@@ -66,6 +67,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
       <Publication status={data.status} />
       {hostingAnalyticsDashboardEnabled && limits.analytics_enabled && <HostingTraffic key={site.id} siteID={site.id} />}
       {hostingDomainsDashboardEnabled && limits.domains_enabled && <HostingDomains key={site.id} site={site} limits={limits} disabled={busy || inventoryStale || !!query.error || awaitingRefresh} />}
+      {hostingPreviewsDashboardEnabled && limits.previews_enabled && site.durable_routing && <HostingPreviews key={site.id} site={site} releases={data.releases} limits={limits} disabled={disabled} />}
       <div className="flex flex-wrap gap-2">
         {site.durable_routing && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => {
           if (window.confirm(`${site.suspended ? 'Resume' : 'Suspend'} ${site.name}? The change applies after publication and edge refresh.`)) void run(() => suspendHostingSite(id, !site.suspended, site.revision), `${site.suspended ? 'Resume' : 'Suspension'} accepted. Publication is tracked below.`);

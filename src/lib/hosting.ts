@@ -3,6 +3,11 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+  previews_enabled?: boolean;
+  previews_per_site?: number;
+  preview_ttl_default_seconds?: number;
+  preview_ttl_min_seconds?: number;
+  preview_ttl_max_seconds?: number;
   staged_releases_supported?: boolean;
   config_enabled?: boolean;
   config_max_bytes?: number;
@@ -174,3 +179,12 @@ export interface HostingReleaseReview {
   settings_changed: boolean; before_settings: HostingReleaseSettings; after_settings: HostingReleaseSettings;
 }
 export interface HostingStageResult { state: 'staged'; release: HostingRelease; expected_revision: number }
+
+export interface HostingPreview {
+ id: string; site_id: string; release_id: string; hostname: string;
+ expires_at: string; revoked: boolean; generation: number; published_generation: number;
+ published_at?: string; next_attempt_at: string; last_error_code?: string; created_at: string;
+}
+export const listHostingPreviews = (site: string, signal?: AbortSignal) => read<HostingPreview[]>(`${sitePath(site)}/previews`, signal);
+export const createHostingPreview = (site: string, release: string, ttlSeconds: number) => mutate<HostingPreview>(`${sitePath(site)}/previews`, 'POST', { release_id: release, ttl_seconds: ttlSeconds });
+export const revokeHostingPreview = (site: string, id: string, generation: number) => mutate<HostingPreview>(`${sitePath(site)}/previews/${encodeURIComponent(id)}`, 'DELETE', { expected_generation: generation });
