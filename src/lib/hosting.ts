@@ -3,6 +3,7 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+  analytics_enabled?: boolean;
   account_storage_max_bytes?: number;
   account_pending_uploads_max?: number;
   domains_enabled?: boolean;
@@ -137,3 +138,15 @@ export interface HostingUsage {
   pending_uploads: number; pending_uploads_limit: number; releases: number; observed_at: string;
 }
 export const getHostingUsage = (signal?: AbortSignal) => read<HostingUsage>(`${root}/usage`, signal);
+
+export interface HostingTrafficCounters {
+  requests: number; payload_bytes: number; cache_hits: number; cache_misses: number;
+  client_errors: number; server_errors: number;
+}
+export interface HostingTraffic extends HostingTrafficCounters {
+  site_id: string; source: string; approximate: boolean;
+  period_start: string; period_end: string; observed_at: string; max_sample_interval: number;
+  buckets: (HostingTrafficCounters & { start: string })[];
+  failures: { start: string; status: number; code: string; requests: number }[];
+}
+export const getHostingTraffic = (id: string, signal?: AbortSignal) => read<HostingTraffic>(`${sitePath(id)}/traffic`, signal);

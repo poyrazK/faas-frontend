@@ -16,3 +16,9 @@ it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('custom domains require a
   expect(flags.hostingDashboardEnabled).toBe(true);
   expect(flags.hostingDomainsDashboardEnabled).toBe(value === 'true');
 });
+
+it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('traffic analytics require a separate explicit build opt-in (%s)', async (value) => {
+  vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_ANALYTICS_ENABLED', value);
+  vi.resetModules();
+  expect((await import('./hosting-flag')).hostingAnalyticsDashboardEnabled).toBe(value === 'true');
+});

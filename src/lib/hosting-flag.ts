@@ -2,3 +2,5 @@
 // Apid independently enforces its runtime flag, operator allowlist, and MFA.
 export const hostingDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED === 'true';
 export const hostingDomainsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_DOMAINS_ENABLED === 'true';
+
+export const hostingAnalyticsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_ANALYTICS_ENABLED === 'true';

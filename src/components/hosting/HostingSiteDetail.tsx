@@ -11,7 +11,8 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingDomainsDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled } from '@/lib/hosting-flag';
+import { HostingTraffic } from './HostingTraffic';
 import { HostingDomains } from './HostingDomains';
 
 export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClose }: {
@@ -59,6 +60,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         <CopyButton value={hostingSiteURL(site.hostname) || site.hostname} label="Copy URL" />
       </div>
       <Publication status={data.status} />
+      {hostingAnalyticsDashboardEnabled && limits.analytics_enabled && <HostingTraffic key={site.id} siteID={site.id} />}
       {hostingDomainsDashboardEnabled && limits.domains_enabled && <HostingDomains key={site.id} site={site} limits={limits} disabled={busy || inventoryStale || !!query.error || awaitingRefresh} />}
       <div className="flex flex-wrap gap-2">
         {site.durable_routing && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => {

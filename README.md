@@ -120,3 +120,20 @@ public rates checked 2026-10-16, including R2 billing-unit rounding before allow
 excludes the shared Workers base and other provider/platform charges. It is not
 measured traffic, billing or a customer price. Existing flags remain default-off.
 See the backend [storage runbook](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-usage.md).
+
+
+### Hosting traffic observations
+
+Build with `NEXT_PUBLIC_FRONTEND_HOSTING_ANALYTICS_ENABLED=true` as well as the
+main hosting flag to opt into the per-site traffic panel. The backend must also
+advertise `analytics_enabled`; it independently enforces runtime flags, MFA,
+operator/read scope and account/site ownership. Flags default off.
+
+The panel shows approximate authorized Worker requests, expected payload, file
+cache hits/misses, hourly trends and recent failure groups. Sampling, drops and
+provider lag prevent using these as billing or uptime counters. HEAD/304 have
+zero payload; payload is not confirmed visitor delivery. Provider query failure
+is shown as unavailable, not zero traffic, and does not disable deployment
+controls. Empty results prompt collection verification. No visitor IPs, emails,
+paths, URLs or headers are collected. CPU/provider charges remain separate.
+See the backend [traffic runbook](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-traffic.md).
