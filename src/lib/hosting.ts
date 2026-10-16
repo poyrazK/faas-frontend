@@ -3,6 +3,12 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+  config_enabled?: boolean;
+  config_max_bytes?: number;
+  config_redirects_max?: number;
+  config_header_rules_max?: number;
+  config_headers_per_rule_max?: number;
+  config_header_value_max_bytes?: number;
   analytics_enabled?: boolean;
   account_storage_max_bytes?: number;
   account_pending_uploads_max?: number;
@@ -47,7 +53,13 @@ export interface HostingFile {
   content_type: string;
 }
 
-export interface HostingManifest { files: HostingFile[]; spa_fallback: boolean }
+export interface HostingReleaseConfig {
+  version: 1;
+  redirects?: { from: string; to: string; status: 301 | 302 | 307 | 308 }[];
+  headers?: { path: string; values: Record<string, string> }[];
+  not_found?: string;
+}
+export interface HostingManifest { files: HostingFile[]; spa_fallback: boolean; config?: HostingReleaseConfig }
 
 export interface HostingRelease {
   id: string;

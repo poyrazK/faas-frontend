@@ -1,3 +1,5 @@
+import { hostingConfigDashboardEnabled } from './hosting-flag';
+import { hostingConfigFilename, parseHostingConfig } from './hosting-config';
 import {
   createHostingRelease, getHostingUploads, finalizeHostingRelease, promoteHostingRelease,
   type HostingCapabilities, type HostingManifest, type HostingFile, type HostingSite,
@@ -41,9 +43,10 @@ export async function prepareHostingFiles(
   selected: readonly File[], spa: boolean, limits: HostingCapabilities, signal: AbortSignal,
   progress: (completed: number, total: number) => void = () => {},
 ): Promise<PreparedHostingFiles> {
-  if (selected.length === 0 || selected.length > limits.files_max) throw new Error(`Select between 1 and ${limits.files_max} files.`);
+  if (selected.length === 0 || selected.length > limits.files_max + 1) throw new Error(`Select between 1 and ${limits.files_max} files.`);
   const files = new Map<string, File>();
   let bytes = 0;
+  let configFile: File | undefined;
   let root: string | undefined;
   for (const file of selected) {
     signal.throwIfAborted();
@@ -54,12 +57,19 @@ export async function prepareHostingFiles(
     if (!relative || !prefix || (root !== undefined && root !== prefix)) throw new Error('Select one built output directory.');
     root = prefix;
     const path = relative.slice(prefix.length + 1);
+    if (path === hostingConfigFilename) {
+      if (configFile) throw new Error('The directory contains duplicate configuration files.');
+      if (!hostingConfigDashboardEnabled || !limits.config_enabled) throw new Error('Release configuration is disabled for this dashboard or API.');
+      if (!limits.config_max_bytes || file.size > limits.config_max_bytes) throw new Error('Hosting configuration exceeds its byte limit.');
+      configFile = file; continue;
+    }
     if (!validPath(path, limits.path_max_bytes) || files.has(path)) throw new Error('The directory contains duplicate or unsupported URL paths.');
     if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > limits.file_max_bytes) throw new Error(`A file exceeds ${limits.file_max_bytes} bytes.`);
     bytes += file.size;
     if (bytes > limits.release_max_bytes) throw new Error(`The directory exceeds ${limits.release_max_bytes} bytes.`);
     files.set(path, file);
   }
+  if (files.size > limits.files_max) throw new Error(`Select at most ${limits.files_max} content files.`);
   if (!files.has('index.html')) throw new Error('Choose the output folder containing index.html at its root.');
   const manifest: HostingManifest = { files: [], spa_fallback: spa };
   for (const [path, file] of [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
@@ -74,7 +84,11 @@ export async function prepareHostingFiles(
     if (contentType.length > limits.content_type_max_bytes) throw new Error('A file content type exceeds the hosting limit.');
     manifest.files.push({ path, size: file.size, content_type: contentType,
       sha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('') });
-    progress(manifest.files.length, selected.length);
+    progress(manifest.files.length, files.size);
+  }
+  if (configFile) {
+    manifest.config = parseHostingConfig(await configFile.text(), limits, manifest.files);
+    signal.throwIfAborted();
   }
   if (new TextEncoder().encode(JSON.stringify(manifest)).length > limits.manifest_max_bytes) throw new Error('The file manifest exceeds the hosting limit.');
   return { manifest, files, bytes };
@@ -122,7 +136,7 @@ export async function deployHostingDirectory(
     const prepared = await prepareHostingFiles(selected, spa, limits, signal, (completed, total) => onProgress({ phase, completed, total, bytes: 0, totalBytes: 0 }));
     const report = (next: HostingDeployProgress['phase'], completed = 0, bytes = 0) => {
       phase = next;
-      onProgress({ phase, completed, total: selected.length, bytes, totalBytes: prepared.bytes, releaseID });
+      onProgress({ phase, completed, total: prepared.files.size, bytes, totalBytes: prepared.bytes, releaseID });
     };
     report('creating');
     const release = await createHostingRelease(site.id, prepared.manifest, signal);

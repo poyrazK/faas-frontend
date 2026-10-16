@@ -22,3 +22,8 @@ it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('traffic analytics requir
   vi.resetModules();
   expect((await import('./hosting-flag')).hostingAnalyticsDashboardEnabled).toBe(value === 'true');
 });
+
+it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('release configuration requires an explicit build opt-in (%s)', async (value) => {
+  vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_CONFIG_ENABLED', value); vi.resetModules();
+  expect((await import('./hosting-flag')).hostingConfigDashboardEnabled).toBe(value === 'true');
+});

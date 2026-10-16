@@ -31,7 +31,7 @@ function grants(manifest: HostingManifest): HostingUploadResponse {
 }
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); });
 
 describe('bounded output-directory manifests', () => {
   it('hashes bytes and preserves framework paths, empty files, and MIME types', async () => {
@@ -158,5 +158,47 @@ describe('directory deployment lifecycle', () => {
     const calls = deploymentServer({ signal: controller });
     await expect(deployHostingDirectory(site, [file('index.html')], false, limits, controller.signal, () => {})).rejects.toMatchObject({ releaseID, message: expect.stringContaining('Deployment stopped') });
     expect(calls.some((call) => /\/(finalize|promotions)$/.test(call.path))).toBe(false);
+  });
+});
+
+
+describe('immutable release configuration uploads', () => {
+  const configLimits: HostingCapabilities = { ...limits, config_enabled: true, config_max_bytes: 32768, config_redirects_max: 32, config_header_rules_max: 16, config_headers_per_rule_max: 8, config_header_value_max_bytes: 2048 };
+  const config = { version: 1, redirects: [{ from: '/old', to: '/new', status: 308 }], headers: [{ path: '/*', values: { 'content-security-policy': "default-src 'self'" } }], not_found: '404.html' };
+  async function prepare(selected: File[], overrides: Partial<HostingCapabilities> = {}) {
+    vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_CONFIG_ENABLED', 'true'); vi.resetModules();
+    const upload = await import('./hosting-upload');
+    return upload.prepareHostingFiles(selected, false, { ...configLimits, ...overrides }, new AbortController().signal);
+  }
+  it('stores configuration in the manifest and excludes it from public files, payload, and grants', async () => {
+    const prepared = await prepare([file('index.html', 'home'), file('404.html', 'missing'), file('gregale-hosting.json', JSON.stringify(config))], { files_max: 2 });
+    expect(prepared.manifest.config).toEqual(config); expect(prepared.files.size).toBe(2); expect(prepared.bytes).toBe(11);
+    expect(prepared.manifest.files.map(f => f.path)).toEqual(['404.html', 'index.html']);
+  });
+  it('requires both the independent dashboard flag and API capability', async () => {
+    const selected = [file('index.html'), file('gregale-hosting.json', JSON.stringify(config))];
+    await expect(prepare(selected, { config_enabled: false })).rejects.toThrow('disabled');
+    vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_CONFIG_ENABLED', 'false'); vi.resetModules();
+    const upload = await import('./hosting-upload');
+    await expect(upload.prepareHostingFiles(selected, false, configLimits, new AbortController().signal)).rejects.toThrow('disabled');
+  });
+  it.each([
+    { ...config, version: 2 }, { ...config, rewrites: [] }, { ...config, not_found: 'absent.html' },
+    { ...config, redirects: [{ from: '/old', to: '//foreign.example/', status: 308 }] },
+    { ...config, redirects: [{ from: '/old', to: '/old', status: 308 }] },
+    { ...config, redirects: [{ from: '/old', to: '/new', status: 308 }, { from: '/new', to: '/old', status: 301 }] },
+    { ...config, headers: [{ path: '/*', values: { 'cache-control': 'public' } }] },
+    { ...config, headers: [{ path: '/*', values: { 'set-cookie': 'x=y' } }] },
+    { ...config, headers: [{ path: '/*', values: { 'x-frame-options': 'DENY\r\nX: injected' } }] },
+  ])('rejects invalid policy before any network calls (%j)', async (invalid) => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    await expect(prepare([file('index.html'), file('404.html'), file('gregale-hosting.json', JSON.stringify(invalid))])).rejects.toThrow('configuration');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('enforces configuration bytes, rule counts, and content limits independently', async () => {
+    const selected = [file('index.html'), file('404.html'), file('gregale-hosting.json', JSON.stringify(config))];
+    await expect(prepare(selected, { config_max_bytes: 1 })).rejects.toThrow('byte limit');
+    await expect(prepare(selected, { config_redirects_max: 0 })).rejects.toThrow('configuration');
+    await expect(prepare(selected, { files_max: 1 })).rejects.toThrow();
   });
 });

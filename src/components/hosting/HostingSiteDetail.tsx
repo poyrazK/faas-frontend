@@ -11,7 +11,7 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled } from '@/lib/hosting-flag';
 import { HostingTraffic } from './HostingTraffic';
 import { HostingDomains } from './HostingDomains';
 
@@ -81,6 +81,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
       }}>
         <h3 className="font-semibold">Deploy a built frontend</h3>
         <p className="text-sm text-[var(--color-ink-muted)]">Select your build output folder, such as dist or out, with index.html at its root. Limits: {limits.files_max} files, {mib(limits.file_max_bytes)} MiB per file, {mib(limits.release_max_bytes)} MiB total.</p>
+        {hostingConfigDashboardEnabled && limits.config_enabled && <p className="text-sm text-[var(--color-ink-muted)]">Include gregale-hosting.json at the folder root to configure redirects, response headers, and an HTML 404 page. These settings are restored with a release rollback.</p>}
         <label className="block text-sm">Output directory<input ref={input} aria-label="Built output directory" className="field mt-1" type="file" multiple {...{ webkitdirectory: '' }} disabled={disabled} onChange={(event) => { setFiles(Array.from(event.target.files ?? [])); setError(''); setProgress(null); }} /></label>
         {files.length > 0 && <p className="text-xs">{files.length} files selected · {mib(files.reduce((total, file) => total + file.size, 0))} MiB</p>}
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={spa} disabled={disabled} onChange={(event) => setSpa(event.target.checked)} /> Use index.html for single-page app routes</label>

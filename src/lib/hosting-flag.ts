@@ -4,3 +4,5 @@ export const hostingDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_
 export const hostingDomainsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_DOMAINS_ENABLED === 'true';
 
 export const hostingAnalyticsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_ANALYTICS_ENABLED === 'true';
+
+export const hostingConfigDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_CONFIG_ENABLED === 'true';
