@@ -80,7 +80,7 @@ export interface HostingDomain {
   id: string; site_id: string; hostname: string; challenge: string;
   state: 'pending_dns' | 'pending_certificate' | 'active' | 'deleting';
   revision: number; generation: number; published_generation: number; published_at?: string;
-  details: { tls_status: 'pending' | 'active' | 'failed'; records: HostingDNSRecord[]; verified_at?: string };
+  details: { provider_id?: string; create_started_at?: string; tls_status: 'pending' | 'active' | 'failed'; records: HostingDNSRecord[]; verified_at?: string };
   next_attempt_at: string; attempts: number; last_error_code?: string; created_at: string;
 }
 
@@ -126,3 +126,5 @@ export function hostingSiteURL(hostname: string): string | null {
   if (!/^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(hostname)) return null;
   return `https://${hostname}`;
 }
+
+export const recoverHostingDomain = (id: string, domain: string, revision: number, hostname: string, providerID: string) => mutate<HostingDomain>(`${sitePath(id)}/domains/${encodeURIComponent(domain)}/recover`, 'POST', { expected_revision: revision, expected_hostname: hostname, provider_id: providerID });

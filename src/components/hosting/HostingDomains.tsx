@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { useHostingQuery } from '@/lib/useHostingQuery';
-import { listHostingDomains, createHostingDomain, deleteHostingDomain, hostingSiteURL, type HostingCapabilities, type HostingDNSRecord, type HostingDomain, type HostingSite } from '@/lib/hosting';
+import { listHostingDomains, recoverHostingDomain, createHostingDomain, deleteHostingDomain, hostingSiteURL, type HostingCapabilities, type HostingDNSRecord, type HostingDomain, type HostingSite } from '@/lib/hosting';
 import { CopyButton } from '@/components/ui/bits';
 import { Spinner } from '@/components/ui/States';
 
@@ -17,9 +17,10 @@ export function HostingDomains({ site, limits, disabled }: { site: HostingSite; 
   const [message, setMessage] = useState('');
   const [needsRefresh, setNeedsRefresh] = useState<string | null>(null);
   const stale = !!query.error || !query.data || (needsRefresh !== null && (!query.observedAt || query.observedAt <= needsRefresh));
-  const blocked = disabled || busy || stale || site.status === 'deleting';
+  const writesBlocked = disabled || busy || stale;
+  const blocked = writesBlocked || site.status === 'deleting';
   async function run(action: () => Promise<unknown>, success: string) {
-    if (blocked) return;
+    if (writesBlocked) return;
     setBusy(true); setMessage('');
     try { await action(); setMessage(success); }
     catch (error) { setMessage((error instanceof Error ? error.message : 'Domain request failed.') + ' Refresh domains before retrying an uncertain request.'); }
@@ -41,6 +42,7 @@ export function HostingDomains({ site, limits, disabled }: { site: HostingSite; 
       <div className="flex flex-wrap items-center justify-between gap-2"><strong className="break-all text-sm">{domain.hostname}</strong><span className={`badge ${domain.state === 'active' ? 'badge-success' : 'badge-warning'}`}>{stateLabels[domain.state]}</span></div>
       <p className="text-xs">Certificate: {domain.details.tls_status} · Routing: {domain.published_generation === domain.generation ? 'published' : 'pending'}</p>
       {domain.last_error_code && <p className="text-xs text-[var(--color-danger)]">{errorLabels[domain.last_error_code] || 'The last domain check needs attention.'}</p>}
+      {domain.details.create_started_at && !domain.details.provider_id && domain.last_error_code && <DomainRecovery domain={domain} disabled={writesBlocked} recover={(providerID) => run(() => recoverHostingDomain(site.id, domain.id, domain.revision, domain.hostname, providerID), 'Provider ID bound. Provisioning or cleanup will resume.')} />}
       {domain.state !== 'active' && domain.state !== 'deleting' && <DNSInstructions records={[
         { type: 'TXT', name: `_gregale-hosting.${domain.hostname}`, value: `gregale-hosting=${domain.challenge}` },
         ...(limits.domain_cname_target ? [{ type: 'CNAME' as const, name: domain.hostname, value: limits.domain_cname_target }] : []),
@@ -60,4 +62,16 @@ function DNSInstructions({ records }: { records: HostingDNSRecord[] }) {
   return <div className="space-y-2"><p className="text-xs">Add these records at your DNS provider. Keep TXT records for verification and certificate renewal.</p><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr>{['Type', 'Name', 'Value', ''].map((name,index) => <th className="p-2 font-medium" key={index}>{name}</th>)}</tr></thead><tbody>{records.map((record,index) => <tr className="border-t border-[var(--color-line)]" key={index}>
     <td className="p-2">{record.type}</td><td className="max-w-xs break-all p-2 font-mono">{record.name}</td><td className="max-w-xs break-all p-2 font-mono">{record.value}</td><td className="space-y-1 p-2"><CopyButton value={record.name} label="Copy name" /><CopyButton value={record.value} label="Copy value" /></td>
   </tr>)}</tbody></table></div></div>;
+}
+
+function DomainRecovery({ domain, disabled, recover }: { domain: HostingDomain; disabled: boolean; recover: (providerID: string) => Promise<void> }) {
+  const [providerID, setProviderID] = useState('');
+  return <form className="space-y-2 rounded border border-[var(--color-line)] p-3" onSubmit={(event) => {
+    event.preventDefault();
+    if (!disabled && window.confirm(`Bind Cloudflare hostname ID ${providerID} to ${domain.hostname}? Verify the exact hostname and dedicated zone in Cloudflare first. This authorizes Gregale to manage and delete that resource.`)) void recover(providerID);
+  }}>
+    <p className="text-xs">The provider create result needs operator review. Gregale will not create again or adopt a hostname match. Check the dedicated zone in Cloudflare, then bind the exact hostname ID. Recovery is available after the in-flight request window closes.</p>
+    <label className="block text-xs">Reviewed Cloudflare hostname ID<input className="field mt-1" value={providerID} onChange={(event) => setProviderID(event.target.value)} required pattern="[0-9a-fA-F-]{36}" maxLength={36} disabled={disabled} /></label>
+    <button className="btn btn-secondary btn-sm" disabled={disabled || !providerID}>Bind reviewed provider ID</button>
+  </form>;
 }

@@ -99,5 +99,6 @@ cache safety, then removes provider resources. A removing row counts against
 the quota until cleanup finishes. Removed names stay reserved. Use the backend
 [domain runbook](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-domains.md)
 for provider setup, independent flags, failure recovery, and live qualification.
-The backend’s automatic provider recovery requires Cloudflare’s Enterprise
-custom-metadata add-on; no plan change is performed by enabling a build flag.
+The backend uses standard Cloudflare for SaaS APIs without Enterprise custom metadata.
+An uncertain hostname-create result requires explicit operator recovery using a reviewed
+provider hostname ID; Gregale never automatically adopts a hostname match.
