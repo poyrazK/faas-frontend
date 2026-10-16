@@ -16,7 +16,12 @@ describe('exact budget money', () => {
   });
   it('computes a warning threshold exactly even at the supported maximum', () => {
     const limit = Number.MAX_SAFE_INTEGER;
-    expect(budgetWarningThreshold(limit)).toBe(Number(BigInt(limit) * BigInt(4) / BigInt(5)));
+    expect(budgetWarningThreshold(limit)).toBe(Number((BigInt(limit) * BigInt(4) + BigInt(4)) / BigInt(5)));
     expect(budgetWarningThreshold(0)).toBe(0);
+  });
+  it('does not alert at zero when 80% falls between representable units', () => {
+    expect(budgetWarningThreshold(1)).toBe(1);
+    expect(budgetWarningThreshold(5)).toBe(4);
+    expect(budgetWarningThreshold(1000001)).toBe(800001);
   });
 });

@@ -68,5 +68,6 @@ export function budgetMoney(value: number): string {
 
 export function budgetWarningThreshold(limit: number): number {
   if (!Number.isSafeInteger(limit) || limit < 0) throw new Error('Invalid budget amount.');
-  return Number(BigInt(limit) * BigInt(4) / BigInt(5));
+  // Round up to the next millicent so the warning cannot fire below 80%.
+  return Number((BigInt(limit) * BigInt(4) + BigInt(4)) / BigInt(5));
 }
