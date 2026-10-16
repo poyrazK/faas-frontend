@@ -202,3 +202,24 @@ describe('immutable release configuration uploads', () => {
     await expect(prepare(selected, { files_max: 1 })).rejects.toThrow();
   });
 });
+
+describe('staging without publishing', () => {
+  it('uploads and verifies without a promotion call or changing active intent', async () => {
+    const calls=deploymentServer();const phases:string[]=[];
+    const result=await deployHostingDirectory(site,[file('index.html'),file('app.js')],false,{...limits,staged_releases_supported:true},new AbortController().signal,p => phases.push(p.phase),true);
+    expect(result).toMatchObject({state:'staged',release:{id:releaseID,state:'ready'},expected_revision:7});
+    expect(calls.filter(c => c.path.endsWith('/promotions'))).toHaveLength(0);
+    expect(phases.at(-1)).toBe('staged');expect(phases).not.toContain('promoting');
+    expect(site.active_release_id).toBe('previous');
+  });
+  it('rejects an older API before creating or uploading any release', async () => {
+    const calls=deploymentServer();
+    await expect(deployHostingDirectory(site,[file('index.html')],false,limits,new AbortController().signal,()=>{},true)).rejects.toThrow('does not support');
+    expect(calls).toHaveLength(0);
+  });
+  it('retains release identity after a failed stage verification', async () => {
+    const calls=deploymentServer({fail:'finalize'});
+    await expect(deployHostingDirectory(site,[file('index.html')],false,{...limits,staged_releases_supported:true},new AbortController().signal,()=>{},true)).rejects.toMatchObject({releaseID});
+    expect(calls.some(c => c.path.endsWith('/promotions'))).toBe(false);
+  });
+});

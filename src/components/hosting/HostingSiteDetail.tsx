@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getHostingStatus, listHostingReleases, promoteHostingRelease, suspendHostingSite, deleteHostingSite,
   retireHostingRelease, finalizeHostingRelease, hostingSiteURL,
-  type HostingCapabilities, type HostingSiteStatus,
+  type HostingCapabilities, type HostingSiteStatus, type HostingReleaseReview as Review,
 } from '@/lib/hosting';
 import { ApiError } from '@/lib/api';
 import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hosting-upload';
@@ -14,6 +14,8 @@ import { CopyButton } from '@/components/ui/bits';
 import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled } from '@/lib/hosting-flag';
 import { HostingTraffic } from './HostingTraffic';
 import { HostingDomains } from './HostingDomains';
+import { HostingReleaseReview } from './HostingReleaseReview';
+import { reviewHostingRelease, hostingReviewIsCurrent } from '@/lib/hosting-review';
 
 export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClose }: {
   id: string; limits: HostingCapabilities; inventoryStale: boolean; onChange: () => void; onClose: () => void;
@@ -29,6 +31,8 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
   const [needsRefresh, setNeedsRefresh] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [spa, setSpa] = useState(false);
+  const [stageOnly, setStageOnly] = useState(true);
+  const [review, setReview] = useState<Review | null>(null);
   const [progress, setProgress] = useState<HostingDeployProgress | null>(null);
   const upload = useRef<AbortController | null>(null);
   const input = useRef<HTMLInputElement | null>(null);
@@ -75,9 +79,9 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         if (disabled || files.length === 0 || data.releases.length >= limits.releases_per_site) return;
         const controller = new AbortController(); upload.current = controller;
         void run(async () => {
-          await deployHostingDirectory(site, files, spa, limits, controller.signal, setProgress);
+          await deployHostingDirectory(site, files, spa, limits, controller.signal, setProgress, stageOnly);
           setFiles([]); if (input.current) input.current.value = '';
-        }, 'Deployment accepted. Watch publication progress before checking the site.').finally(() => { if (upload.current === controller) upload.current = null; });
+        }, stageOnly ? 'Release staged and verified. Review its changes before publishing.' : 'Deployment accepted. Watch publication progress before checking the site.').finally(() => { if (upload.current === controller) upload.current = null; });
       }}>
         <h3 className="font-semibold">Deploy a built frontend</h3>
         <p className="text-sm text-[var(--color-ink-muted)]">Select your build output folder, such as dist or out, with index.html at its root. Limits: {limits.files_max} files, {mib(limits.file_max_bytes)} MiB per file, {mib(limits.release_max_bytes)} MiB total.</p>
@@ -85,8 +89,10 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         <label className="block text-sm">Output directory<input ref={input} aria-label="Built output directory" className="field mt-1" type="file" multiple {...{ webkitdirectory: '' }} disabled={disabled} onChange={(event) => { setFiles(Array.from(event.target.files ?? [])); setError(''); setProgress(null); }} /></label>
         {files.length > 0 && <p className="text-xs">{files.length} files selected · {mib(files.reduce((total, file) => total + file.size, 0))} MiB</p>}
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={spa} disabled={disabled} onChange={(event) => setSpa(event.target.checked)} /> Use index.html for single-page app routes</label>
+        {limits.staged_releases_supported && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={stageOnly} disabled={disabled} onChange={(event) => setStageOnly(event.target.checked)} /> Stage and verify without publishing</label>}
+        {!limits.staged_releases_supported && stageOnly && <p role="alert" className="text-sm">This API needs an upgrade before it can stage releases safely.</p>}
         <p className="text-xs text-[var(--color-ink-muted)]">Publishing replaces the site&apos;s active release. {site.suspended ? 'The site will remain suspended.' : 'Older verified releases remain available for rollback.'}</p>
-        <button className="btn btn-primary btn-sm" disabled={disabled || files.length === 0 || data.releases.length >= limits.releases_per_site}>Deploy directory</button>
+        <button className="btn btn-primary btn-sm" disabled={disabled || files.length === 0 || data.releases.length >= limits.releases_per_site || stageOnly && !limits.staged_releases_supported}>{stageOnly ? 'Stage release' : 'Deploy and publish'}</button>
         {data.releases.length >= limits.releases_per_site && <p className="text-sm">This site has reached its {limits.releases_per_site}-release limit. Retire an unused release and wait for cleanup before deploying again.</p>}
       </form>}
       {progress && <div className="space-y-2 text-sm" role="status" aria-live="polite">
@@ -97,6 +103,13 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
       {busy && !progress && <p role="status" className="text-sm">Applying change…</p>}
       {error && <p role="alert" className="text-sm text-[var(--color-danger)]">{error}</p>}
       {message && <p role="status" className="text-sm">{message}</p>}
+      {review && <HostingReleaseReview review={review} stale={!hostingReviewIsCurrent(review, site, data.releases)} disabled={disabled}
+        onClose={() => setReview(null)} onPublish={() => {
+          if (disabled || !hostingReviewIsCurrent(review, site, data.releases)) return;
+          if (window.confirm(`Publish reviewed release ${review.release_id.slice(0,8)} at revision ${review.expected_revision}?`)) {
+            void run(() => promoteHostingRelease(id, review.release_id, review.expected_revision), 'Release promotion accepted. Watch publication progress.').finally(() => setReview(null));
+          }
+        }} />}
       <div className="space-y-3"><h3 className="font-semibold">Releases <span className="text-xs font-normal text-[var(--color-ink-muted)]">{data.releases.length} / {limits.releases_per_site}</span></h3>
         {data.releases.length === 0 ? <p className="text-sm text-[var(--color-ink-muted)]">No releases yet.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm">
           <thead className="text-xs text-[var(--color-ink-muted)]"><tr>{['Release', 'State', 'Created', 'Files / size', 'Actions'].map((label) => <th className="p-2 font-medium" key={label}>{label}</th>)}</tr></thead>
@@ -104,13 +117,13 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
             const active = release.id === site.active_release_id;
             return <tr key={release.id} className="border-t border-[var(--color-line)]">
               <td className="p-2 font-mono text-xs" title={release.id}>{release.id.slice(0, 8)}</td>
-              <td className="p-2"><span className={`badge ${active ? 'badge-brand' : 'badge-neutral'}`}>{active ? 'Active intent' : release.state === 'pending' ? 'Awaiting verification' : release.state === 'retiring' ? 'Retiring' : 'Verified'}</span></td>
+              <td className="p-2"><span className={`badge ${active ? 'badge-brand' : 'badge-neutral'}`}>{active ? 'Active intent' : release.state === 'pending' ? 'Awaiting verification' : release.state === 'retiring' ? 'Retiring' : release.first_promoted_at ? 'Previously published' : 'Staged / verified'}</span></td>
               <td className="p-2 text-xs">{new Date(release.created_at).toLocaleString()}</td>
               <td className="p-2 text-xs">{release.manifest.files.length} / {mib(release.manifest.files.reduce((total, file) => total + file.size, 0))} MiB</td>
               <td className="p-2"><div className="flex flex-wrap gap-2">
                 {release.state === 'ready' && !active && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => {
-                  if (window.confirm(`Publish release ${release.id.slice(0, 8)} to ${site.name}? This replaces its active release.`)) void run(() => promoteHostingRelease(id, release.id, site.revision), 'Release promotion accepted. Watch publication progress.');
-                }}>{site.active_release_id ? 'Roll back / publish' : 'Publish'}</button>}
+                  try { setReview(reviewHostingRelease(site, data.releases, release.id)); setError(''); } catch (e) { setError(e instanceof Error ? e.message : 'Comparison unavailable. Refresh and retry.'); }
+                }}>Review / publish</button>}
                 {release.state === 'pending' && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => void run(() => finalizeHostingRelease(id, release.id, limits), 'Verification completed. Publish the verified release when ready.')}>Verify upload</button>}
                 {!active && release.state !== 'retiring' && <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={() => {
                   if (window.confirm(`Retire release ${release.id.slice(0, 8)}? It will no longer be available for rollback after cleanup.`)) void run(() => retireHostingRelease(id, release.id), 'Retirement accepted. The release remains listed until safe cleanup finishes.');
@@ -149,5 +162,6 @@ function phaseLabel(p: HostingDeployProgress): string {
     case 'verifying': return 'Verifying uploaded files…';
     case 'promoting': return 'Requesting publication…';
     case 'accepted': return 'Deployment accepted';
+    case 'staged': return 'Release staged and verified';
   }
 }

@@ -3,6 +3,7 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+  staged_releases_supported?: boolean;
   config_enabled?: boolean;
   config_max_bytes?: number;
   config_redirects_max?: number;
@@ -68,6 +69,7 @@ export interface HostingRelease {
   manifest: HostingManifest;
   created_at: string;
   retired_at?: string;
+  first_promoted_at?: string;
 }
 
 export interface HostingSiteStatus {
@@ -162,3 +164,13 @@ export interface HostingTraffic extends HostingTrafficCounters {
   failures: { start: string; status: number; code: string; requests: number }[];
 }
 export const getHostingTraffic = (id: string, signal?: AbortSignal) => read<HostingTraffic>(`${sitePath(id)}/traffic`, signal);
+
+
+export interface HostingReleaseSettings { spa_fallback: boolean; config: HostingReleaseConfig | null }
+export interface HostingReleaseReview {
+  site_id: string; expected_revision: number; base_release_id: string; release_id: string;
+  added: number; changed: number; removed: number; before_bytes: number; after_bytes: number;
+  files: { path: string; change: 'added' | 'changed' | 'removed'; before: HostingFile | null; after: HostingFile | null }[];
+  settings_changed: boolean; before_settings: HostingReleaseSettings; after_settings: HostingReleaseSettings;
+}
+export interface HostingStageResult { state: 'staged'; release: HostingRelease; expected_revision: number }

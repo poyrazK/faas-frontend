@@ -3,7 +3,7 @@ import { hostingConfigFilename, parseHostingConfig } from './hosting-config';
 import {
   createHostingRelease, getHostingUploads, finalizeHostingRelease, promoteHostingRelease,
   type HostingCapabilities, type HostingManifest, type HostingFile, type HostingSite,
-  type HostingUpload, type HostingUploadResponse,
+  type HostingUpload, type HostingUploadResponse, type HostingStageResult,
 } from './hosting';
 
 export interface PreparedHostingFiles {
@@ -13,7 +13,7 @@ export interface PreparedHostingFiles {
 }
 
 export interface HostingDeployProgress {
-  phase: 'hashing' | 'creating' | 'uploading' | 'verifying' | 'promoting' | 'accepted';
+  phase: 'hashing' | 'creating' | 'uploading' | 'verifying' | 'promoting' | 'accepted' | 'staged';
   completed: number;
   total: number;
   bytes: number;
@@ -124,14 +124,19 @@ export function validateHostingGrants(response: HostingUploadResponse, site: str
   return grants;
 }
 
+type HostingDeployArgs = [site: HostingSite, selected: readonly File[], spa: boolean, limits: HostingCapabilities,
+  signal: AbortSignal, onProgress: (progress: HostingDeployProgress) => void];
+export function deployHostingDirectory(...args: HostingDeployArgs): Promise<HostingSite>;
+export function deployHostingDirectory(...args: [...HostingDeployArgs, stageOnly: boolean]): Promise<HostingSite | HostingStageResult>;
 export async function deployHostingDirectory(
   site: HostingSite, selected: readonly File[], spa: boolean, limits: HostingCapabilities,
-  signal: AbortSignal, onProgress: (progress: HostingDeployProgress) => void,
-): Promise<HostingSite> {
+  signal: AbortSignal, onProgress: (progress: HostingDeployProgress) => void, stageOnly = false,
+): Promise<HostingSite | HostingStageResult> {
   let releaseID: string | undefined;
   let verified = false;
   let phase: HostingDeployProgress['phase'] = 'hashing';
   try {
+    if (stageOnly && !limits.staged_releases_supported) throw new Error('This API does not support isolated staging. Upgrade the API and publishers first.');
     onProgress({ phase, completed: 0, total: selected.length, bytes: 0, totalBytes: 0 });
     const prepared = await prepareHostingFiles(selected, spa, limits, signal, (completed, total) => onProgress({ phase, completed, total, bytes: 0, totalBytes: 0 }));
     const report = (next: HostingDeployProgress['phase'], completed = 0, bytes = 0) => {
@@ -171,8 +176,12 @@ export async function deployHostingDirectory(
       report('uploading', ++completed, bytes += file.size);
     }
     report('verifying', completed, bytes);
-    await finalizeHostingRelease(site.id, releaseID, limits, signal);
+    const verifiedRelease = await finalizeHostingRelease(site.id, releaseID, limits, signal);
     verified = true;
+    if (stageOnly) {
+      report('staged', completed, bytes);
+      return { state: 'staged', release: verifiedRelease, expected_revision: site.revision };
+    }
     report('promoting', completed, bytes);
     // Use the revision visible when deployment began. Never overwrite a
     // concurrent promotion/suspension by silently fetching a fresh revision.
