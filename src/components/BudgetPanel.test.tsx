@@ -11,6 +11,24 @@ const policy: BudgetPolicy = {
 };
 
 describe('budget monitoring health', () => {
+  it('keeps a latched manual stop visible before the new month has an evaluation', () => {
+    const html = renderToStaticMarkup(<BudgetHealth policy={{ ...policy, enforcement_ready: true,
+      spec: { ...policy.spec, action: 'stop_previews', resume_rule: 'manual' },
+      runtime: { alerts: [], stops: [{ id: 'stop', policy_id: 'budget', revision: 1, period_start: '2026-09-01T00:00:00Z', period_end: '2026-10-01T00:00:00Z', requested_at: '2026-09-20T10:00:00Z', drain_deadline: '2026-09-20T10:00:30Z', resume_rule: 'manual', evaluation: { period_start: '2026-09-01T00:00:00Z', period_end: '2026-10-01T00:00:00Z', as_of: '2026-09-20T10:00:00Z', evaluated_at: '2026-09-20T10:00:00Z', evidence_through_id: 1, coverage_complete: true, fresh: true, reasons: [] }, targets: [] }] } }} />);
+    expect(html).toContain('Preview stopping active');
+    expect(html).toContain('Production can continue');
+    expect(html).toContain('Awaiting scheduler acknowledgement');
+    expect(html).toContain('Stopping is not yet confirmed');
+    expect(html).toContain('Disable or change this policy');
+    expect(html).not.toContain('Workloads continue running');
+  });
+  it('does not show a failed shutdown as a stopped preview', () => {
+    const html = renderToStaticMarkup(<BudgetHealth policy={{ ...policy, spec: { ...policy.spec, action: 'stop_previews' }, runtime: { alerts: [], stops: [{ id: 'stop', policy_id: 'budget', revision: 1, period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', requested_at: '2026-10-16T10:00:00Z', drain_deadline: '2026-10-16T10:00:30Z', resume_rule: 'next_period', evaluation: { period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', as_of: '2026-10-16T10:00:00Z', evaluated_at: '2026-10-16T10:00:00Z', evidence_through_id: 1, coverage_complete: true, fresh: true, reasons: [] }, targets: [{ app_id: 'preview', state: 'failed', resident_count: 1, observed_at: '2026-10-16T10:01:00Z', last_error: 'vm_teardown_failed' }] }] } }} />);
+    expect(html).toContain('preview: failed');
+    expect(html).toContain('1 resident instances');
+    expect(html).toContain('Shutdown could not be confirmed');
+    expect(html).not.toContain('preview: Stopped');
+  });
   it('does not present missing evaluation as zero spend or protection', () => {
     const html = renderToStaticMarkup(<BudgetHealth policy={policy} />);
     expect(html).toContain('Spending is not yet known');

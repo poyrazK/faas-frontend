@@ -36,6 +36,25 @@ export interface BudgetPolicy {
   reasons: string[];
   runtime?: {
     evaluation?: BudgetEvaluation;
+    stops?: {
+      id: string;
+      policy_id: string;
+      revision: number;
+      period_start: string;
+      period_end: string;
+      requested_at: string;
+      drain_deadline: string;
+      resume_rule: 'manual' | 'next_period';
+      evaluation: BudgetEvaluation;
+      targets: {
+        app_id: string;
+        environment_id?: string;
+        state: 'requested' | 'draining' | 'enforced' | 'failed' | 'unavailable';
+        observed_at: string;
+        resident_count: number;
+        last_error?: string;
+      }[];
+    }[];
     alerts: {
       id: string;
       policy_revision: number;
