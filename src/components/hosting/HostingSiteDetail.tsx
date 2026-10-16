@@ -11,6 +11,8 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
+import { hostingDomainsDashboardEnabled } from '@/lib/hosting-flag';
+import { HostingDomains } from './HostingDomains';
 
 export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClose }: {
   id: string; limits: HostingCapabilities; inventoryStale: boolean; onChange: () => void; onClose: () => void;
@@ -57,6 +59,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         <CopyButton value={hostingSiteURL(site.hostname) || site.hostname} label="Copy URL" />
       </div>
       <Publication status={data.status} />
+      {hostingDomainsDashboardEnabled && limits.domains_enabled && <HostingDomains key={site.id} site={site} limits={limits} disabled={disabled} />}
       <div className="flex flex-wrap gap-2">
         {site.durable_routing && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => {
           if (window.confirm(`${site.suspended ? 'Resume' : 'Suspend'} ${site.name}? The change applies after publication and edge refresh.`)) void run(() => suspendHostingSite(id, !site.suspended, site.revision), `${site.suspended ? 'Resume' : 'Suspension'} accepted. Publication is tracked below.`);

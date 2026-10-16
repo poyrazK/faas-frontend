@@ -78,3 +78,26 @@ Validation: `npm run typecheck`, `npm run lint`, `npm test`, and
 `npm run build`. Upload tests cover manifest bounds, digest/MIME handling,
 staging-only destinations, forbidden-header handling, credential isolation,
 grant renewal, optimistic revisions, cancellation, and retained failures.
+
+### Internal custom domains
+
+Custom domains require the additional build flag
+`NEXT_PUBLIC_FRONTEND_HOSTING_DOMAINS_ENABLED=true` and the backend's independent
+`frontend_hosting_domains_enabled` runtime setting. The default is off even
+when the hosting dashboard is enabled. The backend capability response supplies
+domain controls and limits; no Cloudflare token is sent to the browser.
+
+Durable sites can add five DNS-only CNAME subdomains, up to 64 normalized ASCII
+bytes each. The dashboard shows ownership/certificate DNS records, last observed
+TLS state, routing publication, retry information, and removal progress. Access
+sign-in is required separately on each domain. The domain's DNS must be external
+to the SaaS provider's Cloudflare account. Apex/wildcard domains and hostname
+reassignment are outside this internal pilot.
+
+Removal uses the reviewed revision, publishes a disabled alias, waits for edge
+cache safety, then removes provider resources. A removing row counts against
+the quota until cleanup finishes. Removed names stay reserved. Use the backend
+[domain runbook](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-domains.md)
+for provider setup, independent flags, failure recovery, and live qualification.
+The backend’s automatic provider recovery requires Cloudflare’s Enterprise
+custom-metadata add-on; no plan change is performed by enabling a build flag.

@@ -3,6 +3,10 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+  domains_enabled?: boolean;
+  domains_per_site?: number;
+  domain_hostname_max_bytes?: number;
+  domain_cname_target?: string;
   upload_base_url: string;
   files_max: number;
   file_max_bytes: number;
@@ -71,6 +75,15 @@ export interface HostingUploadResponse { release: HostingRelease; uploads: Hosti
 export interface HostingProject { id: string; slug: string }
 export interface HostingEnvironment { id: string; project_id: string; slug: string }
 
+export interface HostingDNSRecord { type: 'TXT' | 'CNAME'; name: string; value: string }
+export interface HostingDomain {
+  id: string; site_id: string; hostname: string; challenge: string;
+  state: 'pending_dns' | 'pending_certificate' | 'active' | 'deleting';
+  revision: number; generation: number; published_generation: number; published_at?: string;
+  details: { tls_status: 'pending' | 'active' | 'failed'; records: HostingDNSRecord[]; verified_at?: string };
+  next_attempt_at: string; attempts: number; last_error_code?: string; created_at: string;
+}
+
 const root = '/v1/internal/hosting';
 const sitePath = (id: string) => `${root}/sites/${encodeURIComponent(id)}`;
 const releasePath = (id: string, release: string) => `${sitePath(id)}/releases/${encodeURIComponent(release)}`;
@@ -104,6 +117,9 @@ export const promoteHostingRelease = (id: string, release: string, revision: num
 export const suspendHostingSite = (id: string, suspended: boolean, revision: number) => mutate<HostingSite>(`${sitePath(id)}/suspension`, 'PUT', { suspended, expected_revision: revision });
 export const retireHostingRelease = (id: string, release: string) => mutate<HostingRelease>(releasePath(id, release), 'DELETE');
 export const deleteHostingSite = (id: string) => mutate<HostingSite>(sitePath(id), 'DELETE');
+export const listHostingDomains = (id: string, signal?: AbortSignal) => read<HostingDomain[]>(`${sitePath(id)}/domains`, signal);
+export const createHostingDomain = (id: string, hostname: string) => mutate<HostingDomain>(`${sitePath(id)}/domains`, 'POST', { hostname });
+export const deleteHostingDomain = (id: string, domain: string, revision: number) => mutate<HostingDomain>(`${sitePath(id)}/domains/${encodeURIComponent(domain)}`, 'DELETE', { expected_revision: revision });
 
 export function hostingSiteURL(hostname: string): string | null {
   // Only render an external HTTPS link, including when API data is malformed.
