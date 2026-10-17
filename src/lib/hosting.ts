@@ -3,6 +3,7 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+ preview_reservations_enabled?: boolean;
  activity_enabled?: boolean;
  activity_page_size?: number;
  ci_setup_enabled?: boolean;
@@ -257,6 +258,7 @@ export function getHostingDiagnostics(site: string, run = '', signal?: AbortSign
 }
 
 export interface HostingCISetupConfig {
+ reserve_preview?: boolean;
  api_base: string; action_commit: string; checkout_commit: string; prepare_action: string;
  cli_path: string; cli_sha256: string; output_path: string; spa_fallback: boolean;
  preview_ttl_seconds: number; wait_timeout_seconds: number; cron?: string; default_branch?: string;
@@ -280,4 +282,14 @@ export interface HostingActivityPage {
 }
 export function listHostingActivity(site: string, before = '', signal?: AbortSignal) {
  return request<HostingActivityPage>(`${sitePath(site)}/runs${before ? '?before=' + encodeURIComponent(before) : ''}`, {cache: 'no-store', signal: deadline(signal)});
+}
+
+export interface HostingPreviewCapacity {
+ site_id: string; limit: number; previews: number; reservations: number; available: number; observed_at: string;
+}
+export const getHostingPreviewCapacity = (site: string, signal?: AbortSignal) => read<HostingPreviewCapacity>(`${sitePath(site)}/preview-capacity`, signal);
+export function hostingCapacityMatches(data: HostingPreviewCapacity, site: string): boolean {
+ return data.site_id === site && Number.isSafeInteger(data.limit) && data.limit > 0 &&
+ [data.previews, data.reservations, data.available].every(value => Number.isSafeInteger(value) && value >= 0) &&
+ data.previews + data.reservations + data.available === data.limit && Number.isFinite(Date.parse(data.observed_at));
 }

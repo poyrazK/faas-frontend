@@ -5,7 +5,7 @@ import { listHostingOIDCTrusts, prepareHostingCISetup, type HostingCISetupConfig
 import { useHostingQuery } from '@/lib/useHostingQuery';
 
 const initial: HostingCISetupConfig = {api_base: 'https://api.gregale.dev', action_commit: '', checkout_commit: '', prepare_action: './.github/actions/prepare-frontend', cli_path: './.gregale/bin/gregale', cli_sha256: '', output_path: 'dist', spa_fallback: false, preview_ttl_seconds: 86400, wait_timeout_seconds: 120};
-export function HostingCISetup({site, disabled}: {site: HostingSite; disabled: boolean}) {
+export function HostingCISetup({site, disabled, reservationsEnabled = false}: {site: HostingSite; disabled: boolean; reservationsEnabled?: boolean}) {
   const [config, setConfig] = useState(initial);
   const [trustID, setTrustID] = useState('');
   const [result, setResult] = useState<{key: string; report: HostingCISetup} | null>(null);
@@ -19,13 +19,13 @@ export function HostingCISetup({site, disabled}: {site: HostingSite; disabled: b
   }, [site.id]);
   const trusts = useHostingQuery(fetcher);
   const trust = trusts.data?.find(value => value.id === trustID);
-  const key = JSON.stringify({site: [site.id, site.revision, site.status, site.suspended], trust, config});
+  const key = JSON.stringify({site: [site.id, site.revision, site.status, site.suspended], trust, config, reservationsEnabled});
   const blocked = disabled || busy || !!trusts.error || !trust || site.status !== 'active' || site.suspended;
   const report = !disabled && !trusts.error && trust && result?.key === key ? result.report : null;
   function reset() { controller.current?.abort(); setBusy(false); setResult(null); setError(''); }
   function edit(change: Partial<HostingCISetupConfig>) { reset(); setConfig({...config, ...change}); }
   async function generate() {
-    if (blocked || !trust) return;
+    if (blocked || !trust || config.reserve_preview && !reservationsEnabled) return;
     const work = new AbortController(); controller.current = work; setBusy(true); setError(''); setResult(null);
     try {
       const report = await prepareHostingCISetup(site.id, trust.id, config, work.signal);
@@ -54,6 +54,7 @@ export function HostingCISetup({site, disabled}: {site: HostingSite; disabled: b
         ] as const).map(([field, label]) => <label className="text-xs" key={field}>{label}<input className="field mt-1" aria-label={label} required value={config[field]} maxLength={field.endsWith('commit') ? 40 : field === 'cli_sha256' ? 64 : 256} pattern={field.endsWith('commit') ? '[0-9a-f]{40}' : field === 'cli_sha256' ? '[0-9a-f]{64}' : undefined} onChange={event => edit({[field]: event.target.value})} /></label>)}
         <label className="text-xs">Preview lifetime in seconds<input className="field mt-1" aria-label="Preview lifetime in seconds" type="number" required min={1} value={config.preview_ttl_seconds} onChange={event => edit({preview_ttl_seconds: Number(event.target.value)})} /></label>
         <label className="text-xs">Publication wait in seconds<input className="field mt-1" aria-label="Publication wait in seconds" type="number" required min={1} value={config.wait_timeout_seconds} onChange={event => edit({wait_timeout_seconds: Number(event.target.value)})} /></label>
+        {reservationsEnabled && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!config.reserve_preview} onChange={event => edit({reserve_preview: event.target.checked})} />Reserve preview capacity before uploads</label>}
         {trust?.event_name === 'schedule' && <><label className="text-xs">UTC cron schedule<input className="field mt-1" aria-label="UTC cron schedule" required value={config.cron || ''} onChange={event => edit({cron: event.target.value})} /></label><label className="text-xs">Declared GitHub default branch<input className="field mt-1" aria-label="Declared GitHub default branch" required value={config.default_branch || ''} onChange={event => edit({default_branch: event.target.value})} /></label></>}
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={config.spa_fallback} onChange={event => edit({spa_fallback: event.target.checked})} />Use SPA fallback for CI output</label>
       </fieldset>

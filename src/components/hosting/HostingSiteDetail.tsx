@@ -11,7 +11,8 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled, hostingDiagnosticsDashboardEnabled, hostingCISetupDashboardEnabled, hostingActivityDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled, hostingDiagnosticsDashboardEnabled, hostingCISetupDashboardEnabled, hostingActivityDashboardEnabled, hostingPreviewReservationsDashboardEnabled } from '@/lib/hosting-flag';
+import { HostingCapacity } from './HostingCapacity';
 import { HostingActivity } from './HostingActivity';
 import { HostingCISetup } from './HostingCISetup';
 import { HostingDiagnostics } from './HostingDiagnostics';
@@ -76,12 +77,13 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         <CopyButton value={hostingSiteURL(site.hostname) || site.hostname} label="Copy URL" />
       </div>
       <Publication status={data.status} />
+      {hostingPreviewReservationsDashboardEnabled && limits.preview_reservations_enabled && site.durable_routing && <HostingCapacity key={"capacity:" + site.id} siteID={site.id} disabled={disabled} />}
       {hostingActivityDashboardEnabled && limits.activity_enabled && <HostingActivity key={"activity:" + site.id} siteID={site.id} disabled={disabled} showSource={showHistory}
         reviewableReleaseIDs={data.releases.filter(release => release.state === 'ready' && release.id !== site.active_release_id).map(release => release.id)}
         onInspect={hostingDiagnosticsDashboardEnabled && limits.diagnostics_enabled ? run => setActivitySelection(current => ({run, nonce: current.nonce + 1})) : undefined}
         onReview={releaseID => { try { setReview(reviewHostingRelease(site, data.releases, releaseID)); setError(''); } catch (error) { setError(error instanceof Error ? error.message : 'Refresh before reviewing.'); } }} />}
       {hostingDiagnosticsDashboardEnabled && limits.diagnostics_enabled && <HostingDiagnostics key={"diagnostics:" + site.id + ":" + activitySelection.nonce} initialRunID={activitySelection.run} siteID={site.id} disabled={disabled} />}
-      {hostingCISetupDashboardEnabled && limits.ci_setup_enabled && site.durable_routing && <HostingCISetup key={"ci-setup:" + site.id + ":" + site.revision + ":" + disabled} site={site} disabled={disabled} />}
+      {hostingCISetupDashboardEnabled && limits.ci_setup_enabled && site.durable_routing && <HostingCISetup key={"ci-setup:" + site.id + ":" + site.revision + ":" + disabled + ":" + limits.preview_reservations_enabled} site={site} disabled={disabled} reservationsEnabled={hostingPreviewReservationsDashboardEnabled && !!limits.preview_reservations_enabled} />}
       {hostingOIDCDashboardEnabled && limits.oidc_enabled && site.durable_routing && <HostingOIDC key={"oidc:" + site.id} site={site} disabled={disabled} />}
       {hostingRetentionDashboardEnabled && limits.retention_enabled && site.durable_routing && <HostingRetention key={"retention:" + site.id} site={site} limits={limits} disabled={disabled} />}
       {hostingAnalyticsDashboardEnabled && limits.analytics_enabled && <HostingTraffic key={"traffic:" + site.id} siteID={site.id} />}

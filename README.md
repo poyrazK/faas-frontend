@@ -193,3 +193,5 @@ Release review reuses the existing comparison; listing never publishes or retrie
 Source details honor the existing history build/API flags. Failed reads hide stale
 rows/actions. See the backend
 [activity guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-activity.md).
+
+Internal preview capacity requires `NEXT_PUBLIC_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED=true` and the API `preview_reservations_enabled` capability. Its stored snapshot includes reservations and previews pending safe cleanup; it makes no serving-health or future admission promise. The GitHub setup reservation checkbox is optional and defaults off.
