@@ -29,8 +29,8 @@ export function BudgetHealth({ policy, apps = [] }: { policy: BudgetPolicy; apps
         {egress && <>
           <p>Egress funding: committed {budgetMoney(egress.committed_millicents)} · Reserved: {budgetMoney(egress.reserved_millicents)}</p>
           <p>Funded egress bytes: committed {egress.committed_bytes.toLocaleString()} · Reserved: {egress.reserved_bytes.toLocaleString()}</p>
-          <p>Included egress bytes: granted {egress.allowance_granted_bytes.toLocaleString()} · Committed: {egress.allowance_committed_bytes.toLocaleString()} · Reserved: {egress.allowance_reserved_bytes.toLocaleString()} · Remaining: {egress.allowance_remaining_bytes.toLocaleString()}</p>
-          <p>Unused traffic credits count against this budget after shutdown. Credits include a framing margin, so funded bytes can exceed actual traffic. Invoice charges use measured usage.</p>
+          <p>Included egress funding bytes (pinned for this UTC month): granted {egress.allowance_granted_bytes.toLocaleString()} · Committed: {egress.allowance_committed_bytes.toLocaleString()} · Reserved: {egress.allowance_reserved_bytes.toLocaleString()} · Remaining: {egress.allowance_remaining_bytes.toLocaleString()}</p>
+          <p>Unused traffic credits count against this budget after shutdown. Credits include a framing margin, so funded bytes can exceed actual traffic. Invoice charges use measured usage. Allowance increases benefit budget funding in a new UTC month.</p>
         </>}
         <p>Commitments include startup and round up conservatively. They can exceed the compute charge on your bill.</p>
         <p>{compute.unconfirmed_leases} active or unsettled VM attempts. Funding remains reserved until shutdown and settlement are confirmed.</p>
