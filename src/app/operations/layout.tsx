@@ -8,7 +8,6 @@ import { useAuth } from '@/lib/auth';
 import { probeControlPlane } from '@/lib/api';
 import { Icon, type IconName } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
-import { hostingDashboardEnabled } from '@/lib/hosting-flag';
 
 interface NavItem {
   href: string;
@@ -17,7 +16,8 @@ interface NavItem {
 }
 
 const OPS_NAV: NavItem[] = [
-  ...(hostingDashboardEnabled ? [{ href: '/operations/hosting', label: 'Frontend Hosting', icon: 'domains' as const }] : []),
+  // Keep the check direct so webpack also removes the label from disabled bundles.
+  ...(process.env.NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED === 'true' ? [{ href: '/operations/hosting', label: 'Frontend Hosting', icon: 'domains' as const }] : []),
   { href: '/operations/overview', label: 'Fleet Overview', icon: 'overview' },
   { href: '/operations/incidents', label: 'Incident Center', icon: 'alerts' },
   { href: '/operations/controls', label: 'Emergency Controls', icon: 'bolt' },

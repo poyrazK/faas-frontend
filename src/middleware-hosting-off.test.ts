@@ -8,6 +8,8 @@ it.each(['/hosting', '/hosting/site', '/operations/hosting', '/operations/hostin
   'returns 404 for disabled hosting URL %s before layout streaming', (path) => {
     const response = middleware(new NextRequest(`https://operations.gregale.dev${path}`, { headers: { host: 'operations.gregale.dev' } }));
     expect(response.status).toBe(404);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('X-Robots-Tag')).toBe('noindex, nofollow');
     expect(response.headers.get('x-middleware-rewrite')).toBeNull();
   },
 );

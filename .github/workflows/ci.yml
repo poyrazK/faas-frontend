@@ -37,4 +37,18 @@ jobs:
         run: npm test
 
       - name: Production build
+        env:
+          NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED: 'false'
         run: npm run build
+
+      - name: Verify customer build excludes internal hosting
+        env:
+          NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED: 'false'
+        run: npm run verify:hosting-hidden
+
+      - name: Verify customer webpack build excludes internal hosting
+        env:
+          NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED: 'false'
+        run: |
+          npm run build -- --webpack
+          npm run verify:hosting-hidden

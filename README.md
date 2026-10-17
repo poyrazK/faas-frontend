@@ -35,6 +35,15 @@ requires a new build. The link is hidden and `/operations/hosting` returns 404 w
 it is unset, false, or any value other than lowercase `true`. On the operations
 host, `/hosting` is the clean URL.
 
+For a customer release, build with the flag off and run
+`npm run verify:hosting-hidden`. The build aliases the hosting entry to a
+server-only 404 stub, excluding its client implementation from public JavaScript.
+CI checks the disabled production bundle. Rebuild when changing this flag, and
+retire any previously published enabled assets through the deployment provider.
+Internal enabled builds belong on a separately protected operations deployment.
+Apid and Worker flags are independent; turning off the API does not stop existing
+durable serving. Repository source and documentation remain visible if public.
+
 Apid must contain the hosting capability endpoint and migrations from
 `codex/internal-static-hosting` in `poyrazK/faas`, have private providers
 configured, and independently enable `frontend_hosting_enabled`. All reads

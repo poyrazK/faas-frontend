@@ -1,6 +1,31 @@
 import type { NextConfig } from "next";
+import path from "node:path";
+
+// Page-level notFound() does not prevent Next from emitting a statically
+// imported Client Component. Replace the entry before either bundler resolves
+// its dependency graph, so public builds contain no hosting implementation.
+const hostingEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED === "true";
+const hostingEntry = "@/components/hosting/HostingDashboard";
+const disabledHostingEntry = "./src/components/hosting/DisabledHostingDashboard.tsx";
 
 const nextConfig: NextConfig = {
+  // Normalize an unset flag as well: both bundlers can erase direct checks.
+  env: { NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED: hostingEnabled ? 'true' : 'false' },
+  turbopack: {
+    resolveAlias: hostingEnabled ? {} : { [hostingEntry]: disabledHostingEntry },
+  },
+  webpack(config) {
+    if (!hostingEnabled) {
+      const replacement = path.resolve(__dirname, disabledHostingEntry);
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        [`${hostingEntry}$`]: replacement,
+        // Next's generated client-reference entries use absolute paths.
+        [`${path.resolve(__dirname, 'src/components/hosting/HostingDashboard.tsx')}$`]: replacement,
+      };
+    }
+    return config;
+  },
   async rewrites() {
     const backendUrl = process.env.APID_BACKEND_URL || "https://api.gregale.dev";
     return [
