@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { budgetMoney, budgetWarningThreshold, parseBudgetEuros } from './budgets';
+import { budgetMoney, budgetWarningThreshold, parseBudgetEuros, strictCompute } from './budgets';
 
 describe('exact budget money', () => {
   it('preserves cents and sub-cent amounts without floating point rounding', () => {
@@ -24,4 +24,13 @@ describe('exact budget money', () => {
     expect(budgetWarningThreshold(5)).toBe(4);
     expect(budgetWarningThreshold(1000001)).toBe(800001);
   });
+});
+
+
+it('recognizes only the supported strict account contract', () => {
+  const spec = { name: 'Account', scope: { kind: 'account' as const }, currency: 'EUR' as const, meters: ['compute' as const], basis: 'net_usage' as const, limit_millicents: 1000, notify_millicents: [], mode: 'strict' as const, action: 'suspend_workloads' as const, drain_seconds: 0, resume_rule: 'manual' as const, enabled: true };
+  expect(strictCompute(spec)).toBe(true);
+  expect(strictCompute({ ...spec, basis: 'gross_usage' })).toBe(false);
+  expect(strictCompute({ ...spec, drain_seconds: 30 })).toBe(false);
+  expect(strictCompute({ ...spec, notify_millicents: [100] })).toBe(false);
 });

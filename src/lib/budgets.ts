@@ -37,7 +37,14 @@ export interface BudgetPolicy {
   runtime?: {
     compute?: {
       initialized: boolean;
-      app_id: string;
+      app_id?: string;
+      account_id?: string;
+      scope_kind?: 'account' | 'app';
+      basis?: 'net_usage' | 'gross_usage';
+      allowance_granted_mb_seconds?: number;
+      allowance_committed_mb_seconds?: number;
+      allowance_reserved_mb_seconds?: number;
+      allowance_remaining_mb_seconds?: number;
       period_start: string;
       period_end: string;
       committed_millicents: number;
@@ -83,6 +90,13 @@ export interface BudgetPolicy {
 
 export function strictAppCompute(spec: BudgetSpec): boolean {
   return spec.mode === 'strict' && spec.scope.kind === 'app' && spec.basis === 'gross_usage'
+    && spec.action === 'suspend_workloads' && spec.meters.length === 1 && spec.meters[0] === 'compute'
+    && spec.drain_seconds === 0 && spec.notify_millicents.length === 0;
+}
+
+/** Account compute shares allowance; app compute reserves gross charges. */
+export function strictCompute(spec: BudgetSpec): boolean {
+  return strictAppCompute(spec) || spec.mode === 'strict' && spec.scope.kind === 'account' && spec.basis === 'net_usage'
     && spec.action === 'suspend_workloads' && spec.meters.length === 1 && spec.meters[0] === 'compute'
     && spec.drain_seconds === 0 && spec.notify_millicents.length === 0;
 }
