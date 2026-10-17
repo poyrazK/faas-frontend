@@ -175,3 +175,12 @@ changes. Pending verification, publication, expired/revoked previews and removed
 releases have distinct recovery guidance. Serving health remains unchecked.
 Selecting another run aborts the old report; failed refreshes hide old advice.
 See the [diagnostics guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-diagnostics.md).
+
+Guided GitHub workflow generation has its own default-off build flag:
+`NEXT_PUBLIC_FRONTEND_HOSTING_CI_SETUP_ENABLED=true`, with the main hosting build
+flag and backend `ci_setup_enabled` capability. Site management can select an
+existing immutable trust and download reviewed YAML plus a setup JSON recipe.
+Edited inputs, changed site/trust state and failed reads block stale downloads.
+The helper makes no GitHub writes or deployments. Local CLI preflight keeps saved
+workflow/preparation sources on the workstation; see the backend
+[setup guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-ci-setup.md).

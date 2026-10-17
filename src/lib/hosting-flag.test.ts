@@ -54,3 +54,8 @@ it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('diagnostics requires an 
  const {hostingDiagnosticsDashboardEnabled} = await import('./hosting-flag');
  expect(hostingDiagnosticsDashboardEnabled).toBe(value === 'true');
 });
+
+it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('CI setup requires an independent build opt-in (%s)', async (value) => {
+ vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_CI_SETUP_ENABLED', value); vi.resetModules();
+ expect((await import('./hosting-flag')).hostingCISetupDashboardEnabled).toBe(value === 'true');
+});

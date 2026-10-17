@@ -16,3 +16,5 @@ export const hostingRetentionDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND
 export const hostingOIDCDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_OIDC_ENABLED === 'true';
 
 export const hostingDiagnosticsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED === 'true';
+
+export const hostingCISetupDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_CI_SETUP_ENABLED === 'true';
