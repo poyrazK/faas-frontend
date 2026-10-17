@@ -35,6 +35,18 @@ export interface BudgetPolicy {
   notification_ready: boolean;
   reasons: string[];
   runtime?: {
+    compute?: {
+      initialized: boolean;
+      app_id: string;
+      period_start: string;
+      period_end: string;
+      committed_millicents: number;
+      reserved_millicents: number;
+      remaining_millicents: number;
+      unconfirmed_leases: number;
+      held: boolean;
+      observed_at: string;
+    };
     evaluation?: BudgetEvaluation;
     stops?: {
       id: string;
@@ -67,6 +79,12 @@ export interface BudgetPolicy {
       last_error?: string;
     }[];
   };
+}
+
+export function strictAppCompute(spec: BudgetSpec): boolean {
+  return spec.mode === 'strict' && spec.scope.kind === 'app' && spec.basis === 'gross_usage'
+    && spec.action === 'suspend_workloads' && spec.meters.length === 1 && spec.meters[0] === 'compute'
+    && spec.drain_seconds === 0 && spec.notify_millicents.length === 0;
 }
 
 /** Parse EUR without floating-point rounding or silently discarding precision. */
