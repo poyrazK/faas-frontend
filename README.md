@@ -166,3 +166,12 @@ The panel lists rules and lets operators revoke a binding, invalidating its issu
 credentials on their next request. Read failures disable changes; edits invalidate
 the draft review. Pull request events and production promotion are excluded.
 See the backend [OIDC guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-oidc.md).
+
+The **Deployment diagnostics** panel requires the main hosting build flag and
+`NEXT_PUBLIC_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED=true`, plus the backend's
+independent `diagnostics_enabled` capability. All default off. It explains stored
+site or explicitly selected CI run evidence without provider probes or resource
+changes. Pending verification, publication, expired/revoked previews and removed
+releases have distinct recovery guidance. Serving health remains unchecked.
+Selecting another run aborts the old report; failed refreshes hide old advice.
+See the [diagnostics guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-diagnostics.md).

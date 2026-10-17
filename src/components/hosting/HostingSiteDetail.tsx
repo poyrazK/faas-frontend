@@ -11,7 +11,8 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled, hostingDiagnosticsDashboardEnabled } from '@/lib/hosting-flag';
+import { HostingDiagnostics } from './HostingDiagnostics';
 import { HostingOIDC } from './HostingOIDC';
 import { HostingRetention } from './HostingRetention';
 import { HostingTraffic } from './HostingTraffic';
@@ -72,6 +73,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         <CopyButton value={hostingSiteURL(site.hostname) || site.hostname} label="Copy URL" />
       </div>
       <Publication status={data.status} />
+      {hostingDiagnosticsDashboardEnabled && limits.diagnostics_enabled && <HostingDiagnostics key={"diagnostics:" + site.id} siteID={site.id} disabled={disabled} />}
       {hostingOIDCDashboardEnabled && limits.oidc_enabled && site.durable_routing && <HostingOIDC key={"oidc:" + site.id} site={site} disabled={disabled} />}
       {hostingRetentionDashboardEnabled && limits.retention_enabled && site.durable_routing && <HostingRetention key={"retention:" + site.id} site={site} limits={limits} disabled={disabled} />}
       {hostingAnalyticsDashboardEnabled && limits.analytics_enabled && <HostingTraffic key={"traffic:" + site.id} siteID={site.id} />}

@@ -3,6 +3,7 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+ diagnostics_enabled?: boolean;
  oidc_enabled?: boolean;
  retention_enabled?: boolean;
  retention_age_default_seconds?: number;
@@ -238,4 +239,16 @@ export function createHostingOIDCTrust(site: string, rules: HostingOIDCTrustRule
 }
 export function revokeHostingOIDCTrust(site: string, trust: string, signal?: AbortSignal) {
  return request<void>(`${sitePath(site)}/oidc-trusts/${encodeURIComponent(trust)}`, {method: 'DELETE', cache: 'no-store', signal: deadline(signal)});
+}
+
+export interface HostingDiagnosticCheck {
+ step: string; state: 'ok' | 'pending' | 'blocked' | 'unknown' | 'not_checked'; code: string;
+ summary: string; action: string; generation?: number; published_generation?: number; next_attempt_at?: string;
+}
+export interface HostingDiagnostics {
+ site_id: string; run_id?: string; release_id?: string; preview_id?: string; manifest_fingerprint?: string;
+ started_at: string; observed_at: string; serving_health: 'not_checked'; retry_advice: 'none' | 'retry_same_run' | 'inspect_before_retry'; checks: HostingDiagnosticCheck[];
+}
+export function getHostingDiagnostics(site: string, run = '', signal?: AbortSignal) {
+ return request<HostingDiagnostics>(`${sitePath(site)}/diagnostics${run ? '?run_id=' + encodeURIComponent(run) : ''}`, {cache: 'no-store', signal: deadline(signal)});
 }
