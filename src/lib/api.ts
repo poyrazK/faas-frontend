@@ -658,6 +658,20 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+export interface BudgetJob { id: string; name: string; kind: 'batch' | 'recurring' | 'image_run'; status: 'active' | 'paused' | 'deleted'; }
+
+export async function listBudgetJobs(): Promise<BudgetJob[]> {
+  const jobs: BudgetJob[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await request<{ jobs: BudgetJob[]; next_offset: number }>(`/v1/jobs?limit=200&offset=${offset}`, { cache: 'no-store' });
+    jobs.push(...page.jobs);
+    if (page.next_offset === -1) return jobs;
+    if (!Number.isInteger(page.next_offset) || page.next_offset <= offset) throw new Error('Could not load the next page of jobs.');
+    offset = page.next_offset;
+  }
+}
+
 export const listFinancialBudgets = () =>
   request<{ budgets: BudgetPolicy[] }>('/v1/billing/budgets', { cache: 'no-store' });
 

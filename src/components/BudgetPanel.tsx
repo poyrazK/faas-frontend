@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import type { App } from '@/lib/api';
-import { createFinancialBudget, deleteFinancialBudget, listFinancialBudgets, updateFinancialBudget } from '@/lib/api';
+import { createFinancialBudget, deleteFinancialBudget, listFinancialBudgets, listBudgetJobs, updateFinancialBudget } from '@/lib/api';
 import type { BudgetPolicy, BudgetSpec } from '@/lib/budgets';
 import { budgetMoney, budgetWarningThreshold, parseBudgetEuros, strictCompute } from '@/lib/budgets';
 import { useAsync } from '@/lib/useAsync';
@@ -16,13 +16,13 @@ export function BudgetHealth({ policy, apps = [] }: { policy: BudgetPolicy; apps
   return (
     <div className="space-y-2 text-sm">
       <p>{policy.status === 'active'
-        ? strict ? policy.spec.scope.kind === 'account' ? 'Strict account compute budget active. All apps share included allowance and paid compute funding.' : 'Strict app compute budget active. Every VM execution window requires reserved funding.' : stopping ? 'Preview stopping active. Production can continue. Metering and shutdown delays can exceed the budget.' : 'Spending alerts active. Workloads continue running.'
+        ? strict ? policy.spec.scope.kind === 'account' ? 'Strict account compute budget active. Apps and jobs share included allowance and paid compute funding.' : policy.spec.scope.kind === 'job' ? 'Strict job compute budget active. Each task attempt requires reserved funding.' : 'Strict app compute budget active. Every VM execution window requires reserved funding.' : stopping ? 'Preview stopping active. Production can continue. Metering and shutdown delays can exceed the budget.' : 'Spending alerts active. Workloads continue running.'
         : policy.status === 'unavailable' ? 'Budget monitoring is unavailable.' : 'Draft: this budget is inactive.'}</p>
       {compute && <div className="space-y-1">
         <p>Committed compute: {budgetMoney(compute.committed_millicents)} · Reserved: {budgetMoney(compute.reserved_millicents)} · Remaining: {budgetMoney(compute.remaining_millicents)}</p>
         {compute.scope_kind === 'account' && <>
           <p>Shared included compute (MB-seconds): granted {compute.allowance_granted_mb_seconds?.toLocaleString() ?? 'Unavailable'} · Committed: {compute.allowance_committed_mb_seconds?.toLocaleString() ?? 'Unavailable'} · Reserved: {compute.allowance_reserved_mb_seconds?.toLocaleString() ?? 'Unavailable'} · Remaining: {compute.allowance_remaining_mb_seconds?.toLocaleString() ?? 'Unavailable'}</p>
-          <p>Compute money balances cover paid usage after the shared allowance. App budgets also apply.</p>
+          <p>Compute money balances cover paid usage after the shared allowance. App and job budgets also apply.</p>
         </>}
         <p>Commitments include startup and round up conservatively. They can exceed the compute charge on your bill.</p>
         <p>{compute.unconfirmed_leases} active or unsettled VM attempts. Funding remains reserved until shutdown and settlement are confirmed.</p>
@@ -63,6 +63,7 @@ export function BudgetHealth({ policy, apps = [] }: { policy: BudgetPolicy; apps
 
 export default function BudgetPanel({ apps }: { apps: App[] }) {
   const policies = useAsync(listFinancialBudgets, []);
+  const jobs = useAsync(listBudgetJobs, []);
   const [name, setName] = useState('Monthly compute');
   const [target, setTarget] = useState('');
   const [amount, setAmount] = useState('10.00');
@@ -105,7 +106,7 @@ export default function BudgetPanel({ apps }: { apps: App[] }) {
       setMessage('Drain time must be a whole number from 0 to 300 seconds.'); return;
     }
     const spec: BudgetSpec = {
-      name: name.trim(), scope: target ? { kind: 'app', id: target } : { kind: 'account' },
+      name: name.trim(), scope: target.startsWith('job:') ? { kind: 'job', id: target.slice(4) } : target ? { kind: 'app', id: target } : { kind: 'account' },
       currency: 'EUR', meters: ['compute'], basis: strict ? target ? 'gross_usage' : 'net_usage' : basis, limit_millicents: limit,
       notify_millicents: strict ? [] : [budgetWarningThreshold(limit)], mode: strict ? 'strict' : 'monitored', action,
       drain_seconds: drainSeconds, resume_rule: resume, enabled,
@@ -114,19 +115,22 @@ export default function BudgetPanel({ apps }: { apps: App[] }) {
   }
 
   return <SectionCard className="mt-4" title="Compute budgets" bodyClassName="space-y-5 px-5 py-5"
-    action={<button className="btn btn-secondary" onClick={policies.reload} disabled={busy}>Refresh</button>}>
-    <p className="text-sm">Monitor spending, stop previews after a threshold, or reserve compute funding across your account or for one app. Budgets use the current UTC month. Changing a policy keeps the month’s spending.</p>
+    action={<button className="btn btn-secondary" onClick={() => { policies.reload(); jobs.reload(); }} disabled={busy}>Refresh</button>}>
+    <p className="text-sm">Monitor spending, stop previews after a threshold, or reserve compute funding across your account or for one app or job. Budgets use the current UTC month. Changing a policy keeps the month’s spending.</p>
     <form onSubmit={create} className="grid gap-3 sm:grid-cols-2">
       <label className="text-sm">Budget name<input className="field mt-1 w-full" required maxLength={128} value={name} onChange={(e) => setName(e.target.value)} /></label>
-      <label className="text-sm">Scope<select className="field mt-1 w-full" value={target} onChange={(e) => setTarget(e.target.value)}>
+      <label className="text-sm">Scope<select className="field mt-1 w-full" value={target} onChange={(e) => { setTarget(e.target.value); if (e.target.value.startsWith('job:') && action === 'stop_previews') setAction('suspend_workloads'); }}>
         <option value="">Entire account</option>{apps.filter((a) => a.status !== 'deleted').map((a) => <option key={a.id} value={a.id}>{a.slug}</option>)}
+        {(jobs.data ?? []).filter((j) => j.status !== 'deleted').map((j) => <option key={`job:${j.id}`} value={`job:${j.id}`}>Job: {j.name}</option>)}
       </select></label>
+      {jobs.loading && <p className="text-sm">Loading job scopes…</p>}
+      {jobs.error && <p role="alert" className="text-sm">Job scopes unavailable: {jobs.error.message} <button type="button" onClick={jobs.reload}>Retry</button></p>}
       <label className="text-sm">Monthly amount (EUR)<input className="field mt-1 w-full" inputMode="decimal" required value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
       <label className="text-sm">Spending basis<select className="field mt-1 w-full" disabled={action === 'suspend_workloads'} value={action === 'suspend_workloads' ? target ? 'gross_usage' : 'net_usage' : basis} onChange={(e) => setBasis(e.target.value as BudgetSpec['basis'])}>
         <option value="net_usage">After included allowance</option><option value="gross_usage">Before included allowance</option>
       </select></label>
       <label className="text-sm">At the limit<select className="field mt-1 w-full" value={action} onChange={(e) => setAction(e.target.value as typeof action)}>
-        <option value="notify">Send alerts; keep workloads running</option><option value="stop_previews">Stop preview workloads</option><option value="suspend_workloads">Strict: reserve compute funding</option>
+        <option value="notify">Send alerts; keep workloads running</option><option value="stop_previews" disabled={target.startsWith('job:')}>Stop preview workloads</option><option value="suspend_workloads">Strict: reserve compute funding</option>
       </select></label>
       {action === 'stop_previews' && <>
         <label className="text-sm">Drain time (seconds)<input className="field mt-1 w-full" type="number" min="0" max="300" step="1" required value={drain} onChange={(e) => setDrain(e.target.value)} /></label>
@@ -139,7 +143,7 @@ export default function BudgetPanel({ apps }: { apps: App[] }) {
         <label className="text-sm">Resume<select className="field mt-1 w-full" value={resume} onChange={(e) => setResume(e.target.value as BudgetSpec['resume_rule'])}>
           <option value="next_period">At the next UTC month</option><option value="manual">When I change or disable the policy</option>
         </select></label>
-        <p className="text-sm">Activation requires quiet covered workloads and complete compute accounting. Account budgets share included compute and cap paid usage across all apps; independent job definitions must first be removed. App budgets cap gross compute before allowance. Funding covers startup, execution, and shutdown. This budget takes precedence over instance floors. Strict budgets do not send spending alerts; you can configure a separate monitored policy.</p>
+        <p className="text-sm">Activation requires quiet covered workloads and complete compute accounting. Account budgets share included compute and cap paid usage across all apps and jobs. App and job budgets cap gross compute before allowance. Queued job tasks wait while a budget is held; already running tasks can end when funded time runs out. Funding covers startup, execution, and shutdown. This budget takes precedence over instance floors. Strict budgets do not send spending alerts; you can configure a separate monitored policy.</p>
       </>}
       <label className="text-sm"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enable budget</label>
       <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>{busy ? 'Saving…' : 'Create budget'}</button>
@@ -158,7 +162,7 @@ export default function BudgetPanel({ apps }: { apps: App[] }) {
           <button className="btn btn-secondary" disabled={busy} onClick={() => void mutate(`delete:${policy.id}:${policy.revision}`, (key) => deleteFinancialBudget(policy, key))}>Delete</button>
         </div>
       </div>
-      <p className="text-sm">{policy.spec.scope.kind}{policy.spec.scope.id ? ` · ${apps.find((a) => a.id === policy.spec.scope.id)?.slug ?? policy.spec.scope.id}` : ''} · {policy.spec.basis === 'net_usage' ? 'after allowance' : 'before allowance'}</p>
+      <p className="text-sm">{policy.spec.scope.kind}{policy.spec.scope.id ? ` · ${(policy.spec.scope.kind === 'job' ? jobs.data?.find((j) => j.id === policy.spec.scope.id)?.name : apps.find((a) => a.id === policy.spec.scope.id)?.slug) ?? policy.spec.scope.id}` : ''} · {policy.spec.basis === 'net_usage' ? 'after allowance' : 'before allowance'}</p>
       {policy.spec.action !== 'notify' && policy.spec.action !== 'stop_previews' && !strictCompute(policy.spec) && <p className="text-sm">This stopping action is unavailable and remains a draft.</p>}
       <BudgetHealth policy={policy} apps={apps} />
     </article>)}

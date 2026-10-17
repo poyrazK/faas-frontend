@@ -30,11 +30,21 @@ describe('budget monitoring health', () => {
       spec: { ...policy.spec, mode: 'strict', action: 'suspend_workloads', notify_millicents: [] },
       runtime: { alerts: [], compute: { initialized: true, scope_kind: 'account', account_id: 'account', basis: 'net_usage', period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', committed_millicents: 100000, reserved_millicents: 200000, remaining_millicents: 700000, allowance_granted_mb_seconds: 400000, allowance_committed_mb_seconds: 100000, allowance_reserved_mb_seconds: 200000, allowance_remaining_mb_seconds: 100000, unconfirmed_leases: 2, held: true, observed_at: '2026-10-17T10:00:00Z' } } }} />);
     expect(html).toContain('Strict account compute budget active');
-    expect(html).toContain('All apps share included allowance');
+    expect(html).toContain('Apps and jobs share included allowance');
     expect(html).toContain('Shared included compute (MB-seconds): granted 400,000');
     expect(html).toContain('paid usage after the shared allowance');
-    expect(html).toContain('App budgets also apply');
+    expect(html).toContain('App and job budgets also apply');
     expect(html).not.toContain('Spending alerts active');
+  });
+  it('shows a held job budget and its task funding separately from account allowance', () => {
+    const html = renderToStaticMarkup(<BudgetHealth policy={{ ...policy, enforcement_ready: true,
+      spec: { ...policy.spec, scope: { kind: 'job', id: 'job' }, basis: 'gross_usage', mode: 'strict', action: 'suspend_workloads', notify_millicents: [] },
+      runtime: { alerts: [], compute: { initialized: true, job_id: 'job', scope_kind: 'job', period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', committed_millicents: 100000, reserved_millicents: 200000, remaining_millicents: 0, unconfirmed_leases: 1, held: true, observed_at: '2026-10-17T10:00:00Z' } } }} />);
+    expect(html).toContain('Strict job compute budget active');
+    expect(html).toContain('Each task attempt requires reserved funding');
+    expect(html).toContain('Committed compute: €1.00');
+    expect(html).toContain('Compute budget held');
+    expect(html).not.toContain('Shared included compute');
   });
   it('keeps a latched manual stop visible before the new month has an evaluation', () => {
     const html = renderToStaticMarkup(<BudgetHealth policy={{ ...policy, enforcement_ready: true,
