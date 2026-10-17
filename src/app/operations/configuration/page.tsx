@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   getOperatorRuntimeConfig,
@@ -39,6 +40,8 @@ const SCOPE_OPTIONS: { value: RuntimeConfigScope; label: string; description: st
   { value: 'daemon', label: 'Daemon', description: 'A deterministic daemon canary target' },
   { value: 'node', label: 'Node', description: 'One exact node target' },
 ];
+
+const PLATFORM_FLAG_KINDS: OperatorRuntimeConfig['kind'][] = ['platform_flag', 'platform_flag_groups'];
 
 function scopeLabel(scope: RuntimeConfigScope): string {
   return SCOPE_OPTIONS.find((option) => option.value === scope)?.label ?? scope;
@@ -116,9 +119,16 @@ export default function RuntimeConfigurationPage() {
     return counts;
   }, [config.data]);
 
+  const hasPlatformFlags = useMemo(
+    () => (config.data?.items ?? []).some((item) => PLATFORM_FLAG_KINDS.includes(item.kind)),
+    [config.data],
+  );
+
   const groups = useMemo(() => {
     const grouped = new Map<string, OperatorRuntimeConfig[]>();
     for (const item of config.data?.items ?? []) {
+      // Platform flags hold structured rules; they are edited on their own page.
+      if (PLATFORM_FLAG_KINDS.includes(item.kind)) continue;
       const list = grouped.get(item.category) ?? [];
       list.push(item);
       grouped.set(item.category, list);
@@ -365,6 +375,13 @@ export default function RuntimeConfigurationPage() {
       </SectionCard>
 
       {message && <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3 text-sm">{message}</div>}
+
+      {hasPlatformFlags && (
+        <div className="mb-6 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3 text-sm">
+          Per-account release gates are managed on{' '}
+          <Link href="/operations/flags" className="font-semibold text-[var(--color-brand-bright)] hover:underline">Platform Flags</Link>.
+        </div>
+      )}
 
       {operation && (
         <SectionCard title="Latest apply operation" className="mb-6" action={<span className={`badge ${statusClass(operation.status)}`}>{operation.status}</span>}>

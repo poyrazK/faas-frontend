@@ -17,6 +17,14 @@ describe('operations host boundary', () => {
     );
   });
 
+  it('maps platform flags to the dedicated operations route', () => {
+    const response = middleware(request('/flags'));
+
+    expect(response.headers.get('x-middleware-rewrite')).toBe(
+      'https://operations.gregale.dev/operations/flags'
+    );
+  });
+
   it('maps capacity to the dedicated operations route', () => {
     const response = middleware(request('/dashboard/admin/capacity'));
 

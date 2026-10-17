@@ -1940,7 +1940,15 @@ export interface OperatorRuntimeConfig {
   label: string;
   description: string;
   category: string;
-  kind: 'boolean' | 'integer' | 'duration' | 'string' | 'enum' | 'secret_reference';
+  kind:
+    | 'boolean'
+    | 'integer'
+    | 'duration'
+    | 'string'
+    | 'enum'
+    | 'secret_reference'
+    | 'platform_flag'
+    | 'platform_flag_groups';
   default_value: unknown;
   desired_value: unknown;
   effective_value: unknown;
@@ -2073,6 +2081,137 @@ export const getOperatorRuntimeConfigRevisions = (
     { cache: 'no-store' },
   );
 };
+
+/* ───────────────────────── Platform flags (ADR-1550) ───────────────────── */
+
+export type PlatformFlagPlan = 'free' | 'hobby' | 'pro' | 'scale';
+
+/** One targeting rule. Accounts, group, plans and rollout combine with AND. */
+export interface PlatformFlagRule {
+  id: string;
+  accounts?: string[];
+  group?: string;
+  plans?: PlatformFlagPlan[];
+  /** Basis points of the accounts the other constraints admit (1000 = 10%). */
+  rollout?: number;
+  value: boolean;
+}
+
+/** Stored flag value. `enabled` is the kill switch; first matching rule wins. */
+export interface PlatformFlagDefinition {
+  enabled: boolean;
+  default: boolean;
+  rules?: PlatformFlagRule[];
+}
+
+export interface OperatorRuntimeConfigApplyReceipt {
+  config_key: string;
+  daemon: string;
+  instance: string;
+  version: number;
+  status: 'applied' | 'failed';
+  error?: string;
+  reported_at: string;
+}
+
+export interface OperatorPlatformFlag {
+  key: string;
+  /** Runtime-configuration key the flag is written to. */
+  config_key: string;
+  label: string;
+  description: string;
+  capability?: string;
+  adr: string;
+  consumers: string[];
+  legacy_env: string[];
+  retire_by?: string;
+  definition: PlatformFlagDefinition;
+  source: 'default_or_environment' | 'operator';
+  version: number;
+  status: RuntimeConfigStatus;
+  last_error?: string;
+  updated_at?: string;
+  receipts: OperatorRuntimeConfigApplyReceipt[];
+  convergence: { converged: string[]; pending: string[]; failed: string[] };
+}
+
+export interface OperatorPlatformFlagGroups {
+  config_key: string;
+  groups: Record<string, string[]>;
+  /** Group name → flags whose rules use it. */
+  references: Record<string, string[]>;
+  version: number;
+}
+
+export interface OperatorPlatformFlagList {
+  items: OperatorPlatformFlag[];
+  groups: OperatorPlatformFlagGroups;
+  generated_at: string;
+}
+
+export interface OperatorPlatformFlagDecision {
+  flag: string;
+  account_id: string;
+  plan: string;
+  enabled: boolean;
+  reason: 'unknown_flag' | 'flag_disabled' | 'account_missing' | 'rule_match' | 'default';
+  rule_id?: string;
+  bucket?: number;
+  version: number;
+  /** Plan entitlement of the released capability; absent when there is none. */
+  entitled?: boolean;
+  available: boolean;
+}
+
+export interface OperatorAccountPlatformFlags {
+  account_id: string;
+  plan: string;
+  items: OperatorPlatformFlagDecision[];
+}
+
+export const getPlatformFlags = () =>
+  request<OperatorPlatformFlagList>('/v1/admin/flags', { cache: 'no-store' });
+
+export const getPlatformFlagDecision = (key: string, accountId: string) =>
+  request<OperatorPlatformFlagDecision>(
+    `/v1/admin/flags/${encodeURIComponent(key)}/decision?${new URLSearchParams({ account_id: accountId.trim() }).toString()}`,
+    { cache: 'no-store' },
+  );
+
+export const getAccountPlatformFlags = (accountId: string) =>
+  request<OperatorAccountPlatformFlags>(
+    `/v1/admin/accounts/${encodeURIComponent(accountId.trim())}/flags`,
+    { cache: 'no-store' },
+  );
+
+/**
+ * Writes a platform flag definition or the groups row through the hot
+ * runtime-configuration path. expectedVersion is the version the edit was
+ * based on (0 when no operator value exists yet), so a concurrent edit fails
+ * with 409 instead of being overwritten.
+ */
+export const updatePlatformFlagConfig = (
+  configKey: string,
+  value: PlatformFlagDefinition | Record<string, string[]>,
+  reason: string,
+  expectedVersion: number,
+) =>
+  request<OperatorRuntimeConfig>(`/v1/admin/config/${encodeURIComponent(configKey)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ value, reason, expected_version: expectedVersion }),
+  });
+
+/** Restores an older platform-flag or groups revision as a new live revision. */
+export const rollbackPlatformFlagConfig = (
+  configKey: string,
+  version: number,
+  reason: string,
+  expectedVersion: number,
+) =>
+  request<OperatorRuntimeConfig>(`/v1/admin/config/${encodeURIComponent(configKey)}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ version, reason, expected_version: expectedVersion }),
+  });
 
 export interface SweepStuckBuildsResponse {
   ok: boolean;
