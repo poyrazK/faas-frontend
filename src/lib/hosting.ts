@@ -8,6 +8,12 @@ export interface HostingCapabilities {
   preview_ttl_default_seconds?: number;
   preview_ttl_min_seconds?: number;
   preview_ttl_max_seconds?: number;
+  history_enabled?: boolean;
+  history_per_site?: number;
+  history_page_size?: number;
+  provenance_repository_max_bytes?: number;
+  provenance_branch_max_bytes?: number;
+  provenance_description_max_bytes?: number;
   staged_releases_supported?: boolean;
   config_enabled?: boolean;
   config_max_bytes?: number;
@@ -68,6 +74,7 @@ export interface HostingReleaseConfig {
 export interface HostingManifest { files: HostingFile[]; spa_fallback: boolean; config?: HostingReleaseConfig }
 
 export interface HostingRelease {
+  provenance?: HostingReleaseProvenance;
   id: string;
   site_id: string;
   state: 'pending' | 'ready' | 'retiring';
@@ -132,7 +139,7 @@ export const listHostingEnvironments = (project: string, signal?: AbortSignal) =
 export const getHostingStatus = (id: string, signal?: AbortSignal) => read<HostingSiteStatus>(`${sitePath(id)}/status`, signal);
 export const listHostingReleases = (id: string, signal?: AbortSignal) => read<HostingRelease[] | null>(`${sitePath(id)}/releases`, signal).then((releases) => releases ?? []);
 export const createHostingSite = (project: string, environment: string, name: string, signal?: AbortSignal) => mutate<HostingSite>(`${root}/sites`, 'POST', { project, environment, name }, signal);
-export const createHostingRelease = (id: string, manifest: HostingManifest, signal?: AbortSignal) => mutate<HostingRelease>(`${sitePath(id)}/releases`, 'POST', manifest, signal);
+export const createHostingRelease = (id: string, manifest: HostingManifest, signal?: AbortSignal, provenance?: HostingReleaseProvenance) => mutate<HostingRelease>(`${sitePath(id)}/releases`, 'POST', { ...manifest, ...(provenance ? { provenance } : {}) }, signal);
 export const getHostingUploads = (id: string, release: string, signal?: AbortSignal) => mutate<HostingUploadResponse>(`${releasePath(id, release)}/uploads`, 'POST', undefined, signal);
 export const finalizeHostingRelease = (id: string, release: string, limits: HostingCapabilities, signal?: AbortSignal) => mutate<HostingRelease>(`${releasePath(id, release)}/finalize`, 'POST', undefined, signal, (limits.finalize_timeout_seconds + limits.storage_timeout_seconds) * 1000);
 export const promoteHostingRelease = (id: string, release: string, revision: number, signal?: AbortSignal) => mutate<HostingSite>(`${sitePath(id)}/promotions`, 'POST', { release_id: release, expected_revision: revision }, signal);
@@ -173,6 +180,7 @@ export const getHostingTraffic = (id: string, signal?: AbortSignal) => read<Host
 
 export interface HostingReleaseSettings { spa_fallback: boolean; config: HostingReleaseConfig | null }
 export interface HostingReleaseReview {
+  provenance?: HostingReleaseProvenance;
   site_id: string; expected_revision: number; base_release_id: string; release_id: string;
   added: number; changed: number; removed: number; before_bytes: number; after_bytes: number;
   files: { path: string; change: 'added' | 'changed' | 'removed'; before: HostingFile | null; after: HostingFile | null }[];
@@ -188,3 +196,11 @@ export interface HostingPreview {
 export const listHostingPreviews = (site: string, signal?: AbortSignal) => read<HostingPreview[]>(`${sitePath(site)}/previews`, signal);
 export const createHostingPreview = (site: string, release: string, ttlSeconds: number) => mutate<HostingPreview>(`${sitePath(site)}/previews`, 'POST', { release_id: release, ttl_seconds: ttlSeconds });
 export const revokeHostingPreview = (site: string, id: string, generation: number) => mutate<HostingPreview>(`${sitePath(site)}/previews/${encodeURIComponent(id)}`, 'DELETE', { expected_generation: generation });
+
+export interface HostingReleaseProvenance { repository?: string; commit_sha?: string; branch?: string; description?: string }
+export interface HostingPromotionEvent {
+ site_id: string; revision: number; previous_revision: number; release_id: string; previous_release_id?: string;
+ actor: { account_id: string; key_id?: string }; accepted_at: string; provenance?: HostingReleaseProvenance;
+}
+export interface HostingHistoryPage { events: HostingPromotionEvent[]; next_before_revision?: number; retention_limit: number }
+export const listHostingHistory = (id: string, before = 0, signal?: AbortSignal) => read<HostingHistoryPage>(`${sitePath(id)}/history${before ? `?before_revision=${encodeURIComponent(before)}` : ''}`, signal);

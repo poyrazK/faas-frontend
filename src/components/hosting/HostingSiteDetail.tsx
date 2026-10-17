@@ -4,17 +4,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getHostingStatus, listHostingReleases, promoteHostingRelease, suspendHostingSite, deleteHostingSite,
   retireHostingRelease, finalizeHostingRelease, hostingSiteURL,
-  type HostingCapabilities, type HostingSiteStatus, type HostingReleaseReview as Review,
+  type HostingReleaseProvenance, type HostingPreview, type HostingCapabilities, type HostingSiteStatus, type HostingReleaseReview as Review,
 } from '@/lib/hosting';
 import { ApiError } from '@/lib/api';
 import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hosting-upload';
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled } from '@/lib/hosting-flag';
 import { HostingTraffic } from './HostingTraffic';
 import { HostingDomains } from './HostingDomains';
 import { HostingPreviews } from './HostingPreviews';
+import { HostingHistory } from './HostingHistory';
+import { HostingProvenance } from './HostingProvenance';
 import { HostingReleaseReview } from './HostingReleaseReview';
 import { reviewHostingRelease, hostingReviewIsCurrent } from '@/lib/hosting-review';
 
@@ -31,6 +33,9 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
   const [error, setError] = useState('');
   const [needsRefresh, setNeedsRefresh] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
+  const [source, setSource] = useState<HostingReleaseProvenance>({});
+  const [previews, setPreviews] = useState<HostingPreview[] | undefined>();
+  const showHistory = hostingHistoryDashboardEnabled && limits.history_enabled === true;
   const [spa, setSpa] = useState(false);
   const [stageOnly, setStageOnly] = useState(true);
   const [review, setReview] = useState<Review | null>(null);
@@ -65,9 +70,12 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         <CopyButton value={hostingSiteURL(site.hostname) || site.hostname} label="Copy URL" />
       </div>
       <Publication status={data.status} />
-      {hostingAnalyticsDashboardEnabled && limits.analytics_enabled && <HostingTraffic key={site.id} siteID={site.id} />}
-      {hostingDomainsDashboardEnabled && limits.domains_enabled && <HostingDomains key={site.id} site={site} limits={limits} disabled={busy || inventoryStale || !!query.error || awaitingRefresh} />}
-      {hostingPreviewsDashboardEnabled && limits.previews_enabled && site.durable_routing && <HostingPreviews key={site.id} site={site} releases={data.releases} limits={limits} disabled={disabled} />}
+      {hostingAnalyticsDashboardEnabled && limits.analytics_enabled && <HostingTraffic key={"traffic:" + site.id} siteID={site.id} />}
+      {hostingDomainsDashboardEnabled && limits.domains_enabled && <HostingDomains key={"domains:" + site.id} site={site} limits={limits} disabled={busy || inventoryStale || !!query.error || awaitingRefresh} />}
+      {hostingPreviewsDashboardEnabled && limits.previews_enabled && site.durable_routing && <HostingPreviews key={"previews:" + site.id} site={site} releases={data.releases} limits={limits} disabled={disabled} onPreviews={setPreviews} />}
+      {showHistory && <HostingHistory key={"history:" + site.id} site={site} releases={data.releases} disabled={disabled} previews={hostingPreviewsDashboardEnabled && limits.previews_enabled ? previews : undefined} onReview={releaseID => {
+        try { setReview(reviewHostingRelease(site, data.releases, releaseID)); setError(''); } catch (e) { setError(e instanceof Error ? e.message : 'Refresh before reviewing.'); }
+      }} />}
       <div className="flex flex-wrap gap-2">
         {site.durable_routing && <button className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => {
           if (window.confirm(`${site.suspended ? 'Resume' : 'Suspend'} ${site.name}? The change applies after publication and edge refresh.`)) void run(() => suspendHostingSite(id, !site.suspended, site.revision), `${site.suspended ? 'Resume' : 'Suspension'} accepted. Publication is tracked below.`);
@@ -81,8 +89,8 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         if (disabled || files.length === 0 || data.releases.length >= limits.releases_per_site) return;
         const controller = new AbortController(); upload.current = controller;
         void run(async () => {
-          await deployHostingDirectory(site, files, spa, limits, controller.signal, setProgress, stageOnly);
-          setFiles([]); if (input.current) input.current.value = '';
+          await deployHostingDirectory(site, files, spa, limits, controller.signal, setProgress, stageOnly, showHistory && Object.values(source).some(Boolean) ? source : undefined);
+          setFiles([]); setSource({}); if (input.current) input.current.value = '';
         }, stageOnly ? 'Release staged and verified. Review its changes before publishing.' : 'Deployment accepted. Watch publication progress before checking the site.').finally(() => { if (upload.current === controller) upload.current = null; });
       }}>
         <h3 className="font-semibold">Deploy a built frontend</h3>
@@ -90,6 +98,9 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         {hostingConfigDashboardEnabled && limits.config_enabled && <p className="text-sm text-[var(--color-ink-muted)]">Include gregale-hosting.json at the folder root to configure redirects, response headers, and an HTML 404 page. These settings are restored with a release rollback.</p>}
         <label className="block text-sm">Output directory<input ref={input} aria-label="Built output directory" className="field mt-1" type="file" multiple {...{ webkitdirectory: '' }} disabled={disabled} onChange={(event) => { setFiles(Array.from(event.target.files ?? [])); setError(''); setProgress(null); }} /></label>
         {files.length > 0 && <p className="text-xs">{files.length} files selected · {mib(files.reduce((total, file) => total + file.size, 0))} MiB</p>}
+        {showHistory && <fieldset className="space-y-2 rounded border border-[var(--color-line)] p-3" disabled={disabled}><legend className="text-sm">Source details (optional, caller-provided and unverified)</legend>
+          {([['repository', 'Source repository', limits.provenance_repository_max_bytes], ['commit_sha', 'Source commit SHA', 64], ['branch', 'Source branch', limits.provenance_branch_max_bytes], ['description', 'Deployment description', limits.provenance_description_max_bytes]] as const).map(([field, label, max]) => <label key={field} className="block text-xs">{label}<input className="field mt-1" aria-label={label} value={source[field] || ''} maxLength={max} onChange={event => setSource(previous => ({ ...previous, [field]: event.target.value }))} /></label>)}
+        </fieldset>}
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={spa} disabled={disabled} onChange={(event) => setSpa(event.target.checked)} /> Use index.html for single-page app routes</label>
         {limits.staged_releases_supported && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={stageOnly} disabled={disabled} onChange={(event) => setStageOnly(event.target.checked)} /> Stage and verify without publishing</label>}
         {!limits.staged_releases_supported && stageOnly && <p role="alert" className="text-sm">This API needs an upgrade before it can stage releases safely.</p>}
@@ -105,7 +116,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
       {busy && !progress && <p role="status" className="text-sm">Applying change…</p>}
       {error && <p role="alert" className="text-sm text-[var(--color-danger)]">{error}</p>}
       {message && <p role="status" className="text-sm">{message}</p>}
-      {review && <HostingReleaseReview review={review} stale={!hostingReviewIsCurrent(review, site, data.releases)} disabled={disabled}
+      {review && <HostingReleaseReview showProvenance={showHistory} review={review} stale={!hostingReviewIsCurrent(review, site, data.releases)} disabled={disabled}
         onClose={() => setReview(null)} onPublish={() => {
           if (disabled || !hostingReviewIsCurrent(review, site, data.releases)) return;
           if (window.confirm(`Publish reviewed release ${review.release_id.slice(0,8)} at revision ${review.expected_revision}?`)) {
@@ -118,7 +129,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
           <tbody>{data.releases.map((release) => {
             const active = release.id === site.active_release_id;
             return <tr key={release.id} className="border-t border-[var(--color-line)]">
-              <td className="p-2 font-mono text-xs" title={release.id}>{release.id.slice(0, 8)}</td>
+              <td className="p-2 text-xs" title={release.id}><span className="font-mono">{release.id.slice(0, 8)}</span>{showHistory && <HostingProvenance value={release.provenance} />}</td>
               <td className="p-2"><span className={`badge ${active ? 'badge-brand' : 'badge-neutral'}`}>{active ? 'Active intent' : release.state === 'pending' ? 'Awaiting verification' : release.state === 'retiring' ? 'Retiring' : release.first_promoted_at ? 'Previously published' : 'Staged / verified'}</span></td>
               <td className="p-2 text-xs">{new Date(release.created_at).toLocaleString()}</td>
               <td className="p-2 text-xs">{release.manifest.files.length} / {mib(release.manifest.files.reduce((total, file) => total + file.size, 0))} MiB</td>

@@ -1,9 +1,10 @@
-import { hostingConfigDashboardEnabled } from './hosting-flag';
+import { hostingConfigDashboardEnabled, hostingHistoryDashboardEnabled } from './hosting-flag';
+import { validateHostingProvenance } from './hosting-provenance';
 import { hostingConfigFilename, parseHostingConfig } from './hosting-config';
 import {
   createHostingRelease, getHostingUploads, finalizeHostingRelease, promoteHostingRelease,
   type HostingCapabilities, type HostingManifest, type HostingFile, type HostingSite,
-  type HostingUpload, type HostingUploadResponse, type HostingStageResult,
+  type HostingUpload, type HostingUploadResponse, type HostingStageResult, type HostingReleaseProvenance,
 } from './hosting';
 
 export interface PreparedHostingFiles {
@@ -127,15 +128,19 @@ export function validateHostingGrants(response: HostingUploadResponse, site: str
 type HostingDeployArgs = [site: HostingSite, selected: readonly File[], spa: boolean, limits: HostingCapabilities,
   signal: AbortSignal, onProgress: (progress: HostingDeployProgress) => void];
 export function deployHostingDirectory(...args: HostingDeployArgs): Promise<HostingSite>;
-export function deployHostingDirectory(...args: [...HostingDeployArgs, stageOnly: boolean]): Promise<HostingSite | HostingStageResult>;
+export function deployHostingDirectory(...args: [...HostingDeployArgs, stageOnly: boolean, provenance?: HostingReleaseProvenance]): Promise<HostingSite | HostingStageResult>;
 export async function deployHostingDirectory(
   site: HostingSite, selected: readonly File[], spa: boolean, limits: HostingCapabilities,
-  signal: AbortSignal, onProgress: (progress: HostingDeployProgress) => void, stageOnly = false,
+  signal: AbortSignal, onProgress: (progress: HostingDeployProgress) => void, stageOnly = false, provenance?: HostingReleaseProvenance,
 ): Promise<HostingSite | HostingStageResult> {
   let releaseID: string | undefined;
   let verified = false;
   let phase: HostingDeployProgress['phase'] = 'hashing';
   try {
+    if (provenance) {
+      if (!hostingHistoryDashboardEnabled || !limits.history_enabled) throw new Error('Release provenance is disabled for this dashboard or API.');
+      validateHostingProvenance(provenance, limits);
+    }
     if (stageOnly && !limits.staged_releases_supported) throw new Error('This API does not support isolated staging. Upgrade the API and publishers first.');
     onProgress({ phase, completed: 0, total: selected.length, bytes: 0, totalBytes: 0 });
     const prepared = await prepareHostingFiles(selected, spa, limits, signal, (completed, total) => onProgress({ phase, completed, total, bytes: 0, totalBytes: 0 }));
@@ -144,7 +149,7 @@ export async function deployHostingDirectory(
       onProgress({ phase, completed, total: prepared.files.size, bytes, totalBytes: prepared.bytes, releaseID });
     };
     report('creating');
-    const release = await createHostingRelease(site.id, prepared.manifest, signal);
+    const release = await createHostingRelease(site.id, prepared.manifest, signal, provenance);
     releaseID = release.id;
     report('uploading');
     let grants: ReturnType<typeof validateHostingGrants> | undefined;

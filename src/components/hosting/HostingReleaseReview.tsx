@@ -1,13 +1,15 @@
 'use client';
 
+import { HostingProvenance } from './HostingProvenance';
 import type { HostingReleaseReview as Review } from '@/lib/hosting';
 
-export function HostingReleaseReview({ review, stale, disabled, onPublish, onClose }: {
-  review: Review; stale: boolean; disabled: boolean; onPublish: () => void; onClose: () => void;
+export function HostingReleaseReview({ review, stale, disabled, onPublish, onClose, showProvenance = false }: {
+  showProvenance?: boolean; review: Review; stale: boolean; disabled: boolean; onPublish: () => void; onClose: () => void;
 }) {
   return <section className="space-y-3 rounded-lg border border-[var(--color-line)] p-4" aria-label="Release comparison">
     <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Review release {review.release_id.slice(0,8)}</h3>
       <button type="button" className="btn btn-ghost btn-sm" disabled={disabled} onClick={onClose}>Close comparison</button></div>
+    {showProvenance && review.provenance && <HostingProvenance value={review.provenance} />}
     <p className="text-sm">Compared with {review.base_release_id ? `release ${review.base_release_id.slice(0,8)}` : 'an empty site'} at revision {review.expected_revision}.</p>
     <p className="text-sm">{review.added} added · {review.changed} changed · {review.removed} removed · {review.before_bytes} → {review.after_bytes} content bytes</p>
     <p className="text-xs text-[var(--color-ink-muted)]">Removed paths may remain available from previously published retained releases. Publishing replaces the active release and preserves suspension.</p>

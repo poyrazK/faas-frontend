@@ -1,13 +1,14 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useHostingQuery } from '@/lib/useHostingQuery';
-import { createHostingPreview, listHostingPreviews, revokeHostingPreview, hostingSiteURL, type HostingCapabilities, type HostingRelease, type HostingSite } from '@/lib/hosting';
+import { createHostingPreview, listHostingPreviews, revokeHostingPreview, hostingSiteURL, type HostingCapabilities, type HostingRelease, type HostingSite, type HostingPreview } from '@/lib/hosting';
 import { CopyButton } from '@/components/ui/bits';
 
-export function HostingPreviews({ site, releases, limits, disabled }: { site: HostingSite; releases: HostingRelease[]; limits: HostingCapabilities; disabled: boolean }) {
+export function HostingPreviews({ site, releases, limits, disabled, onPreviews }: { site: HostingSite; releases: HostingRelease[]; limits: HostingCapabilities; disabled: boolean; onPreviews?: (previews: HostingPreview[] | undefined) => void }) {
   const fetcher = useCallback((signal: AbortSignal) => listHostingPreviews(site.id, signal), [site.id]);
   const query = useHostingQuery(fetcher, 5000);
+  useEffect(() => { onPreviews?.(query.error ? undefined : query.data ?? undefined); }, [query.data, query.error, onPreviews]);
   const [releaseID, setReleaseID] = useState('');
   const [ttl, setTTL] = useState(String((limits.preview_ttl_default_seconds || 86400) / 60));
   const [busy, setBusy] = useState(false);

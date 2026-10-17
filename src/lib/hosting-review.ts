@@ -18,7 +18,7 @@ export function reviewHostingRelease(site: HostingSite, releases: HostingRelease
   if (!after || after.state !== 'ready' || site.active_release_id && (!before || before.state !== 'ready')) throw error();
   const old = new Map(before?.manifest.files.map((f) => [f.path, f]) ?? []);
   const result: HostingReleaseReview = {
-    site_id: site.id, expected_revision: site.revision, base_release_id: site.active_release_id, release_id: target,
+    provenance: after.provenance, site_id: site.id, expected_revision: site.revision, base_release_id: site.active_release_id, release_id: target,
     added: 0, changed: 0, removed: 0, before_bytes: before?.manifest.files.reduce((n,f) => n + f.size, 0) ?? 0,
     after_bytes: after.manifest.files.reduce((n,f) => n + f.size, 0), files: [], settings_changed: false,
     before_settings: settings(before), after_settings: settings(after),
