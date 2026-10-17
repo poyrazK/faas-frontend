@@ -22,3 +22,5 @@ export const hostingCISetupDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_H
 export const hostingActivityDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_ACTIVITY_ENABLED === 'true';
 
 export const hostingPreviewReservationsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED === 'true';
+
+export const hostingCancellationDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_CANCELLATION_ENABLED === 'true';

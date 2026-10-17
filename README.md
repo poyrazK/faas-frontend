@@ -195,3 +195,5 @@ rows/actions. See the backend
 [activity guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-activity.md).
 
 Internal preview capacity requires `NEXT_PUBLIC_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED=true` and the API `preview_reservations_enabled` capability. Its stored snapshot includes reservations and previews pending safe cleanup; it makes no serving-health or future admission promise. The GitHub setup reservation checkbox is optional and defaults off.
+
+Internal CI cancellation requires `NEXT_PUBLIC_FRONTEND_HOSTING_CANCELLATION_ENABLED=true`, API `cancellation_enabled` and the existing deployment activity opt-ins. Eligible rows offer exact-run confirmation; production history and other preview references remain protected by authoritative server checks. Cancellation queues preview revocation and safe cleanup rather than claiming immediate deletion.

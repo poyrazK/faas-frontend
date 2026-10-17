@@ -3,11 +3,12 @@
 import { useCallback, useState } from 'react';
 import { listHostingActivity } from '@/lib/hosting';
 import { useHostingQuery } from '@/lib/useHostingQuery';
+import { HostingRunCancel } from './HostingRunCancel';
 import { HostingProvenance } from './HostingProvenance';
 import { CopyButton } from '@/components/ui/bits';
 
-type Props = {siteID: string; disabled: boolean; showSource: boolean; reviewableReleaseIDs: string[]; onReview: (release: string) => void; onInspect?: (run: string) => void};
-const labels = {recorded: 'Recorded', pending: 'Pending', blocked: 'Blocked', unknown: 'Unknown'};
+type Props = {siteID: string; disabled: boolean; showSource: boolean; reviewableReleaseIDs: string[]; onReview: (release: string) => void; onInspect?: (run: string) => void; cancellationEnabled?: boolean};
+const labels = {recorded: 'Recorded', pending: 'Pending', blocked: 'Blocked', unknown: 'Unknown', canceled: 'Canceled'};
 export function HostingActivity(props: Props) {
   const [before, setBefore] = useState('');
   return <section className="space-y-3 rounded-lg border border-[var(--color-line)] p-4" aria-label="Deployment activity">
@@ -16,13 +17,15 @@ export function HostingActivity(props: Props) {
     <ActivityPage key={props.siteID + ':' + before} {...props} before={before} onPage={setBefore} />
   </section>;
 }
-function ActivityPage({siteID, disabled, showSource, reviewableReleaseIDs, onReview, onInspect, before, onPage}: Props & {before: string; onPage: (cursor: string) => void}) {
+function ActivityPage({siteID, disabled, showSource, reviewableReleaseIDs, onReview, onInspect, cancellationEnabled, before, onPage}: Props & {before: string; onPage: (cursor: string) => void}) {
   const fetcher = useCallback((signal: AbortSignal) => listHostingActivity(siteID, before, signal), [siteID, before]);
   const query = useHostingQuery(fetcher);
+  const [cancellationMessage, setCancellationMessage] = useState('');
   const valid = query.data?.site_id === siteID && query.data.serving_health === 'not_checked' && (!query.data.next_cursor || query.data.next_cursor !== before);
   const page = !query.error && valid && !disabled ? query.data : null;
   return <div className="space-y-3">
     <div className="flex flex-wrap gap-2"><button className="btn btn-ghost btn-sm" disabled={disabled} onClick={query.refresh}>Refresh activity</button>{before && <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={() => onPage('')}>Newest runs</button>}</div>
+    {cancellationMessage && <p role="status" className="text-sm">{cancellationMessage}</p>}
     {query.error && <p role="alert" className="text-sm">{query.error.message} Activity and its actions are unavailable until a successful refresh.</p>}
     {disabled && <p className="text-xs">Activity is paused while site details are unavailable or changing.</p>}
     {!disabled && !query.data && !query.error && <p className="text-xs">Reading recorded CI runs…</p>}
@@ -38,8 +41,9 @@ function ActivityPage({siteID, disabled, showSource, reviewableReleaseIDs, onRev
         <ul className="list-disc space-y-1 pl-4 text-xs">{entry.checks.map(check => <li key={check.step}><strong>{check.state}</strong>: {check.summary}</li>)}</ul>
         <div className="flex flex-wrap gap-2">
           {onInspect && <button className="btn btn-secondary btn-sm" onClick={() => onInspect(entry.run_id)}>Inspect run</button>}
-          {reviewableReleaseIDs.includes(entry.release_id) && <button className="btn btn-secondary btn-sm" onClick={() => onReview(entry.release_id)}>Review release</button>}
+          {!entry.canceled && reviewableReleaseIDs.includes(entry.release_id) && <button className="btn btn-secondary btn-sm" onClick={() => onReview(entry.release_id)}>Review release</button>}
         </div>
+        {cancellationEnabled && entry.can_cancel && !entry.canceled && <HostingRunCancel key={entry.run_id + ":" + query.observedAt} siteID={siteID} entry={entry} onChanged={query.refresh} onMessage={setCancellationMessage} />}
       </article>)}
       {page.next_cursor && <button className="btn btn-secondary btn-sm" onClick={() => onPage(page.next_cursor!)}>Older runs</button>}
     </>}

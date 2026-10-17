@@ -3,6 +3,7 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+ cancellation_enabled?: boolean;
  preview_reservations_enabled?: boolean;
  activity_enabled?: boolean;
  activity_page_size?: number;
@@ -273,8 +274,9 @@ export function prepareHostingCISetup(site: string, trust: string, config: Hosti
 }
 
 export interface HostingActivityEntry {
+ canceled?: boolean; can_cancel?: boolean;
  run_id: string; release_id: string; preview_id: string; created_at: string; preview_expires_at: string;
- state: 'recorded' | 'pending' | 'blocked' | 'unknown'; provenance?: HostingReleaseProvenance; checks: HostingDiagnosticCheck[];
+ state: 'recorded' | 'pending' | 'blocked' | 'unknown' | 'canceled'; provenance?: HostingReleaseProvenance; checks: HostingDiagnosticCheck[];
 }
 export interface HostingActivityPage {
  site_id: string; entries: HostingActivityEntry[]; next_cursor?: string; observed_at: string;
@@ -292,4 +294,12 @@ export function hostingCapacityMatches(data: HostingPreviewCapacity, site: strin
  return data.site_id === site && Number.isSafeInteger(data.limit) && data.limit > 0 &&
  [data.previews, data.reservations, data.available].every(value => Number.isSafeInteger(value) && value >= 0) &&
  data.previews + data.reservations + data.available === data.limit && Number.isFinite(Date.parse(data.observed_at));
+}
+
+export interface HostingCanceledRun {
+ id: string; site_id: string; release_id: string; preview_id: string; canceled: boolean;
+}
+export function cancelHostingCIRun(site: string, run: string) {
+ // Run state is intrinsically idempotent; never replay a cached mutation response.
+ return request<HostingCanceledRun>(`${sitePath(site)}/ci/${encodeURIComponent(run)}/cancel`, {method: 'POST', cache: 'no-store', signal: deadline()});
 }

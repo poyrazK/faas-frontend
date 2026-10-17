@@ -11,7 +11,7 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled, hostingDiagnosticsDashboardEnabled, hostingCISetupDashboardEnabled, hostingActivityDashboardEnabled, hostingPreviewReservationsDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled, hostingDiagnosticsDashboardEnabled, hostingCISetupDashboardEnabled, hostingActivityDashboardEnabled, hostingPreviewReservationsDashboardEnabled, hostingCancellationDashboardEnabled } from '@/lib/hosting-flag';
 import { HostingCapacity } from './HostingCapacity';
 import { HostingActivity } from './HostingActivity';
 import { HostingCISetup } from './HostingCISetup';
@@ -78,7 +78,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
       </div>
       <Publication status={data.status} />
       {hostingPreviewReservationsDashboardEnabled && limits.preview_reservations_enabled && site.durable_routing && <HostingCapacity key={"capacity:" + site.id} siteID={site.id} disabled={disabled} />}
-      {hostingActivityDashboardEnabled && limits.activity_enabled && <HostingActivity key={"activity:" + site.id} siteID={site.id} disabled={disabled} showSource={showHistory}
+      {hostingActivityDashboardEnabled && limits.activity_enabled && <HostingActivity key={"activity:" + site.id} siteID={site.id} disabled={disabled} showSource={showHistory} cancellationEnabled={hostingCancellationDashboardEnabled && !!limits.cancellation_enabled}
         reviewableReleaseIDs={data.releases.filter(release => release.state === 'ready' && release.id !== site.active_release_id).map(release => release.id)}
         onInspect={hostingDiagnosticsDashboardEnabled && limits.diagnostics_enabled ? run => setActivitySelection(current => ({run, nonce: current.nonce + 1})) : undefined}
         onReview={releaseID => { try { setReview(reviewHostingRelease(site, data.releases, releaseID)); setError(''); } catch (error) { setError(error instanceof Error ? error.message : 'Refresh before reviewing.'); } }} />}
