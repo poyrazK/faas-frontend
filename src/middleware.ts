@@ -70,6 +70,7 @@ export function middleware(request: NextRequest) {
       'rate-limits',
       'billing',
       'configuration',
+      'flags',
       'audit-log',
       'incidents',
       'login',
