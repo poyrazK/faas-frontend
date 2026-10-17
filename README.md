@@ -184,3 +184,12 @@ Edited inputs, changed site/trust state and failed reads block stale downloads.
 The helper makes no GitHub writes or deployments. Local CLI preflight keeps saved
 workflow/preparation sources on the workstation; see the backend
 [setup guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-ci-setup.md).
+
+Deployment activity is separately default-off:
+`NEXT_PUBLIC_FRONTEND_HOSTING_ACTIVITY_ENABLED=true`, main hosting build opt-in
+and API `activity_enabled` are required. The site panel lists recorded CI intents
+with pagination, stored release/preview checks and exact-run diagnostics links.
+Release review reuses the existing comparison; listing never publishes or retries.
+Source details honor the existing history build/API flags. Failed reads hide stale
+rows/actions. See the backend
+[activity guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-activity.md).

@@ -11,7 +11,8 @@ import { deployHostingDirectory, type HostingDeployProgress } from '@/lib/hostin
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { Spinner } from '@/components/ui/States';
 import { CopyButton } from '@/components/ui/bits';
-import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled, hostingDiagnosticsDashboardEnabled, hostingCISetupDashboardEnabled } from '@/lib/hosting-flag';
+import { hostingAnalyticsDashboardEnabled, hostingDomainsDashboardEnabled, hostingConfigDashboardEnabled, hostingPreviewsDashboardEnabled, hostingHistoryDashboardEnabled, hostingRetentionDashboardEnabled, hostingOIDCDashboardEnabled, hostingDiagnosticsDashboardEnabled, hostingCISetupDashboardEnabled, hostingActivityDashboardEnabled } from '@/lib/hosting-flag';
+import { HostingActivity } from './HostingActivity';
 import { HostingCISetup } from './HostingCISetup';
 import { HostingDiagnostics } from './HostingDiagnostics';
 import { HostingOIDC } from './HostingOIDC';
@@ -33,6 +34,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
   }, [id]);
   const query = useHostingQuery(fetcher, 5000);
   const [busy, setBusy] = useState(false);
+  const [activitySelection, setActivitySelection] = useState({run: '', nonce: 0});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [needsRefresh, setNeedsRefresh] = useState<string | null>(null);
@@ -74,7 +76,11 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
         <CopyButton value={hostingSiteURL(site.hostname) || site.hostname} label="Copy URL" />
       </div>
       <Publication status={data.status} />
-      {hostingDiagnosticsDashboardEnabled && limits.diagnostics_enabled && <HostingDiagnostics key={"diagnostics:" + site.id} siteID={site.id} disabled={disabled} />}
+      {hostingActivityDashboardEnabled && limits.activity_enabled && <HostingActivity key={"activity:" + site.id} siteID={site.id} disabled={disabled} showSource={showHistory}
+        reviewableReleaseIDs={data.releases.filter(release => release.state === 'ready' && release.id !== site.active_release_id).map(release => release.id)}
+        onInspect={hostingDiagnosticsDashboardEnabled && limits.diagnostics_enabled ? run => setActivitySelection(current => ({run, nonce: current.nonce + 1})) : undefined}
+        onReview={releaseID => { try { setReview(reviewHostingRelease(site, data.releases, releaseID)); setError(''); } catch (error) { setError(error instanceof Error ? error.message : 'Refresh before reviewing.'); } }} />}
+      {hostingDiagnosticsDashboardEnabled && limits.diagnostics_enabled && <HostingDiagnostics key={"diagnostics:" + site.id + ":" + activitySelection.nonce} initialRunID={activitySelection.run} siteID={site.id} disabled={disabled} />}
       {hostingCISetupDashboardEnabled && limits.ci_setup_enabled && site.durable_routing && <HostingCISetup key={"ci-setup:" + site.id + ":" + site.revision + ":" + disabled} site={site} disabled={disabled} />}
       {hostingOIDCDashboardEnabled && limits.oidc_enabled && site.durable_routing && <HostingOIDC key={"oidc:" + site.id} site={site} disabled={disabled} />}
       {hostingRetentionDashboardEnabled && limits.retention_enabled && site.durable_routing && <HostingRetention key={"retention:" + site.id} site={site} limits={limits} disabled={disabled} />}
@@ -124,7 +130,7 @@ export function HostingSiteDetail({ id, limits, inventoryStale, onChange, onClos
       {busy && !progress && <p role="status" className="text-sm">Applying change…</p>}
       {error && <p role="alert" className="text-sm text-[var(--color-danger)]">{error}</p>}
       {message && <p role="status" className="text-sm">{message}</p>}
-      {review && <HostingReleaseReview showProvenance={showHistory} review={review} stale={!hostingReviewIsCurrent(review, site, data.releases)} disabled={disabled}
+      {review && <HostingReleaseReview focusOnOpen={hostingActivityDashboardEnabled && limits.activity_enabled} showProvenance={showHistory} review={review} stale={!hostingReviewIsCurrent(review, site, data.releases)} disabled={disabled}
         onClose={() => setReview(null)} onPublish={() => {
           if (disabled || !hostingReviewIsCurrent(review, site, data.releases)) return;
           if (window.confirm(`Publish reviewed release ${review.release_id.slice(0,8)} at revision ${review.expected_revision}?`)) {

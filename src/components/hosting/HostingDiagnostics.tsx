@@ -1,17 +1,19 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getHostingDiagnostics } from '@/lib/hosting';
 import { useHostingQuery } from '@/lib/useHostingQuery';
 import { CopyButton } from '@/components/ui/bits';
 
 const canonicalUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const steps: Record<string, string> = {site: 'Site intent', run: 'CI intent', release: 'Artifact verification', preview: 'Private preview', publication: 'Site publication', observation: 'Observation consistency', serving: 'Serving health'};
-export function HostingDiagnostics({siteID, disabled}: {siteID: string; disabled: boolean}) {
-  const [draft, setDraft] = useState('');
-  const [run, setRun] = useState('');
+export function HostingDiagnostics({siteID, disabled, initialRunID = ''}: {siteID: string; disabled: boolean; initialRunID?: string}) {
+  const target = useRef<HTMLElement | null>(null);
+  useEffect(() => { if (initialRunID) { target.current?.scrollIntoView({block: 'start'}); target.current?.focus({preventScroll: true}); } }, [initialRunID]);
+  const [draft, setDraft] = useState(initialRunID);
+  const [run, setRun] = useState(initialRunID);
   const valid = draft === '' || canonicalUUID.test(draft);
-  return <section className="space-y-3 rounded-lg border border-[var(--color-line)] p-4" aria-label="Deployment diagnostics">
+  return <section ref={target} tabIndex={-1} className="space-y-3 rounded-lg border border-[var(--color-line)] p-4" aria-label="Deployment diagnostics">
     <h3 className="font-semibold">Deployment diagnostics</h3>
     <p className="text-xs">Explain stored deployment progress. This view reads records without changing resources or probing DNS, TLS, Access or serving health.</p>
     <form className="flex flex-wrap items-end gap-2" onSubmit={event => {event.preventDefault(); if (!disabled && valid) setRun(draft);}}>

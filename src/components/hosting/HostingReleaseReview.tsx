@@ -1,12 +1,15 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { HostingProvenance } from './HostingProvenance';
 import type { HostingReleaseReview as Review } from '@/lib/hosting';
 
-export function HostingReleaseReview({ review, stale, disabled, onPublish, onClose, showProvenance = false }: {
-  showProvenance?: boolean; review: Review; stale: boolean; disabled: boolean; onPublish: () => void; onClose: () => void;
+export function HostingReleaseReview({ review, stale, disabled, onPublish, onClose, showProvenance = false, focusOnOpen = false }: {
+  showProvenance?: boolean; focusOnOpen?: boolean; review: Review; stale: boolean; disabled: boolean; onPublish: () => void; onClose: () => void;
 }) {
-  return <section className="space-y-3 rounded-lg border border-[var(--color-line)] p-4" aria-label="Release comparison">
+  const target = useRef<HTMLElement | null>(null);
+  useEffect(() => { if (focusOnOpen) { target.current?.scrollIntoView({block: 'start'}); target.current?.focus({preventScroll: true}); } }, [review, focusOnOpen]);
+  return <section ref={target} tabIndex={-1} className="space-y-3 rounded-lg border border-[var(--color-line)] p-4" aria-label="Release comparison">
     <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Review release {review.release_id.slice(0,8)}</h3>
       <button type="button" className="btn btn-ghost btn-sm" disabled={disabled} onClick={onClose}>Close comparison</button></div>
     {showProvenance && review.provenance && <HostingProvenance value={review.provenance} />}

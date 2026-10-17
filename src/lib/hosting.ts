@@ -3,6 +3,8 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+ activity_enabled?: boolean;
+ activity_page_size?: number;
  ci_setup_enabled?: boolean;
  diagnostics_enabled?: boolean;
  oidc_enabled?: boolean;
@@ -266,4 +268,16 @@ export interface HostingCISetup {
 }
 export function prepareHostingCISetup(site: string, trust: string, config: HostingCISetupConfig, signal?: AbortSignal) {
  return request<HostingCISetup>(`${sitePath(site)}/ci-setup`, {method: 'POST', cache: 'no-store', signal: deadline(signal), body: JSON.stringify({trust_id: trust, config})});
+}
+
+export interface HostingActivityEntry {
+ run_id: string; release_id: string; preview_id: string; created_at: string; preview_expires_at: string;
+ state: 'recorded' | 'pending' | 'blocked' | 'unknown'; provenance?: HostingReleaseProvenance; checks: HostingDiagnosticCheck[];
+}
+export interface HostingActivityPage {
+ site_id: string; entries: HostingActivityEntry[]; next_cursor?: string; observed_at: string;
+ serving_health: 'not_checked'; source_labels_included: boolean;
+}
+export function listHostingActivity(site: string, before = '', signal?: AbortSignal) {
+ return request<HostingActivityPage>(`${sitePath(site)}/runs${before ? '?before=' + encodeURIComponent(before) : ''}`, {cache: 'no-store', signal: deadline(signal)});
 }
