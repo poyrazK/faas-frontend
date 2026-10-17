@@ -137,3 +137,20 @@ is shown as unavailable, not zero traffic, and does not disable deployment
 controls. Empty results prompt collection verification. No visitor IPs, emails,
 paths, URLs or headers are collected. CPU/provider charges remain separate.
 See the backend [traffic runbook](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-traffic.md).
+
+### Automatic cleanup of abandoned deployments
+
+The cleanup panel needs `NEXT_PUBLIC_FRONTEND_HOSTING_RETENTION_ENABLED=true`,
+the main hosting build flag, and the backend's independent
+`frontend_hosting_retention_enabled` capability. Both opt-ins default off; every
+site also needs an explicitly enabled retention policy.
+
+The panel previews proposed idle-age rules and eligible/protected release
+reservations before saving with the reviewed policy revision. Edited rules,
+concurrent policy changes, failed reads and uncertain writes require a fresh
+review. Automatic cleanup protects all published releases, manual staged
+releases, CI retry windows and remaining preview references. Reservations remain
+until the existing publication, grace and artifact cleanup flow succeeds.
+
+Upgrade all backend writers and apply its retention migration before enabling.
+See the backend [retention guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-retention.md).

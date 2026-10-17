@@ -37,3 +37,8 @@ it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('release history requires
  vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_HISTORY_ENABLED', value); vi.resetModules();
  expect((await import('./hosting-flag')).hostingHistoryDashboardEnabled).toBe(value === 'true');
 });
+
+it.each([undefined, '', 'false', '1', 'TRUE', 'true'])('retention requires a separate explicit build opt-in (%s)', async (value) => {
+ vi.stubEnv('NEXT_PUBLIC_FRONTEND_HOSTING_RETENTION_ENABLED', value); vi.resetModules();
+ expect((await import('./hosting-flag')).hostingRetentionDashboardEnabled).toBe(value === 'true');
+});

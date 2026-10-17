@@ -10,3 +10,5 @@ export const hostingConfigDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HO
 export const hostingPreviewsDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_PREVIEWS_ENABLED === 'true';
 
 export const hostingHistoryDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_HISTORY_ENABLED === 'true';
+
+export const hostingRetentionDashboardEnabled = process.env.NEXT_PUBLIC_FRONTEND_HOSTING_RETENTION_ENABLED === 'true';

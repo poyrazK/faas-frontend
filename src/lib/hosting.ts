@@ -3,6 +3,10 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+ retention_enabled?: boolean;
+ retention_age_default_seconds?: number;
+ retention_age_min_seconds?: number;
+ retention_age_max_seconds?: number;
   previews_enabled?: boolean;
   previews_per_site?: number;
   preview_ttl_default_seconds?: number;
@@ -204,3 +208,18 @@ export interface HostingPromotionEvent {
 }
 export interface HostingHistoryPage { events: HostingPromotionEvent[]; next_before_revision?: number; retention_limit: number }
 export const listHostingHistory = (id: string, before = 0, signal?: AbortSignal) => read<HostingHistoryPage>(`${sitePath(id)}/history${before ? `?before_revision=${encodeURIComponent(before)}` : ''}`, signal);
+
+export interface HostingRetentionRules { pending_age_seconds: number; staged_age_seconds: number }
+export interface HostingRetentionPolicy extends HostingRetentionRules { site_id: string; revision: number; enabled: boolean; updated_at?: string }
+export interface HostingCleanupPlan {
+ policy: HostingRetentionPolicy; rules: HostingRetentionRules; proposed: boolean; evaluated_at: string;
+ entries: { release_id: string; state: string; eligible: boolean; reason: string; reserved_bytes: number; eligible_at?: string }[];
+ reclaimable_reserved_bytes: number; retiring_reserved_bytes: number;
+}
+export function getHostingCleanupPlan(id: string, rules?: HostingRetentionRules, signal?: AbortSignal) {
+ const query = rules ? '?' + new URLSearchParams({ pending_age_seconds: String(rules.pending_age_seconds), staged_age_seconds: String(rules.staged_age_seconds) }) : '';
+ return read<HostingCleanupPlan>(`${sitePath(id)}/cleanup${query}`, signal);
+}
+export function setHostingRetentionPolicy(id: string, policy: HostingRetentionRules & { enabled: boolean; expected_revision: number }, signal?: AbortSignal) {
+ return request<HostingRetentionPolicy>(`${sitePath(id)}/retention`, {method: 'PUT', cache: 'no-store', signal: deadline(signal), body: JSON.stringify(policy)});
+}
