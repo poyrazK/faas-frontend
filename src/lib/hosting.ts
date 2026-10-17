@@ -3,6 +3,7 @@ import { request } from './api';
 // Contract: faas/pkg/api/hosting.go. All routes independently enforce the
 // backend feature flag, operator allowlist, MFA, scopes, and account ownership.
 export interface HostingCapabilities {
+ oidc_enabled?: boolean;
  retention_enabled?: boolean;
  retention_age_default_seconds?: number;
  retention_age_min_seconds?: number;
@@ -222,4 +223,19 @@ export function getHostingCleanupPlan(id: string, rules?: HostingRetentionRules,
 }
 export function setHostingRetentionPolicy(id: string, policy: HostingRetentionRules & { enabled: boolean; expected_revision: number }, signal?: AbortSignal) {
  return request<HostingRetentionPolicy>(`${sitePath(id)}/retention`, {method: 'PUT', cache: 'no-store', signal: deadline(signal), body: JSON.stringify(policy)});
+}
+
+export interface HostingOIDCTrustRules {
+ repository_owner_id: string; repository_id: string; repository: string;
+ ref: string; workflow_ref: string; event_name: 'push' | 'workflow_dispatch' | 'schedule'; environment?: string;
+}
+export interface HostingOIDCTrust extends HostingOIDCTrustRules { id: string; site_id: string; account_id: string; created_at: string }
+export function listHostingOIDCTrusts(site: string, signal?: AbortSignal) {
+ return request<HostingOIDCTrust[]>(`${sitePath(site)}/oidc-trusts`, {cache: 'no-store', signal: deadline(signal)});
+}
+export function createHostingOIDCTrust(site: string, rules: HostingOIDCTrustRules, signal?: AbortSignal) {
+ return request<HostingOIDCTrust>(`${sitePath(site)}/oidc-trusts`, {method: 'POST', cache: 'no-store', signal: deadline(signal), body: JSON.stringify(rules)});
+}
+export function revokeHostingOIDCTrust(site: string, trust: string, signal?: AbortSignal) {
+ return request<void>(`${sitePath(site)}/oidc-trusts/${encodeURIComponent(trust)}`, {method: 'DELETE', cache: 'no-store', signal: deadline(signal)});
 }

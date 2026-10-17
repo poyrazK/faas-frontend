@@ -154,3 +154,15 @@ until the existing publication, grace and artifact cleanup flow succeeds.
 
 Upgrade all backend writers and apply its retention migration before enabling.
 See the backend [retention guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-retention.md).
+
+The internal **GitHub deployment identity** panel requires
+`NEXT_PUBLIC_FRONTEND_HOSTING_OIDC_ENABLED=true` at build time as well as the main
+hosting flag and API `oidc_enabled` capability. All default off. Operators review
+exact repository owner/repository numeric IDs, repository, branch, workflow,
+event and optional GitHub environment before creating an immutable trust binding.
+The returned trust ID enables the frontend hosting Action to exchange and renew
+short-lived stage/private-preview credentials without a stored Gregale secret.
+The panel lists rules and lets operators revoke a binding, invalidating its issued
+credentials on their next request. Read failures disable changes; edits invalidate
+the draft review. Pull request events and production promotion are excluded.
+See the backend [OIDC guide](https://github.com/poyrazK/faas/blob/codex/internal-static-hosting/docs/internal-frontend-hosting-oidc.md).
