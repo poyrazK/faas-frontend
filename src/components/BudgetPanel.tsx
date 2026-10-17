@@ -13,22 +13,30 @@ export function BudgetHealth({ policy, apps = [] }: { policy: BudgetPolicy; apps
   const stopping = policy.spec.action === 'stop_previews' && policy.spec.mode === 'monitored';
   const strict = strictCompute(policy.spec);
   const compute = policy.runtime?.compute;
+  const egress = compute?.egress;
+  const combined = policy.spec.meters.includes('egress') && strict;
   return (
     <div className="space-y-2 text-sm">
       <p>{policy.status === 'active'
-        ? strict ? policy.spec.scope.kind === 'account' ? 'Strict account compute budget active. Apps and jobs share included allowance and paid compute funding.' : policy.spec.scope.kind === 'job' ? 'Strict job compute budget active. Each task attempt requires reserved funding.' : 'Strict app compute budget active. Every VM execution window requires reserved funding.' : stopping ? 'Preview stopping active. Production can continue. Metering and shutdown delays can exceed the budget.' : 'Spending alerts active. Workloads continue running.'
+        ? strict ? policy.spec.scope.kind === 'account' ? combined ? 'Strict account compute and egress budget active. Apps and jobs share one paid spending limit.' : 'Strict account compute budget active. Apps and jobs share included allowance and paid compute funding.' : policy.spec.scope.kind === 'job' ? 'Strict job compute budget active. Each task attempt requires reserved funding.' : 'Strict app compute budget active. Every VM execution window requires reserved funding.' : stopping ? 'Preview stopping active. Production can continue. Metering and shutdown delays can exceed the budget.' : 'Spending alerts active. Workloads continue running.'
         : policy.status === 'unavailable' ? 'Budget monitoring is unavailable.' : 'Draft: this budget is inactive.'}</p>
       {compute && <div className="space-y-1">
-        <p>Committed compute: {budgetMoney(compute.committed_millicents)} · Reserved: {budgetMoney(compute.reserved_millicents)} · Remaining: {budgetMoney(compute.remaining_millicents)}</p>
+        <p>Committed {combined ? 'compute and egress' : 'compute'}: {budgetMoney(compute.committed_millicents)} · Reserved: {budgetMoney(compute.reserved_millicents)} · Remaining: {budgetMoney(compute.remaining_millicents)}</p>
         {compute.scope_kind === 'account' && <>
           <p>Shared included compute (MB-seconds): granted {compute.allowance_granted_mb_seconds?.toLocaleString() ?? 'Unavailable'} · Committed: {compute.allowance_committed_mb_seconds?.toLocaleString() ?? 'Unavailable'} · Reserved: {compute.allowance_reserved_mb_seconds?.toLocaleString() ?? 'Unavailable'} · Remaining: {compute.allowance_remaining_mb_seconds?.toLocaleString() ?? 'Unavailable'}</p>
-          <p>Compute money balances cover paid usage after the shared allowance. App and job budgets also apply.</p>
+          <p>Money balances cover paid usage after the shared allowances. App and job budgets also apply.</p>
+        </>}
+        {egress && <>
+          <p>Egress funding: committed {budgetMoney(egress.committed_millicents)} · Reserved: {budgetMoney(egress.reserved_millicents)}</p>
+          <p>Funded egress bytes: committed {egress.committed_bytes.toLocaleString()} · Reserved: {egress.reserved_bytes.toLocaleString()}</p>
+          <p>Included egress bytes: granted {egress.allowance_granted_bytes.toLocaleString()} · Committed: {egress.allowance_committed_bytes.toLocaleString()} · Reserved: {egress.allowance_reserved_bytes.toLocaleString()} · Remaining: {egress.allowance_remaining_bytes.toLocaleString()}</p>
+          <p>Unused traffic credits count against this budget after shutdown. Credits include a framing margin, so funded bytes can exceed actual traffic. Invoice charges use measured usage.</p>
         </>}
         <p>Commitments include startup and round up conservatively. They can exceed the compute charge on your bill.</p>
         <p>{compute.unconfirmed_leases} active or unsettled VM attempts. Funding remains reserved until shutdown and settlement are confirmed.</p>
-        {compute.held && <p role="status">Compute budget held. {policy.spec.resume_rule === 'manual' ? 'Change or disable this policy to resume.' : `This hold resets at ${compute.period_end} (UTC).`}</p>}
+        {compute.held && <p role="status">{combined ? 'Compute and egress budget held.' : 'Compute budget held.'} {policy.spec.resume_rule === 'manual' ? 'Change or disable this policy to resume.' : `This hold resets at ${compute.period_end} (UTC).`}</p>}
         {!compute.initialized && <p role="status">Awaiting accounting initialization for this UTC month.</p>}
-        <p>Subscription, storage, network egress, builds, and taxes are outside this compute budget.</p>
+        <p>Subscription, storage, builds, object-storage delivery, and taxes are outside this budget.{!combined && ' Network egress is also excluded.'}</p>
       </div>}
       {(policy.runtime?.stops ?? []).map((stop) => <div key={stop.id} className="space-y-1">
         <p>Preview stop requested. Drain deadline: <time dateTime={stop.drain_deadline}>{stop.drain_deadline}</time>.</p>
@@ -68,6 +76,7 @@ export default function BudgetPanel({ apps }: { apps: App[] }) {
   const [target, setTarget] = useState('');
   const [amount, setAmount] = useState('10.00');
   const [basis, setBasis] = useState<BudgetSpec['basis']>('net_usage');
+  const [includeEgress, setIncludeEgress] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [action, setAction] = useState<'notify' | 'stop_previews' | 'suspend_workloads'>('notify');
   const [drain, setDrain] = useState('30');
@@ -107,16 +116,16 @@ export default function BudgetPanel({ apps }: { apps: App[] }) {
     }
     const spec: BudgetSpec = {
       name: name.trim(), scope: target.startsWith('job:') ? { kind: 'job', id: target.slice(4) } : target ? { kind: 'app', id: target } : { kind: 'account' },
-      currency: 'EUR', meters: ['compute'], basis: strict ? target ? 'gross_usage' : 'net_usage' : basis, limit_millicents: limit,
+      currency: 'EUR', meters: strict && !target && includeEgress ? ['compute', 'egress'] : ['compute'], basis: strict ? target ? 'gross_usage' : 'net_usage' : basis, limit_millicents: limit,
       notify_millicents: strict ? [] : [budgetWarningThreshold(limit)], mode: strict ? 'strict' : 'monitored', action,
       drain_seconds: drainSeconds, resume_rule: resume, enabled,
     };
     void mutate(`create:${JSON.stringify(spec)}`, (key) => createFinancialBudget(spec, key));
   }
 
-  return <SectionCard className="mt-4" title="Compute budgets" bodyClassName="space-y-5 px-5 py-5"
+  return <SectionCard className="mt-4" title="Cost budgets" bodyClassName="space-y-5 px-5 py-5"
     action={<button className="btn btn-secondary" onClick={() => { policies.reload(); jobs.reload(); }} disabled={busy}>Refresh</button>}>
-    <p className="text-sm">Monitor spending, stop previews after a threshold, or reserve compute funding across your account or for one app or job. Budgets use the current UTC month. Changing a policy keeps the month’s spending.</p>
+    <p className="text-sm">Monitor spending, stop previews after a threshold, or reserve compute and egress funding across your account. App and job budgets cover compute. Budgets use the current UTC month. Changing a policy keeps the month’s spending.</p>
     <form onSubmit={create} className="grid gap-3 sm:grid-cols-2">
       <label className="text-sm">Budget name<input className="field mt-1 w-full" required maxLength={128} value={name} onChange={(e) => setName(e.target.value)} /></label>
       <label className="text-sm">Scope<select className="field mt-1 w-full" value={target} onChange={(e) => { setTarget(e.target.value); if (e.target.value.startsWith('job:') && action === 'stop_previews') setAction('suspend_workloads'); }}>
@@ -140,6 +149,9 @@ export default function BudgetPanel({ apps }: { apps: App[] }) {
         <p className="text-sm">Only workloads recorded as previews can be stopped. Queued work is retained. Releasing this budget hold keeps any other payment, security, or user hold in place.</p>
       </>}
       {action === 'suspend_workloads' && <>
+        {!target && <label className="text-sm"><input type="checkbox" checked={includeEgress} onChange={(e) => setIncludeEgress(e.target.checked)} /> Include network egress in the same paid limit</label>}
+        {!target && includeEgress && <p className="text-sm">Compute and network egress share one spending limit with separate included allowances. Activation requires complete accounting for both. Traffic stops when funded byte credits run out, including during an outage. Unused credits count against this budget after shutdown; invoices use measured traffic.</p>}
+
         <label className="text-sm">Resume<select className="field mt-1 w-full" value={resume} onChange={(e) => setResume(e.target.value as BudgetSpec['resume_rule'])}>
           <option value="next_period">At the next UTC month</option><option value="manual">When I change or disable the policy</option>
         </select></label>

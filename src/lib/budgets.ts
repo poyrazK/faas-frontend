@@ -36,6 +36,17 @@ export interface BudgetPolicy {
   reasons: string[];
   runtime?: {
     compute?: {
+      egress?: {
+        initialized: boolean;
+        committed_bytes: number;
+        reserved_bytes: number;
+        allowance_granted_bytes: number;
+        allowance_committed_bytes: number;
+        allowance_reserved_bytes: number;
+        allowance_remaining_bytes: number;
+        committed_millicents: number;
+        reserved_millicents: number;
+      };
       initialized: boolean;
       app_id?: string;
       job_id?: string;
@@ -104,7 +115,7 @@ export function strictJobCompute(spec: BudgetSpec): boolean {
 /** Account compute shares allowance; app and job compute reserve gross charges. */
 export function strictCompute(spec: BudgetSpec): boolean {
   return strictAppCompute(spec) || strictJobCompute(spec) || spec.mode === 'strict' && spec.scope.kind === 'account' && spec.basis === 'net_usage'
-    && spec.action === 'suspend_workloads' && spec.meters.length === 1 && spec.meters[0] === 'compute'
+    && spec.action === 'suspend_workloads' && spec.meters[0] === 'compute' && (spec.meters.length === 1 || spec.meters.length === 2 && spec.meters[1] === 'egress')
     && spec.drain_seconds === 0 && spec.notify_millicents.length === 0;
 }
 

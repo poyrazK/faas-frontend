@@ -25,6 +25,21 @@ describe('budget monitoring health', () => {
     expect(html).not.toContain('Spending alerts active');
     expect(html).not.toContain('Awaiting the first evaluation');
   });
+  it('shows one account limit with separate egress allowance and conservative credit use', () => {
+    const html = renderToStaticMarkup(<BudgetHealth policy={{
+      ...policy, spec: { ...policy.spec, scope: { kind: 'account' }, mode: 'strict', action: 'suspend_workloads', meters: ['compute', 'egress'], notify_millicents: [] },
+      runtime: { alerts: [], compute: { initialized: true, scope_kind: 'account', period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', committed_millicents: 300000, reserved_millicents: 200000, remaining_millicents: 500000, unconfirmed_leases: 1, held: true, observed_at: '2026-10-17T10:00:00Z',
+        egress: { initialized: true, committed_bytes: 8388608, reserved_bytes: 8388608, allowance_granted_bytes: 16777216, allowance_committed_bytes: 8388608, allowance_reserved_bytes: 8388608, allowance_remaining_bytes: 0, committed_millicents: 100000, reserved_millicents: 0 } } }
+    }} />);
+    expect(html).toContain('share one paid spending limit');
+    expect(html).toContain('Committed compute and egress: €3.00');
+    expect(html).toContain('Egress funding: committed €1.00');
+    expect(html).toContain('Unused traffic credits count against this budget');
+    expect(html).toContain('Invoice charges use measured usage');
+    expect(html).toContain('Compute and egress budget held');
+    expect(html).not.toContain('Network egress is also excluded');
+  });
+
   it('shows the shared account allowance and paid balances separately', () => {
     const html = renderToStaticMarkup(<BudgetHealth policy={{ ...policy, enforcement_ready: true, notification_ready: false,
       spec: { ...policy.spec, mode: 'strict', action: 'suspend_workloads', notify_millicents: [] },
