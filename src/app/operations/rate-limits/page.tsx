@@ -3,10 +3,11 @@
 import React, { useState } from 'react';
 import { getObsRateLimits } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { PageHeader, Mono } from '@/components/ui/bits';
+import { PageHeader } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { TenantLink } from '@/components/operator/TenantLink';
 
 export default function RateLimitsPage() {
   const [windowHours] = useState(24);
@@ -45,7 +46,7 @@ export default function RateLimitsPage() {
             </div>
           ) : error ? (
             <div className="p-8 text-center text-sm text-[var(--color-danger)]">
-              {error.message || 'Operator access required.'}
+              {error.message || 'Request failed.'}
             </div>
           ) : !data?.live || data.live.length === 0 ? (
             <div className="p-6 text-center text-sm text-[var(--color-ink-muted)]">
@@ -94,7 +95,7 @@ export default function RateLimitsPage() {
             </div>
           ) : error ? (
             <div className="p-8 text-center text-sm text-[var(--color-danger)]">
-              {error.message || 'Operator access required.'}
+              {error.message || 'Request failed.'}
             </div>
           ) : !data?.durable || data.durable.length === 0 ? (
             <div className="p-6 text-center text-sm text-[var(--color-ink-muted)]">
@@ -111,7 +112,7 @@ export default function RateLimitsPage() {
                       {isAnonymous ? (
                         <span className="badge badge-warning font-mono">Anonymous / Pre-auth Bucket</span>
                       ) : (
-                        <Mono>{dur.account_id}</Mono>
+                        <TenantLink accountId={dur.account_id} />
                       )}
                       <div className="mt-1 text-[11px] text-[var(--color-ink-muted)]">
                         Most recent: {relativeTime(dur.last_event_at)}

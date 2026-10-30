@@ -63,10 +63,31 @@ export function useAsync<T>(
         });
     };
     queueMicrotask(() => { if (!cancelled) refresh(); });
-    const timer = pollIntervalMs && pollIntervalMs > 0 ? setInterval(refresh, pollIntervalMs) : null;
+    // Polls pause while the tab is hidden: several admin list reads are
+    // audited as an operator viewing the account, so a background tab must
+    // not keep recording views nobody made. Coming back refreshes at once.
+    const hidden = () => typeof document !== 'undefined' && document.hidden;
+    let missedTick = false;
+    const tick = () => {
+      if (hidden()) {
+        missedTick = true;
+        return;
+      }
+      refresh();
+    };
+    const onVisible = () => {
+      if (!hidden() && missedTick) {
+        missedTick = false;
+        refresh();
+      }
+    };
+    const polling = !!pollIntervalMs && pollIntervalMs > 0;
+    const timer = polling ? setInterval(tick, pollIntervalMs) : null;
+    if (polling && typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       if (timer !== null) clearInterval(timer);
+      if (polling && typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nonce, pollIntervalMs, ...deps]);

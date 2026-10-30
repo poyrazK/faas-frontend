@@ -1,438 +1,691 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import Link from 'next/link';
-import {
-  getObsAnomalies,
-  getObsBuilderHeartbeats,
-  getObsOverview,
-  getObsHealth,
-  getObsRateLimits,
-  getObsWakeLatencies,
-  listObsEvents,
-  listObsNodes,
-  searchObsAuditLog,
-  obsNodeEventsUrl,
-  type ObsAnomalyRow,
-  type ObsBuilderHeartbeatRow,
-  type ObsEventRow,
-  type ObsOverviewResponse,
-  type ObsRateLimitResponse,
-  type ObsWakeLatencyRow,
-  type ObsHealthResponse,
-} from '@/lib/api';
+import { ApiError, searchObsAuditLog } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
-import { OperatorIncidentInbox } from '@/components/ui/OperatorIncidentInbox';
-import { PageHeader, Mono } from '@/components/ui/bits';
-import { SectionCard, StatTile } from '@/components/ui/Panels';
-import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import {
+  ALERT_STATUSES,
+  DEFAULT_INCIDENT_FILTERS,
+  INCIDENT_SEVERITIES,
+  INCIDENT_TYPES,
+  INCIDENT_TYPE_LABELS,
+  INCIDENT_WINDOWS,
+  SNOOZE_PRESETS,
+  TRIAGE_IMPACT,
+  describeSource,
+  getAlertTriageHistory,
+  getAlertWorkloadSummary,
+  getIncidentContext,
+  getIncidentEvidence,
+  incidentConsoleLinks,
+  incidentFiltersKey,
+  incidentRefKey,
+  incidentStatusTone,
+  loadIncidentInbox,
+  mergeIncidentContext,
+  mergeTriageHistory,
+  normalizeIncidentFilters,
+  parseIncidentId,
+  runbookHref,
+  severityTone,
+  snoozeUntil,
+  triageAlert,
+  type IncidentFilters,
+  type IncidentRef,
+  type ObsAlertTriage,
+  type ObsAlertTriageRequest,
+  type ObsIncident,
+  type TriageOption,
+} from '@/lib/ops/incidents';
+import { badgeClass, formatSeconds, getObsHealthDetail, humanize } from '@/lib/ops/telemetry';
+import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
+import { FilterSelect, Mono, PageHeader } from '@/components/ui/bits';
+import { SectionCard, StatTile } from '@/components/ui/Panels';
+import { Modal } from '@/components/ui/Modal';
+import { Icon } from '@/components/ui/Icons';
+import { OperatorActionDialog, type OperatorActionContext } from '@/components/operator/OperatorActionDialog';
+import { IncidentDetail, type IncidentDetailState } from './IncidentDetail';
+import { AlertInsights } from './AlertInsights';
+import { PipelineHealth } from './PipelineHealth';
+import { FleetEventStream } from './FleetEventStream';
+import { EmptyRow, ErrorRow, LoadingRow, Notice, RefreshFailed, StateBadge, When } from './parts';
 
-function LoadingState({ label }: { label: string }) {
-  return <div className="p-6 text-center text-xs text-[var(--color-ink-muted)]">{label}…</div>;
+const errorMessage = (err: unknown) => (err as Error)?.message || 'Request failed';
+
+const TYPE_OPTIONS = [
+  { value: '', label: 'All sources' },
+  ...INCIDENT_TYPES.map((type) => ({ value: type, label: INCIDENT_TYPE_LABELS[type] })),
+];
+const SEVERITY_OPTIONS = [
+  { value: '', label: 'All severities' },
+  ...INCIDENT_SEVERITIES.map((severity) => ({ value: severity, label: severity[0].toUpperCase() + severity.slice(1) })),
+];
+const ALERT_STATUS_OPTIONS = [
+  { value: '', label: 'Any alert status' },
+  ...ALERT_STATUSES.map((status) => ({ value: status, label: status[0].toUpperCase() + status.slice(1) })),
+];
+const ACK_OPTIONS = [
+  { value: '', label: 'Any acknowledgment' },
+  { value: 'unacknowledged', label: 'Unacknowledged' },
+  { value: 'acknowledged', label: 'Acknowledged' },
+];
+const OWNERSHIP_OPTIONS = [
+  { value: '', label: 'Any owner' },
+  { value: 'unowned', label: 'Unowned' },
+  { value: 'mine', label: 'Owned by me' },
+  { value: 'owned', label: 'Owned' },
+];
+const SNOOZE_OPTIONS = [
+  { value: '', label: 'Snoozed or not' },
+  { value: 'inactive', label: 'Not snoozed' },
+  { value: 'active', label: 'Snoozed' },
+];
+
+interface PendingTriage {
+  option: TriageOption;
+  ref: IncidentRef;
+  revision: number;
+  summary: string;
 }
 
-function ErrorState({ message }: { message: string }) {
-  return <div className="p-6 text-center text-xs text-[var(--color-danger)]">{message}</div>;
-}
+export default function IncidentsPage() {
+  const [filters, setFilters] = useState<IncidentFilters>(DEFAULT_INCIDENT_FILTERS);
+  const [previousCursors, setPreviousCursors] = useState<string[]>([]);
+  const [insightsToken, setInsightsToken] = useState(0);
+  const inboxKey = incidentFiltersKey(filters);
+  const inbox = useAsync(() => loadIncidentInbox(filters), [inboxKey], 30000);
+  const summary = useAsync(getAlertWorkloadSummary, [], 30000);
+  const health = useAsync(getObsHealthDetail, [], 30000);
+  const audit = useAsync(() => searchObsAuditLog({ limit: 8, operator_only: true }), [], 30000);
 
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return <div className="p-6 text-center text-xs text-[var(--color-ink-muted)]">{children}</div>;
-}
+  // A page answers exactly one query: after a filter change the previous
+  // page is never shown under the new filters, even while it is the only data.
+  const page = inbox.data && inbox.data.key === inboxKey ? inbox.data.page : null;
 
-function builderCpu(builder: ObsBuilderHeartbeatRow): string {
-  return builder.cpu_pct_60s == null ? '—' : `${builder.cpu_pct_60s.toFixed(1)}%`;
-}
+  /* ───────────────────────────── Detail drawer ────────────────────────── */
 
-function builderDisk(builder: ObsBuilderHeartbeatRow): string {
-  return builder.disk_used_bytes == null
-    ? '—'
-    : `${(builder.disk_used_bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+  // Every load bumps the generation; a response from an older generation
+  // (another incident, or a superseded refresh) is dropped.
+  const detailGen = useRef(0);
+  const openKey = useRef<string | null>(null);
+  const [detail, setDetail] = useState<IncidentDetailState | null>(null);
+  const [pendingTriage, setPendingTriage] = useState<PendingTriage | null>(null);
+  const [snoozeMinutes, setSnoozeMinutes] = useState(60);
+  const snoozeBody = useRef<{ key: string; until: string } | null>(null);
 
-const NODE_EVENT_NAMES = ['app_changed', 'deployment_changed', 'instance_changed', 'compute_node_changed'];
+  const patchDetail = (
+    gen: number,
+    patch: Partial<IncidentDetailState> | ((current: IncidentDetailState) => Partial<IncidentDetailState>),
+  ) =>
+    setDetail((current) =>
+      current && current.gen === gen ? { ...current, ...(typeof patch === 'function' ? patch(current) : patch) } : current,
+    );
 
-interface StreamEntry {
-  event: string;
-  data: string;
-  receivedAt: string;
-}
-
-function formatStreamData(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2);
-  } catch {
-    return raw;
-  }
-}
-
-function FleetEventStream() {
-  const [connection, setConnection] = useState<'connecting' | 'open' | 'error'>('connecting');
-  const [entries, setEntries] = useState<StreamEntry[]>([]);
-  const [generation, setGeneration] = useState(0);
-
-  useEffect(() => {
-    const source = new EventSource(obsNodeEventsUrl, { withCredentials: true });
-    const listeners = NODE_EVENT_NAMES.map((eventName) => {
-      const listener = (event: Event) => {
-        const message = event as MessageEvent<string>;
-        if (!message.data) return;
-        setEntries((current) => [
-          { event: eventName, data: message.data, receivedAt: new Date().toISOString() },
-          ...current,
-        ].slice(0, 30));
-      };
-      source.addEventListener(eventName, listener);
-      return { eventName, listener };
-    });
-    source.onopen = () => setConnection('open');
-    source.onerror = () => setConnection('error');
-    return () => {
-      for (const { eventName, listener } of listeners) source.removeEventListener(eventName, listener);
-      source.close();
-    };
-  }, [generation]);
-
-  return (
-    <SectionCard
-      title="Live Fleet Event Stream"
-      action={
-        <div className="flex items-center gap-2">
-          <span className={`badge ${connection === 'open' ? 'badge-success' : connection === 'error' ? 'badge-danger' : 'badge-warning'}`}>
-            {connection === 'open' ? 'Streaming' : connection === 'error' ? 'Disconnected' : 'Connecting…'}
-          </span>
-          <button type="button" className="btn btn-secondary btn-xs" onClick={() => { setConnection('connecting'); setGeneration((value) => value + 1); }}>
-            Reconnect
-          </button>
-        </div>
+  const loadIncident = async (ref: IncidentRef, refresh: boolean) => {
+    const gen = ++detailGen.current;
+    openKey.current = incidentRefKey(ref);
+    setDetail((current) =>
+      refresh && current && incidentRefKey(current.ref) === incidentRefKey(ref)
+        ? { ...current, gen, refreshing: true, contextMore: undefined, triageMore: undefined }
+        : { ref, gen, refreshing: true },
+    );
+    const evidenceTask = getIncidentEvidence(ref).then(
+      (evidence) => {
+        patchDetail(gen, { evidence, evidenceError: undefined });
+        return evidence;
+      },
+      (err) => {
+        patchDetail(gen, { evidenceError: errorMessage(err) });
+        return null;
+      },
+    );
+    const contextTask = getIncidentContext(ref).then(
+      (context) => patchDetail(gen, { context, contextError: undefined }),
+      (err) => patchDetail(gen, { contextError: errorMessage(err) }),
+    );
+    const evidence = await evidenceTask;
+    if (evidence && ref.kind === 'platform_alert') {
+      if (evidence.triage_history) {
+        patchDetail(gen, { triageHistory: evidence.triage_history, triageHistoryError: undefined });
+      } else if (evidence.incident.triage) {
+        // Evidence embeds the first receipt page when the store supports it;
+        // otherwise read it from the dedicated history route.
+        try {
+          const history = await getAlertTriageHistory(ref.id);
+          patchDetail(gen, { triageHistory: history, triageHistoryError: undefined });
+        } catch (err) {
+          patchDetail(gen, { triageHistoryError: errorMessage(err) });
+        }
       }
-    >
-      <div className="border-b border-[var(--color-line)] p-4 text-xs text-[var(--color-ink-muted)]">
-        Server-sent app, deployment, instance, and compute-node changes. Heartbeats keep the connection alive but are not rendered as events.
-      </div>
-      {entries.length === 0 ? (
-        <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">
-          {connection === 'error' ? 'The live feed is unavailable or operator authentication has expired.' : 'Waiting for a fleet event…'}
-        </div>
-      ) : (
-        <div className="max-h-80 divide-y divide-[var(--color-line)] overflow-y-auto">
-          {entries.map((entry, index) => (
-            <div key={`${entry.receivedAt}-${index}`} className="grid gap-2 p-3 text-xs sm:grid-cols-[170px_1fr]">
-              <div>
-                <div className="font-mono font-semibold text-[var(--color-brand-bright)]">{entry.event}</div>
-                <div className="text-[var(--color-ink-muted)]">{new Date(entry.receivedAt).toLocaleTimeString()}</div>
-              </div>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[var(--color-ink-muted)]">{formatStreamData(entry.data)}</pre>
-            </div>
-          ))}
-        </div>
-      )}
-    </SectionCard>
-  );
-}
-
-export default function IncidentCenterPage() {
-  const overview = useAsync(getObsOverview, [], 30000);
-  const health = useAsync(getObsHealth, [], 30000);
-  const nodes = useAsync(listObsNodes, [], 30000);
-  const builders = useAsync(getObsBuilderHeartbeats, [], 30000);
-  const wake = useAsync(() => getObsWakeLatencies(), [], 30000);
-  const anomalies = useAsync(() => getObsAnomalies(24), [], 30000);
-  const rateLimits = useAsync(() => getObsRateLimits(24), [], 15000);
-  const events = useAsync(() => listObsEvents(25), [], 15000);
-  const audit = useAsync(
-    () => searchObsAuditLog({ limit: 25, operator_only: true }),
-    [],
-    15000,
-  );
-
-  const data: ObsOverviewResponse | null = overview.data;
-  const nodeRows = nodes.data?.items ?? [];
-  const builderRows = builders.data?.items ?? [];
-  const wakeRows = wake.data?.quantiles ?? [];
-  const anomalyRows = anomalies.data?.items ?? [];
-  const rateLimitData: ObsRateLimitResponse | null = rateLimits.data;
-  const eventRows = events.data?.items ?? [];
-  const auditRows = audit.data?.items ?? [];
-
-  const unhealthyNodes = data?.node_health.filter((node) => !node.active || node.stale) ?? [];
-  const severeAnomalies = anomalyRows.filter((row) => (row.z_score ?? 0) >= 3.5);
-  const activeBlocks = rateLimitData?.live.filter((row) => row.currently_rate_limited) ?? [];
-  const recentFailureCount = data?.recent_failures_1h?.reduce((sum, row) => sum + row.count, 0) ?? 0;
-  const incidentCount = unhealthyNodes.length + severeAnomalies.length + activeBlocks.length;
-  const maxP95 = wakeRows.length > 0 ? Math.max(...wakeRows.map((row) => row.p95_ms)) : null;
-
-  const refreshAll = () => {
-    overview.reload();
-    health.reload();
-    nodes.reload();
-    builders.reload();
-    wake.reload();
-    anomalies.reload();
-    rateLimits.reload();
-    events.reload();
-    audit.reload();
+    }
+    await contextTask;
+    patchDetail(gen, { refreshing: false });
   };
 
-  const healthData: ObsHealthResponse | null = health.data;
-  const missingOutcomes = Object.entries(healthData?.operator_intent_outcome_missing_total ?? {});
-  const incompleteTraceKinds = Object.entries(healthData?.trace_id_completeness_ratio ?? {}).filter(([, ratio]) => ratio < 1);
-  const healthUnavailable = !!health.error || health.stale || (healthData !== null && healthData.prometheus_available !== true);
-  const healthDegraded = !!healthData && (healthData.alerts_firing > 0 || healthData.audit_log_write_failures_5m > 0 || healthData.audit_log_coverage_ratio_5m < 1 || missingOutcomes.some(([, count]) => count > 0) || incompleteTraceKinds.length > 0);
+  const openIncident = (ref: IncidentRef) => void loadIncident(ref, false);
+
+  const openIncidentId = (incidentId: string) => {
+    const ref = parseIncidentId(incidentId);
+    if (ref) openIncident(ref);
+  };
+
+  const closeDetail = () => {
+    detailGen.current++;
+    openKey.current = null;
+    setDetail(null);
+    setPendingTriage(null);
+  };
+
+  const loadMoreContext = async () => {
+    const current = detail;
+    const cursor = current?.context?.next_cursor;
+    if (!current || !cursor || current.contextMore === 'loading') return;
+    patchDetail(current.gen, { contextMore: 'loading' });
+    try {
+      const next = await getIncidentContext(current.ref, { cursor });
+      patchDetail(current.gen, (d) => ({
+        contextMore: undefined,
+        context: d.context ? mergeIncidentContext(d.context, next) : next,
+      }));
+    } catch (err) {
+      patchDetail(current.gen, { contextMore: { error: errorMessage(err) } });
+    }
+  };
+
+  const loadOlderTriage = async () => {
+    const current = detail;
+    const cursor = current?.triageHistory?.next_cursor;
+    if (!current || !cursor || current.triageMore === 'loading') return;
+    patchDetail(current.gen, { triageMore: 'loading' });
+    try {
+      const next = await getAlertTriageHistory(current.ref.id, cursor);
+      patchDetail(current.gen, (d) => ({
+        triageMore: undefined,
+        triageHistory: d.triageHistory ? mergeTriageHistory(d.triageHistory, next) : next,
+      }));
+    } catch (err) {
+      patchDetail(current.gen, { triageMore: { error: errorMessage(err) } });
+    }
+  };
+
+  const startTriage = (option: TriageOption, triage: ObsAlertTriage) => {
+    if (!detail) return;
+    setSnoozeMinutes(60);
+    setPendingTriage({
+      option,
+      ref: detail.ref,
+      revision: triage.revision,
+      summary: detail.evidence?.incident.summary ?? incidentRefKey(detail.ref),
+    });
+  };
+
+  const submitTriage = async ({ idempotencyKey }: OperatorActionContext) => {
+    if (!pendingTriage) return;
+    const { option, ref, revision } = pendingTriage;
+    const body: ObsAlertTriageRequest = { action: option.action, expected_revision: revision };
+    if (option.action === 'snooze') {
+      // A retry under the same key must replay the same body.
+      if (snoozeBody.current?.key !== idempotencyKey) {
+        snoozeBody.current = { key: idempotencyKey, until: snoozeUntil(snoozeMinutes) };
+      }
+      body.snoozed_until = snoozeBody.current.until;
+    }
+    const stillOpen = () => openKey.current === incidentRefKey(ref);
+    try {
+      const res = await triageAlert(ref.id, body, { idempotencyKey });
+      setDetail((current) =>
+        current && current.evidence && incidentRefKey(current.ref) === incidentRefKey(ref)
+          ? { ...current, evidence: { ...current.evidence, incident: { ...current.evidence.incident, triage: res.triage } } }
+          : current,
+      );
+      inbox.reload();
+      summary.reload();
+      if (stillOpen()) void loadIncident(ref, true);
+      return `${option.label.replace('…', '')}: recorded at revision ${res.triage.revision}.`;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        if (stillOpen()) void loadIncident(ref, true);
+        throw new Error(
+          'Nothing was changed: the episode was triaged by someone else in the meantime, or another operator owns it. The incident has been refreshed; close this dialog and review its current triage before retrying.',
+        );
+      }
+      throw err;
+    }
+  };
+
+  /* ──────────────────────────────── Filters ───────────────────────────── */
+
+  const updateFilters = (patch: Partial<IncidentFilters>) => {
+    setFilters((current) => normalizeIncidentFilters({ ...current, ...patch, cursor: '' }));
+    setPreviousCursors([]);
+  };
+
+  const olderPage = () => {
+    if (!page?.next_cursor) return;
+    const next = page.next_cursor;
+    setPreviousCursors((cursors) => [...cursors, filters.cursor]);
+    setFilters((current) => ({ ...current, cursor: next }));
+  };
+
+  const newerPage = () => {
+    const previous = previousCursors[previousCursors.length - 1] ?? '';
+    setPreviousCursors(previousCursors.slice(0, -1));
+    setFilters((current) => ({ ...current, cursor: previous }));
+  };
+
+  const newestPage = () => {
+    setPreviousCursors([]);
+    setFilters((current) => ({ ...current, cursor: '' }));
+  };
+
+  const refreshAll = () => {
+    inbox.reload();
+    summary.reload();
+    health.reload();
+    audit.reload();
+    setInsightsToken((value) => value + 1);
+  };
+
+  const alertsOnly = filters.type === 'platform_alert';
+  const windowOptions = INCIDENT_WINDOWS.filter((option) => alertsOnly || !option.alertsOnly).map((option) => ({
+    value: String(option.hours),
+    label: option.label,
+  }));
+
+  /* ─────────────────────────────── Summary ────────────────────────────── */
+
+  const workload = summary.data;
+  const counts = workload?.counts ?? null;
+  const oldest = workload?.oldest_unacknowledged ?? null;
+  const unavailableSources = page?.unavailable_sources ?? [];
+  const pending = pendingTriage;
 
   return (
     <div>
       <PageHeader
-        title="Incident Center"
-        subtitle="One operational view for fleet health, tenant-impacting signals, recovery telemetry, and the latest operator trail"
+        title="Incidents"
+        subtitle="The unified incident inbox across deployments, job runs, compute nodes and platform alerts, with evidence, related context and alert triage."
         actions={
-          <button onClick={refreshAll} className="btn btn-secondary btn-sm">
-            <Icon name="refresh" size={14} />
-            Refresh Signals
-          </button>
+          <>
+            <Link href="/telemetry" className="btn btn-secondary btn-sm">
+              <Icon name="metrics" size={14} />
+              Telemetry health
+            </Link>
+            <button onClick={refreshAll} className="btn btn-secondary btn-sm">
+              <Icon name="refresh" size={14} />
+              Refresh
+            </button>
+          </>
         }
       />
 
-      <SnapshotFreshness snapshots={[overview, health, nodes, builders, wake, anomalies, rateLimits, events, audit]} />
-      <OperatorIncidentInbox />
+      <SnapshotFreshness snapshots={[inbox, summary, health]} />
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
-          label="Open Health Signals"
-          value={incidentCount}
-          sub={`${unhealthyNodes.length} node · ${severeAnomalies.length} anomaly · ${activeBlocks.length} IP block`}
+          label="Alerts needing attention"
+          value={counts ? counts.needs_attention : workload ? 'Not collected' : summary.error ? '—' : '…'}
+          sub={
+            counts
+              ? 'unresolved, unsnoozed and unacknowledged or unowned'
+              : workload
+                ? 'No successful alert collection yet; counts are unknown'
+                : summary.error
+                  ? `Alert summary unavailable: ${summary.error.message}`
+                  : 'Loading alert workload'
+          }
           color="var(--color-danger)"
         />
         <StatTile
-          label="Failure Events (1h)"
-          value={recentFailureCount}
-          sub={`${data?.recent_failures_1h?.length ?? 0} failure categories`}
+          label="Platform alerts"
+          value={counts ? `${counts.firing} firing` : workload ? '—' : summary.error ? '—' : '…'}
+          sub={counts ? `${counts.unknown} unknown status · ${counts.resolved} resolved retained` : 'Retained alert episodes'}
           color="var(--color-warning)"
         />
         <StatTile
-          label="Builder Backlog"
-          value={builders.data?.queued_builds ?? 0}
-          sub={`${builderRows.length} builder heartbeat(s)`}
-          color="var(--color-brand-bright)"
+          label="Oldest unacknowledged"
+          value={oldest ? formatSeconds(oldest.age_seconds) : counts ? 'None' : '—'}
+          sub={
+            oldest ? (
+              <button type="button" className="underline" onClick={() => openIncidentId(oldest.incident_id)}>
+                {oldest.severity} · {oldest.status} · inspect
+              </button>
+            ) : counts ? (
+              'Every unresolved, unsnoozed alert is acknowledged'
+            ) : (
+              'Unknown until alert collection succeeds'
+            )
+          }
+          color="var(--color-chart)"
         />
         <StatTile
-          label="Highest Wake p95"
-          value={maxP95 == null ? '—' : `${maxP95.toFixed(0)} ms`}
-          sub="five-minute node latency"
-          color={maxP95 != null && maxP95 > 1000 ? 'var(--color-danger)' : 'var(--color-chart)'}
+          label="Alert collection"
+          value={
+            workload ? (
+              <StateBadge state={workload.collection.collection_state ?? workload.collection.state} reason={workload.collection.reason} />
+            ) : summary.error ? (
+              '—'
+            ) : (
+              '…'
+            )
+          }
+          sub={
+            workload ? (
+              <>
+                last success <When at={workload.collection.last_success_at} /> · retention {humanize(workload.retention.state)}
+              </>
+            ) : (
+              'Collector state unknown'
+            )
+          }
+          color="var(--color-brand-bright)"
         />
       </div>
 
       <div className="mt-6">
-        <SectionCard
-          title="Observability Pipeline Health"
-          action={<span className={`badge ${healthUnavailable ? 'badge-danger' : healthDegraded ? 'badge-warning' : 'badge-success'}`}>{healthUnavailable ? 'Telemetry unavailable' : healthData ? 'Reporting' : 'Loading…'}</span>}
-        >
-          {health.loading && !healthData ? (
-            <LoadingState label="Checking audit and trace health" />
-          ) : health.error ? (
-            <ErrorState message={health.error.message || 'Could not load observability health.'} />
-          ) : healthData ? (
-            <div className="p-4">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Audit writes (5m)</div><div className="mt-1 font-semibold">{healthData.prometheus_available ? healthData.audit_log_write_total_5m.toLocaleString() : 'Unavailable'}</div><div className="text-[var(--color-ink-muted)]">{healthData.prometheus_available ? `${healthData.audit_log_write_failures_5m} failed` : 'Prometheus could not be queried'}</div></div>
-                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Audit trace coverage</div><div className="mt-1 font-semibold">{(healthData.audit_log_coverage_ratio_5m * 100).toFixed(1)}%</div><div className="text-[var(--color-ink-muted)]">last five minutes</div></div>
-                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Firing alerts</div><div className={`mt-1 font-semibold ${healthData.alerts_firing > 0 ? 'text-[var(--color-danger)]' : ''}`}>{healthData.prometheus_available ? healthData.alerts_firing : 'Unavailable'}</div><div className="text-[var(--color-ink-muted)]">Prometheus alert state</div></div>
-                <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs"><div className="text-[var(--color-ink-muted)]">Snapshot generated</div><div className="mt-1 font-semibold">{relativeTime(healthData.generated_at)}</div><div className="text-[var(--color-ink-muted)]">{new Date(healthData.generated_at).toLocaleTimeString()}</div></div>
-              </div>
-              <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                <div>
-                  <div className="mb-2 text-xs font-semibold">Missing operator outcomes</div>
-                  {missingOutcomes.length === 0 ? <div className="text-xs text-[var(--color-ink-muted)]">No intent kinds reported.</div> : <div className="space-y-1">{missingOutcomes.map(([kind, count]) => <div key={kind} className="flex items-center justify-between text-xs"><span className="font-mono">{kind}</span><span className={`badge ${count > 0 ? 'badge-danger' : 'badge-success'}`}>{count}</span></div>)}</div>}
-                </div>
-                <div>
-                  <div className="mb-2 text-xs font-semibold">Trace completeness by action kind</div>
-                  {Object.entries(healthData.trace_id_completeness_ratio).length === 0 ? <div className="text-xs text-[var(--color-ink-muted)]">No operator action kinds reported.</div> : <div className="space-y-1">{Object.entries(healthData.trace_id_completeness_ratio).map(([kind, ratio]) => <div key={kind} className="flex items-center justify-between text-xs"><span className="font-mono">{kind}</span><span className={`badge ${ratio < 1 ? 'badge-warning' : 'badge-success'}`}>{(ratio * 100).toFixed(1)}%</span></div>)}</div>}
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </SectionCard>
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <SectionCard
           title={
             <div className="flex items-center gap-2">
-              <Icon name="alerts" size={16} className="text-[var(--color-danger)]" />
-              <span>Priority Signals</span>
+              <Icon name="inbox" size={16} />
+              <h2 className="card-title">Incident inbox</h2>
             </div>
           }
           action={
-            <div className="flex gap-2">
-              <Link href="/operations/anomalies" className="btn btn-secondary btn-xs">Anomalies</Link>
-              <Link href="/operations/nodes" className="btn btn-secondary btn-xs">Nodes</Link>
-            </div>
+            page ? (
+              <span className="text-xs text-[var(--color-ink-muted)]">
+                since <When at={page.since} /> · generated <When at={page.generated_at} />
+              </span>
+            ) : null
           }
         >
-          {overview.loading && !data ? (
-            <LoadingState label="Collecting fleet signals" />
-          ) : overview.error ? (
-            <ErrorState message={overview.error.message || 'Could not load fleet health signals.'} />
-          ) : incidentCount === 0 ? (
-            <EmptyState>No active node, anomaly, or rate-limit signals require intervention.</EmptyState>
-          ) : (
-            <div className="divide-y divide-[var(--color-line)]">
-              {unhealthyNodes.map((node) => (
-                <div key={`node-${node.name}`} className="flex items-center justify-between gap-4 p-4 text-xs">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Icon name="storage" size={14} className="text-[var(--color-warning)]" />
-                    <div className="min-w-0">
-                      <div className="font-semibold">Node heartbeat requires attention</div>
-                      <div className="truncate font-mono text-[var(--color-ink-muted)]">{node.name}</div>
-                    </div>
-                  </div>
-                  <span className="badge badge-warning">{node.active ? 'Stale' : 'Inactive'}</span>
-                </div>
-              ))}
-              {severeAnomalies.slice(0, 8).map((row: ObsAnomalyRow, index) => (
-                <div key={`anomaly-${row.app_id}-${row.minute}-${index}`} className="flex items-center justify-between gap-4 p-4 text-xs">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Icon name="spark" size={14} className="text-[var(--color-danger)]" />
-                    <div className="min-w-0">
-                      <div className="font-semibold">Usage anomaly detected</div>
-                      <div className="truncate font-mono text-[var(--color-ink-muted)]">
-                        <Mono>{row.account_id.slice(0, 13)}…</Mono> · {row.reason}
-                      </div>
-                    </div>
-                  </div>
-                  <span className="badge badge-danger font-mono">Z {row.z_score?.toFixed(2)}</span>
-                </div>
-              ))}
-              {activeBlocks.slice(0, 8).map((row) => (
-                <div key={`block-${row.ip}`} className="flex items-center justify-between gap-4 p-4 text-xs">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Icon name="shield" size={14} className="text-[var(--color-danger)]" />
-                    <div>
-                      <div className="font-semibold">Live IP rate limit active</div>
-                      <div className="font-mono text-[var(--color-ink-muted)]">{row.ip} · {row.live_hits_30s} hits / 30s</div>
-                    </div>
-                  </div>
-                  <span className="badge badge-danger">429 block</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          title="Recovery Readiness"
-          action={<Link href="/operations/controls" className="btn btn-secondary btn-xs">Open Controls</Link>}
-        >
-          <div className="divide-y divide-[var(--color-line)]">
-            <div className="flex items-center justify-between p-4 text-xs">
-              <span>Active compute nodes</span>
-              <span className="font-mono font-semibold">{data?.totals.nodes_active ?? '—'} / {(data?.totals.nodes_active ?? 0) + (data?.totals.nodes_inactive ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between p-4 text-xs">
-              <span>Builder heartbeat coverage</span>
-              <span className={`badge ${builderRows.length > 0 ? 'badge-success' : 'badge-warning'}`}>
-                {builderRows.length > 0 ? `${builderRows.length} reporting` : 'No heartbeats'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between p-4 text-xs">
-              <span>Node wake SLO (&lt;350ms p50)</span>
-              <span className={`badge ${wakeRows.length > 0 && wakeRows.every((row) => row.p95_ms <= 350) ? 'badge-success' : 'badge-warning'}`}>
-                {wakeRows.length === 0 ? 'No samples' : wakeRows.every((row) => row.p95_ms <= 350) ? 'Within SLO' : 'Elevated'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between p-4 text-xs">
-              <span>Registered nodes with inventory</span>
-              <span className="font-mono font-semibold">{nodeRows.length}</span>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] p-3">
+            <FilterSelect value={filters.type} onChange={(value) => updateFilters({ type: value as IncidentFilters['type'] })} options={TYPE_OPTIONS} />
+            <FilterSelect
+              value={filters.severity}
+              onChange={(value) => updateFilters({ severity: value as IncidentFilters['severity'] })}
+              options={SEVERITY_OPTIONS}
+            />
+            <FilterSelect
+              value={String(filters.windowHours)}
+              onChange={(value) => updateFilters({ windowHours: Number(value) })}
+              options={windowOptions}
+            />
+            {alertsOnly && (
+              <>
+                <FilterSelect
+                  value={filters.alertStatus}
+                  onChange={(value) => updateFilters({ alertStatus: value as IncidentFilters['alertStatus'] })}
+                  options={ALERT_STATUS_OPTIONS}
+                />
+                <FilterSelect
+                  value={filters.acknowledgment}
+                  onChange={(value) => updateFilters({ acknowledgment: value as IncidentFilters['acknowledgment'] })}
+                  options={ACK_OPTIONS}
+                />
+                <FilterSelect
+                  value={filters.ownership}
+                  onChange={(value) => updateFilters({ ownership: value as IncidentFilters['ownership'] })}
+                  options={OWNERSHIP_OPTIONS}
+                />
+                <FilterSelect
+                  value={filters.snooze}
+                  onChange={(value) => updateFilters({ snooze: value as IncidentFilters['snooze'] })}
+                  options={SNOOZE_OPTIONS}
+                />
+              </>
+            )}
           </div>
+
+          {!page ? (
+            inbox.loading ? (
+              <LoadingRow label="Loading incidents" />
+            ) : inbox.error ? (
+              <ErrorRow message={`Could not load incidents: ${inbox.error.message}. Incident state is unknown.`} />
+            ) : (
+              <LoadingRow label="Loading incidents" />
+            )
+          ) : (
+            <>
+              {(unavailableSources.length > 0 || page.since_clamped) && (
+                <div className="space-y-2 border-b border-[var(--color-line)] p-3">
+                  {unavailableSources.length > 0 && (
+                    <Notice>
+                      Incomplete snapshot: {unavailableSources.map(describeSource).join(', ')}{' '}
+                      {unavailableSources.length === 1 ? 'is' : 'are'} unavailable. Incidents from{' '}
+                      {unavailableSources.length === 1 ? 'that source' : 'those sources'} may be missing or show a stale status.
+                    </Notice>
+                  )}
+                  {page.since_clamped && (
+                    <Notice tone="info">
+                      The requested window reaches further back than the server allows for this source; showing incidents since{' '}
+                      {new Date(page.since).toLocaleString()}.
+                    </Notice>
+                  )}
+                </div>
+              )}
+              {page.items.length === 0 ? (
+                unavailableSources.length > 0 ? (
+                  <EmptyRow>
+                    No incidents from the sources that answered. Because {unavailableSources.map(describeSource).join(', ')} could not
+                    be read, this is not an all-clear.
+                  </EmptyRow>
+                ) : (
+                  <EmptyRow>No incidents match these filters in this window.</EmptyRow>
+                )
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="dtable text-xs">
+                    <thead>
+                      <tr>
+                        <th>Severity</th>
+                        <th>Incident</th>
+                        <th>Status</th>
+                        <th>Observed</th>
+                        <th>Go to</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {page.items.map((item) => (
+                        <InboxRow key={item.id} item={item} onInspect={openIncident} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="table-foot">
+                <span>
+                  {page.items.length} incident(s) on this page
+                  {previousCursors.length > 0 ? ` · page ${previousCursors.length + 1}` : ''}
+                </span>
+                <div className="flex gap-2">
+                  {filters.cursor && (
+                    <>
+                      <button className="btn btn-secondary btn-xs" onClick={newestPage}>
+                        Newest
+                      </button>
+                      <button className="btn btn-secondary btn-xs" onClick={newerPage}>
+                        Newer
+                      </button>
+                    </>
+                  )}
+                  {page.next_cursor && (
+                    <button className="btn btn-secondary btn-xs" disabled={inbox.loading} onClick={olderPage}>
+                      Older
+                    </button>
+                  )}
+                </div>
+              </div>
+              {inbox.error && <RefreshFailed error={inbox.error} />}
+            </>
+          )}
         </SectionCard>
       </div>
 
       <div className="mt-6">
+        <AlertInsights refreshToken={insightsToken} onOpenEpisode={(episodeId) => openIncidentId(`platform_alert/${episodeId}`)} />
+      </div>
+
+      <div className="mt-6">
+        <PipelineHealth health={health} />
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <FleetEventStream />
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <SectionCard title="Compute & Builder Telemetry" action={<Link href="/operations/nodes" className="btn btn-secondary btn-xs">Inspect Nodes</Link>}>
-          {nodes.loading && !nodes.data && builders.loading && !builders.data ? (
-            <LoadingState label="Loading host telemetry" />
-          ) : nodes.error || builders.error ? (
-            <ErrorState message={(nodes.error || builders.error)?.message || 'Could not load host telemetry.'} />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] text-[var(--color-ink-muted)]">
-                  <tr><th className="px-4 py-3">Host</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Live VMs</th><th className="px-4 py-3">Builder CPU / Disk</th></tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--color-line)]">
-                  {nodeRows.map((node) => {
-                    const builder = builderRows.find((row) => row.node_id === node.name || row.node_id === node.id);
-                    return (
-                      <tr key={node.id}>
-                        <td className="px-4 py-3 font-semibold">{node.name}</td>
-                        <td className="px-4 py-3"><span className={`badge ${node.active ? 'badge-success' : 'badge-neutral'}`}>{node.active ? 'Active' : 'Inactive'}</span></td>
-                        <td className="px-4 py-3 font-mono">{node.instances_live}</td>
-                        <td className="px-4 py-3 font-mono">{builder ? `${builderCpu(builder)} · ${builderDisk(builder)}` : 'No builder sample'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {nodeRows.length === 0 && <EmptyState>No compute nodes registered.</EmptyState>}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard title="Wake Latency by Node" action={<Link href="/operations/nodes" className="btn btn-secondary btn-xs">Latency Detail</Link>}>
-          {wake.loading && !wake.data ? (
-            <LoadingState label="Loading wake latency" />
-          ) : wake.error ? (
-            <ErrorState message={wake.error.message || 'Could not load wake latency.'} />
-          ) : wake.data?.prometheus_available === false ? (
-            <EmptyState>Wake latency telemetry is unavailable.</EmptyState>
-          ) : wakeRows.length === 0 ? (
-            <EmptyState>No wake latency samples in the five-minute window.</EmptyState>
+        <SectionCard title="Recent operator actions" action={<Link href="/audit-log" className="btn btn-secondary btn-xs">Audit trail</Link>}>
+          {audit.error && !audit.data ? (
+            <ErrorRow message={`Could not load operator audit: ${audit.error.message}`} />
+          ) : audit.loading && !audit.data ? (
+            <LoadingRow label="Loading operator audit" />
+          ) : !audit.data?.items.length ? (
+            <EmptyRow>No operator actions in the audit window.</EmptyRow>
           ) : (
             <div className="divide-y divide-[var(--color-line)]">
-              {wakeRows.map((row: ObsWakeLatencyRow) => (
-                <div key={row.node_name} className="flex items-center justify-between p-4 text-xs">
-                  <div><div className="font-semibold">{row.node_name}</div><div className="text-[var(--color-ink-muted)]">{row.sample_count} samples</div></div>
-                  <div className="text-right font-mono"><div>p50 {row.p50_ms.toFixed(0)} ms</div><div className="text-[var(--color-ink-muted)]">p95 {row.p95_ms.toFixed(0)} · p99 {row.p99_ms.toFixed(0)}</div></div>
+              {audit.data.items.map((row) => (
+                <div key={row.id} className="flex items-center justify-between gap-4 p-4 text-xs">
+                  <div className="min-w-0">
+                    <div className="truncate font-mono font-semibold">{row.kind}</div>
+                    <div className="truncate text-[var(--color-ink-muted)]">
+                      {row.actor || 'system'}
+                      {row.account_email ? ` · ${row.account_email}` : ''}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-[var(--color-ink-muted)]">{relativeTime(row.received_at)}</span>
                 </div>
               ))}
             </div>
           )}
+          {audit.error && audit.data && <RefreshFailed error={audit.error} />}
         </SectionCard>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <SectionCard title="Recent Operator Actions" action={<Link href="/operations/audit-log" className="btn btn-secondary btn-xs">Full Audit Trail</Link>}>
-          {audit.loading && !audit.data ? <LoadingState label="Loading operator audit" /> : audit.error ? <ErrorState message={audit.error.message || 'Could not load operator audit.'} /> : auditRows.length === 0 ? <EmptyState>No operator actions recorded recently.</EmptyState> : (
-            <div className="divide-y divide-[var(--color-line)]">
-              {auditRows.slice(0, 8).map((row) => (
-                <div key={row.id} className="flex items-center justify-between gap-4 p-4 text-xs">
-                  <div className="min-w-0"><div className="truncate font-mono font-semibold">{row.kind}</div><div className="truncate text-[var(--color-ink-muted)]">{row.actor}{row.subject ? ` · ${row.subject}` : ''}</div></div>
-                  <span className="shrink-0 text-[var(--color-ink-muted)]">{relativeTime(row.at)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
+      <Modal
+        open={detail !== null}
+        onClose={closeDetail}
+        title={detail ? `Incident · ${INCIDENT_TYPE_LABELS[detail.ref.kind]}` : 'Incident'}
+        width={1040}
+      >
+        {detail && (
+          <IncidentDetail
+            detail={detail}
+            onRefresh={() => void loadIncident(detail.ref, true)}
+            onLoadMoreContext={() => void loadMoreContext()}
+            onLoadOlderTriage={() => void loadOlderTriage()}
+            onTriage={startTriage}
+          />
+        )}
+      </Modal>
 
-        <SectionCard title="Recent Platform Events" action={<Link href="/operations/audit-log" className="btn btn-secondary btn-xs">Event Trail</Link>}>
-          {events.loading && !events.data ? <LoadingState label="Loading platform events" /> : events.error ? <ErrorState message={events.error.message || 'Could not load platform events.'} /> : eventRows.length === 0 ? <EmptyState>No platform events recorded recently.</EmptyState> : (
-            <div className="divide-y divide-[var(--color-line)]">
-              {eventRows.slice(0, 8).map((row: ObsEventRow) => (
-                <div key={row.id} className="flex items-center justify-between gap-4 p-4 text-xs">
-                  <div className="min-w-0"><div className="truncate font-mono font-semibold">{row.kind}</div><div className="truncate text-[var(--color-ink-muted)]">{row.actor}{row.subject ? ` · ${row.subject}` : ''}</div></div>
-                  <span className="shrink-0 text-[var(--color-ink-muted)]">{relativeTime(row.at)}</span>
-                </div>
-              ))}
+      {pending && (
+        <OperatorActionDialog
+          open
+          title={`${pending.option.label.replace('…', '')}: ${pending.summary}`}
+          reason="none"
+          submitLabel={pending.option.label.replace('…', '')}
+          fingerprint={`${pending.option.action}|${pending.ref.id}|${pending.revision}|${pending.option.action === 'snooze' ? snoozeMinutes : ''}`}
+          impact={
+            <div className="space-y-1">
+              <p>{TRIAGE_IMPACT[pending.option.action]}</p>
+              <p className="text-xs text-[var(--color-ink-soft)]">
+                Applies only if the episode is still at triage revision {pending.revision}; otherwise nothing changes and you are asked
+                to review the newer state.
+              </p>
+            </div>
+          }
+          onClose={() => setPendingTriage(null)}
+          onSubmit={submitTriage}
+        >
+          {pending.option.action === 'snooze' && (
+            <div>
+              <label className="label" htmlFor="incident-snooze">
+                Snooze for
+              </label>
+              <select
+                id="incident-snooze"
+                className="field field-sm"
+                value={snoozeMinutes}
+                onChange={(event) => setSnoozeMinutes(Number(event.target.value))}
+              >
+                {SNOOZE_PRESETS.map((preset) => (
+                  <option key={preset.minutes} value={preset.minutes}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
-        </SectionCard>
-      </div>
+        </OperatorActionDialog>
+      )}
     </div>
+  );
+}
+
+function InboxRow({ item, onInspect }: { item: ObsIncident; onInspect: (ref: IncidentRef) => void }) {
+  const ref = parseIncidentId(item.id);
+  const links = incidentConsoleLinks(item);
+  const runbook = runbookHref(item.runbook_url);
+  const triage = item.triage;
+  return (
+    <tr>
+      <td>
+        <span className={badgeClass(severityTone(item.severity))}>{item.severity}</span>
+      </td>
+      <td className="max-w-[420px]">
+        <div className="cell-primary truncate" title={item.summary}>
+          {item.summary}
+        </div>
+        <div className="truncate text-[var(--color-ink-muted)]">
+          {INCIDENT_TYPE_LABELS[item.type] ?? item.type} · {item.resource_name || <Mono>{item.resource_id.slice(0, 13)}</Mono>}
+        </div>
+      </td>
+      <td>
+        <div className="flex flex-wrap gap-1">
+          <span className={badgeClass(incidentStatusTone(item.status))} title={item.status === 'unknown' ? 'Last known state; alert collection is not current' : undefined}>
+            {humanize(item.status) || 'unknown'}
+          </span>
+          {triage && item.status !== 'resolved' && (
+            <span className={badgeClass(triage.acknowledged ? 'success' : 'warning')}>{triage.acknowledged ? 'acked' : 'unacked'}</span>
+          )}
+          {triage?.owned && <span className="badge badge-info">owned</span>}
+          {triage?.snoozed && (
+            <span className="badge badge-neutral" title={triage.snoozed_until ? `until ${new Date(triage.snoozed_until).toLocaleString()}` : undefined}>
+              snoozed
+            </span>
+          )}
+        </div>
+      </td>
+      <td>
+        <When at={item.observed_at} />
+      </td>
+      <td>
+        <div className="flex flex-wrap gap-1">
+          {links.map((link) => (
+            <Link key={link.href} href={link.href} className="btn btn-ghost btn-xs">
+              {link.label}
+            </Link>
+          ))}
+          {runbook && (
+            <a href={runbook} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-xs">
+              Runbook
+              <Icon name="external" size={11} />
+            </a>
+          )}
+          {links.length === 0 && !runbook && <span className="text-[var(--color-ink-muted)]">—</span>}
+        </div>
+      </td>
+      <td className="text-right">
+        <button
+          type="button"
+          className="btn btn-secondary btn-xs"
+          disabled={!ref}
+          title={ref ? undefined : 'This incident reference cannot be inspected'}
+          onClick={() => ref && onInspect(ref)}
+        >
+          Inspect
+        </button>
+      </td>
+    </tr>
   );
 }

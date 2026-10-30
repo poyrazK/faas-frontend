@@ -3,10 +3,12 @@
 import React, { useState } from 'react';
 import { getObsAnomalies, type ObsAnomalyRow } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { SEVERE_ANOMALY_Z } from '@/lib/operator';
 import { PageHeader, Mono, FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { TenantLink } from '@/components/operator/TenantLink';
 
 export default function AnomaliesPage() {
   const [windowHours, setWindowHours] = useState('24');
@@ -47,7 +49,7 @@ export default function AnomaliesPage() {
           </div>
         ) : error ? (
           <div className="p-8 text-center text-sm text-[var(--color-danger)]">
-            {error.message || 'Operator access required to view anomalies.'}
+            {error.message || 'Request failed.'}
           </div>
         ) : !data?.items || data.items.length === 0 ? (
           <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
@@ -70,13 +72,13 @@ export default function AnomaliesPage() {
               <tbody className="divide-y divide-[var(--color-line)]">
                 {data.items.map((row: ObsAnomalyRow, idx: number) => {
                   const z = row.z_score !== null ? row.z_score : 0;
-                  const isHighSeverity = z > 3.5;
+                  const isHighSeverity = z >= SEVERE_ANOMALY_Z;
 
                   return (
                     <tr key={idx} className="hover:bg-[var(--color-surface-subtle)]">
                       <td className="px-4 py-3 font-mono">
                         <div>
-                          <Mono>{row.account_id.slice(0, 13)}…</Mono>
+                          <TenantLink accountId={row.account_id} short />
                         </div>
                         <div className="text-[11px] text-[var(--color-ink-muted)]">
                           app: <Mono>{row.app_id.slice(0, 13)}…</Mono>

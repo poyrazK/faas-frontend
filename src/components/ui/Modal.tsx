@@ -1,6 +1,12 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useId } from 'react';
+
+/**
+ * Open modals, innermost last. Operator dialogs open on top of inspect panels,
+ * and Escape must close only the dialog in front — not the panel behind it.
+ */
+const openStack: string[] = [];
 
 export function Modal({
   open,
@@ -17,12 +23,24 @@ export function Modal({
   footer?: React.ReactNode;
   width?: number;
 }) {
+  const id = useId();
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    openStack.push(id);
+    return () => {
+      const index = openStack.lastIndexOf(id);
+      if (index >= 0) openStack.splice(index, 1);
+    };
+  }, [open, id]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && openStack[openStack.length - 1] === id) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, id]);
 
   if (!open) return null;
 

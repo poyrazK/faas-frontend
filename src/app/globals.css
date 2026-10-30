@@ -41,6 +41,14 @@
   --color-info: #0284c7;
   --color-warn: #c2760a;
   --color-danger: #dc2626;
+  /* Operator console status surfaces. --color-warning* and --color-danger-subtle
+     are the names the operations pages use; keep them aliases of the status
+     tones above so the palette has one source. */
+  --color-ok-subtle: #ecfdf3;
+  --color-warning: #c2760a;
+  --color-warning-bold: #a1650b;
+  --color-warning-subtle: #fdf6e7;
+  --color-danger-subtle: #fdf1f1;
 
   /* Chart tones */
   --color-chart: #4e8f5b;
@@ -114,7 +122,10 @@
   .btn-dark:hover { background: #2c2f28; }
   .btn-danger { background: var(--color-danger); color: #fff; }
   .btn-danger:hover { filter: brightness(0.94); }
+  .btn-warning { background: var(--color-warning-subtle); color: var(--color-warning-bold); border: 1px solid #f2e2bd; }
+  .btn-warning:hover { filter: brightness(0.97); }
   .btn-sm { @apply px-2.5 py-1.5 text-xs gap-1; }
+  .btn-xs { @apply px-2 py-1 text-[11px] gap-1 rounded-md; }
 
   /* Square icon button (bell, help, refresh) */
   .btn-icon {
@@ -174,6 +185,10 @@
   .badge-warn   { background: #fdf6e7; color: #a1650b; border: 1px solid #f2e2bd; }
   .badge-danger { background: #fdf1f1; color: #b91c1c; border: 1px solid #f5d5d5; }
   .badge-info   { background: #eef6fb; color: #0369a1; border: 1px solid #cfe4f2; }
+  /* Semantic aliases used by the operations pages. */
+  .badge-success { background: var(--color-ok-subtle); color: #15803d; border: 1px solid #bbe5c8; }
+  .badge-warning { background: var(--color-warning-subtle); color: var(--color-warning-bold); border: 1px solid #f2e2bd; }
+  .badge-neutral { background: var(--color-surface-subtle); color: var(--color-ink-muted); border: 1px solid var(--color-line); }
 
   /* ── Data table ──────────────────────────────────────────────────────── */
   .dtable { @apply w-full text-left text-sm; border-collapse: collapse; }
