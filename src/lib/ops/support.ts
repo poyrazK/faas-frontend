@@ -350,4 +350,4 @@ export function collectIds(data: unknown, key: 'wake_id' | 'trace_id', limit = 1
 }
 
 /** Account IDs link to the tenant directory, which opens an exact ID directly. */
-export const tenantHref = (accountId: string) => `/tenants?q=${encodeURIComponent(accountId)}`;
+export { tenantHref } from '@/lib/routes';

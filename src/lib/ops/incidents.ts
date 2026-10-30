@@ -20,6 +20,7 @@ import type {
   ObsAlertRetentionHealth,
   Tone,
 } from './telemetry';
+import { tenantHref } from '@/lib/routes';
 
 /* ─────────────────────────────── Vocabulary ────────────────────────────── */
 
@@ -712,7 +713,7 @@ export function incidentConsoleLinks(incident: Pick<ObsIncident, 'type' | 'accou
     links.push({ href: '/telemetry', label: 'Telemetry health' });
   }
   if (incident.account_id) {
-    links.push({ href: `/tenants?${new URLSearchParams({ q: incident.account_id })}`, label: 'Tenant' });
+    links.push({ href: tenantHref(incident.account_id), label: 'Tenant' });
   }
   if (incident.audit_path?.startsWith('/v1/admin/obs/audit-log/search')) {
     links.push({ href: '/audit-log', label: 'Audit trail' });
@@ -722,9 +723,9 @@ export function incidentConsoleLinks(incident: Pick<ObsIncident, 'type' | 'accou
 
 /** Console page for a related resource in the incident context, if one exists. */
 export function relatedResourceLink(resource: Pick<ObsIncidentRelatedResource, 'kind' | 'id' | 'account_id'>): ConsoleLink | null {
-  if (resource.kind === 'tenant') return { href: `/tenants?${new URLSearchParams({ q: resource.id })}`, label: 'Tenant' };
+  if (resource.kind === 'tenant') return { href: tenantHref(resource.id), label: 'Tenant' };
   if (resource.kind === 'compute_node') return { href: '/nodes', label: 'Nodes' };
-  if (resource.account_id) return { href: `/tenants?${new URLSearchParams({ q: resource.account_id })}`, label: 'Tenant' };
+  if (resource.account_id) return { href: tenantHref(resource.account_id), label: 'Tenant' };
   return null;
 }
 

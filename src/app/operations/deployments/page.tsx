@@ -31,6 +31,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
+import { tenantHref } from '@/lib/routes';
 
 const PAGE_SIZE = 50;
 const POLL_MS = 30000;
@@ -55,7 +56,6 @@ const AGE_OPTIONS = [
 ];
 
 const short = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
-const tenantHref = (accountId: string) => `/tenants?q=${encodeURIComponent(accountId)}`;
 
 type DeploymentAction = { type: 'cancel' | 'retry'; deployment: OperatorDeployment; defaultStage: DeploymentStageName };
 

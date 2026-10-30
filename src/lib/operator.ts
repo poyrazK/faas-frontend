@@ -109,3 +109,6 @@ export function isRealTimestamp(iso: string | null | undefined): iso is string {
   const t = Date.parse(iso);
   return Number.isFinite(t) && t > Date.UTC(2000, 0, 1);
 }
+
+/** MB-seconds → GB-RAM-hours, exactly as apid's meter.GBHours (1 GB = 1024 MB). */
+export const gbHours = (mbSeconds: number) => mbSeconds / (1024 * 3600);

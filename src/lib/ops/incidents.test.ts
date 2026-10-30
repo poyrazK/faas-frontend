@@ -221,7 +221,7 @@ describe('linking', () => {
       { href: '/telemetry', label: 'Telemetry health' },
     ]);
     expect(incidentConsoleLinks({ type: 'deployment', action_path: `/v1/admin/ops/deployments/${UUID}`, account_id: UUID })).toEqual([
-      { href: `/tenants?q=${UUID}`, label: 'Tenant' },
+      { href: `/tenants/${UUID}`, label: 'Tenant' },
     ]);
     expect(incidentConsoleLinks({ type: 'platform_alert', action_path: `/v1/admin/obs/incidents/compute_node/${UUID}/evidence` })[0].href).toBe('/nodes');
   });

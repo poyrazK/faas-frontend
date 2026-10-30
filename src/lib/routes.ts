@@ -50,3 +50,16 @@ export function isRouteActive(slug: string, pathname: string): boolean {
   const clean = pathname.startsWith('/operations/') ? pathname.slice('/operations'.length) : pathname;
   return clean === `/${slug}` || clean.startsWith(`/${slug}/`);
 }
+
+/** Tabs of the tenant workspace (/tenants/<id>?tab=…). */
+export const TENANT_TABS = ['overview', 'apps', 'deployments', 'jobs', 'billing', 'flags', 'activity'] as const;
+export type TenantTab = (typeof TENANT_TABS)[number];
+
+/** The one URL for a customer: every page that shows an account ID links here. */
+export function tenantHref(accountId: string, tab?: TenantTab): string {
+  const base = `/tenants/${encodeURIComponent(accountId.trim())}`;
+  return tab && tab !== 'overview' ? `${base}?tab=${tab}` : base;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isAccountId = (value: string) => UUID_PATTERN.test(value.trim());
