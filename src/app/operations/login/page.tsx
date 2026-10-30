@@ -8,6 +8,8 @@ import { AuthRefreshError, useAuth } from '@/lib/auth';
 import { requestPasswordReset, ApiError } from '@/lib/api';
 import { Spinner } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
+import { safeNextPath } from '@/lib/operator';
+import { OPS_HOME } from '@/lib/routes';
 
 type Mode = 'signin' | 'forgot';
 
@@ -15,7 +17,7 @@ function OperationsLoginInner() {
   const { account, loading, signIn } = useAuth();
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get('next') || '/operations/overview';
+  const next = safeNextPath(params.get('next'), OPS_HOME);
 
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
@@ -63,7 +65,7 @@ function OperationsLoginInner() {
           ? err.message
           : err instanceof ApiError
           ? err.message
-          : 'Sign-in failed. Operator access requires registration in FAAS_ADMIN_EMAILS.',
+          : 'Sign-in failed. Check your email and password, then try again.',
       );
     }
   }
@@ -73,7 +75,7 @@ function OperationsLoginInner() {
   const blurb =
     mode === 'forgot'
       ? 'Enter your operator email and we’ll send a reset link.'
-      : 'Access is restricted to authorized addresses listed in FAAS_ADMIN_EMAILS.';
+      : 'Only platform operator accounts can sign in. You will be asked for your authenticator code before making changes.';
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -210,7 +212,7 @@ function OperationsLoginInner() {
               href="https://gregale.dev/login"
               className="text-xs text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] transition-colors"
             >
-              ← Customer Developer Console Login
+              ← Customer console sign-in
             </a>
           </div>
         </div>

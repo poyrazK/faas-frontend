@@ -3,10 +3,11 @@
 import React from 'react';
 import { getObsOverview } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { PageHeader, Mono } from '@/components/ui/bits';
+import { PageHeader } from '@/components/ui/bits';
 import { StatTile, SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { TenantLink } from '@/components/operator/TenantLink';
 
 export default function FleetOverviewPage() {
   const { data, loading, error, reload } = useAsync(getObsOverview, [], 30000);
@@ -22,13 +23,13 @@ export default function FleetOverviewPage() {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="card p-8 text-center">
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-danger-subtle)] text-[var(--color-danger)]">
           <Icon name="shield" size={24} />
         </div>
-        <h2 className="mt-4 text-lg font-semibold">Operator Access Required</h2>
+        <h2 className="mt-4 text-lg font-semibold">Could not load the fleet overview</h2>
         <p className="mt-1 text-sm text-[var(--color-ink-muted)]">
           {error.message || 'Could not load fleet overview. Operator admin permissions & MFA step-up required.'}
         </p>
@@ -138,7 +139,7 @@ export default function FleetOverviewPage() {
                   <div key={rl.account_id} className="flex items-center justify-between p-4 text-sm">
                     <div className="flex items-center gap-2">
                       <Icon name="shield" size={14} className="text-[var(--color-warning)]" />
-                      <Mono>{rl.account_id}</Mono>
+                      <TenantLink accountId={rl.account_id} />
                     </div>
                     <div className="font-semibold text-[var(--color-danger)]">{rl.hits} hits</div>
                   </div>

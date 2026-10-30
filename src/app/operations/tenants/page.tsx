@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   listObsTenants,
   getObsTenantDetail,
@@ -21,231 +23,176 @@ import {
   type ObsAppDetailResponse,
   type ObsInvoiceSummary,
 } from '@/lib/api';
-import { useAsync } from '@/lib/useAsync';
+import { formatCents, parseMoneyAmount, REASON_SUGGESTIONS } from '@/lib/operator';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
+import { Modal } from '@/components/ui/Modal';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
+import { useOperatorIntents } from '@/components/operator/OperatorIntents';
+import { AbuseHoldPanel, AccountFlagsPanel, ManagedPostgresPanel } from '@/components/operator/tenant';
+
+const PAGE_SIZE = 100;
+
+type TenantAction =
+  | { type: 'suspend' | 'restore' | 'revoke-sessions' | 'credit' | 'reconcile' }
+  | { type: 'refund'; invoice: ObsInvoiceSummary }
+  | { type: 'cold-boot'; slug: string };
+
+interface Inspection {
+  tenantId: string;
+  detail?: ObsTenantDetailResponse;
+  tenant360?: ObsTenant360Response;
+  activity?: ObsTenantActivityResponse;
+  errors: string[];
+}
 
 export default function TenantsPage() {
-  const [includePii, setIncludePii] = useState(false);
-  const [search, setSearch] = useState('');
-  const [planFilter, setPlanFilter] = useState('all');
-
-  // Tenant detail modal
-  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
-  const [detailData, setDetailData] = useState<ObsTenantDetailResponse | null>(null);
-  const [tenant360Data, setTenant360Data] = useState<ObsTenant360Response | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [activityData, setActivityData] = useState<ObsTenantActivityResponse | null>(null);
-  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
-  const [appDetail, setAppDetail] = useState<ObsAppDetailResponse | null>(null);
-  const [appDetailLoading, setAppDetailLoading] = useState(false);
-
-  // Credit issue modal
-  const [creditModalOpen, setCreditModalOpen] = useState(false);
-  const [creditAmountUsd, setCreditAmountUsd] = useState('10.00');
-  const [creditReason, setCreditReason] = useState('Operator promotional credit');
-  const [creditSubmitting, setCreditSubmitting] = useState(false);
-  const [creditFeedback, setCreditFeedback] = useState<string | null>(null);
-
-  // Refund state
-  const [refundInvoice, setRefundInvoice] = useState<ObsInvoiceSummary | null>(null);
-  const [refundAmount, setRefundAmount] = useState('');
-  const [refundReason, setRefundReason] = useState('Operator refund');
-  const [refundSubmitting, setRefundSubmitting] = useState(false);
-  const [refundFeedback, setRefundFeedback] = useState<string | null>(null);
-
-  // Reconcile state
-  const [reconcilingId, setReconcilingId] = useState<string | null>(null);
-  const [reconcileFeedback, setReconcileFeedback] = useState<string | null>(null);
-  const [tenantAction, setTenantAction] = useState<string | null>(null);
-  const [tenantFeedback, setTenantFeedback] = useState<string | null>(null);
-
-  // Cold boot state
-  const [coldBootingSlug, setColdBootingSlug] = useState<string | null>(null);
-  const [coldBootFeedback, setColdBootFeedback] = useState<string | null>(null);
-
-  const { data, loading, error, reload } = useAsync(
-    () => listObsTenants(200, undefined, includePii),
-    [includePii],
+  return (
+    <Suspense>
+      <TenantsDirectory />
+    </Suspense>
   );
+}
 
-  const openInspectDrawer = async (tenantId: string) => {
-    setSelectedTenantId(tenantId);
-    setDetailLoading(true);
-    setDetailData(null);
-    setTenant360Data(null);
-    setActivityData(null);
-    setSelectedAppId(null);
+function TenantsDirectory() {
+  const params = useSearchParams();
+  const [includePii, setIncludePii] = useState(false);
+  const [search, setSearch] = useState(params.get('q') ?? '');
+  const jumpQuery = params.get('q');
+
+  // The header search navigates here with ?q=; follow later jumps too.
+  useEffect(() => {
+    if (jumpQuery !== null) queueMicrotask(() => setSearch(jumpQuery));
+  }, [jumpQuery]);
+  const [planFilter, setPlanFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  // Directory: server-side plan/status filters, cursor pages appended on demand.
+  const [rows, setRows] = useState<ObsTenantRow[]>([]);
+  const [nextCursor, setNextCursor] = useState('');
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+  const [listNonce, setListNonce] = useState(0);
+  const listSeq = useRef(0);
+
+  const filters = {
+    plan: planFilter === 'all' ? undefined : planFilter,
+    status: statusFilter === 'all' ? undefined : statusFilter,
+  };
+
+  const loadPage = async (cursor: string | undefined, append: boolean) => {
+    const seq = ++listSeq.current;
+    setListLoading(true);
+    setListError(null);
+    try {
+      const res = await listObsTenants(PAGE_SIZE, cursor, includePii, filters);
+      if (seq !== listSeq.current) return;
+      setRows((current) => (append ? [...current, ...res.items] : res.items));
+      setNextCursor(res.next_cursor);
+    } catch (err) {
+      if (seq === listSeq.current) setListError((err as Error).message);
+    } finally {
+      if (seq === listSeq.current) setListLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    queueMicrotask(() => void loadPage(undefined, false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includePii, planFilter, statusFilter, listNonce]);
+
+  // Inspect panel: every response is checked against the tenant it was requested for.
+  const inspectSeq = useRef(0);
+  const [inspectId, setInspectId] = useState<string | null>(null);
+  const [inspection, setInspection] = useState<Inspection | null>(null);
+  const [appDetail, setAppDetail] = useState<{ appId: string; data?: ObsAppDetailResponse; error?: string } | null>(null);
+  const [action, setAction] = useState<TenantAction | null>(null);
+  const [amount, setAmount] = useState('');
+  const { track } = useOperatorIntents();
+
+  const inspect = async (tenantId: string) => {
+    const seq = ++inspectSeq.current;
+    setInspectId(tenantId);
+    setInspection(null);
     setAppDetail(null);
-    try {
-      const [res, activity, tenant360] = await Promise.all([
-        getObsTenantDetail(tenantId, includePii),
-        getObsTenantActivity(tenantId),
-        getObsTenant360(tenantId, undefined, includePii),
-      ]);
-      setDetailData(res);
-      setActivityData(activity);
-      setTenant360Data(tenant360);
-    } catch {
-      /* fetch failed */
-    } finally {
-      setDetailLoading(false);
-    }
+    const [detail, activity, tenant360] = await Promise.allSettled([
+      getObsTenantDetail(tenantId, includePii),
+      getObsTenantActivity(tenantId),
+      getObsTenant360(tenantId, undefined, includePii),
+    ]);
+    if (seq !== inspectSeq.current) return;
+    const errors: string[] = [];
+    if (detail.status === 'rejected') errors.push(`Account: ${(detail.reason as Error).message}`);
+    if (activity.status === 'rejected') errors.push(`Activity: ${(activity.reason as Error).message}`);
+    if (tenant360.status === 'rejected') errors.push(`Usage & billing: ${(tenant360.reason as Error).message}`);
+    setInspection({
+      tenantId,
+      detail: detail.status === 'fulfilled' ? detail.value : undefined,
+      activity: activity.status === 'fulfilled' ? activity.value : undefined,
+      tenant360: tenant360.status === 'fulfilled' ? tenant360.value : undefined,
+      errors,
+    });
   };
 
-  const openAppDetail = async (appId: string) => {
-    setSelectedAppId(appId);
-    setAppDetailLoading(true);
-    setAppDetail(null);
-    try {
-      setAppDetail(await getObsAppDetail(appId));
-    } catch {
-      /* fetch failed */
-    } finally {
-      setAppDetailLoading(false);
+  // An exact account ID from the header search opens the tenant directly,
+  // even when it is not on the loaded directory page.
+  useEffect(() => {
+    if (jumpQuery && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jumpQuery.trim())) {
+      queueMicrotask(() => void inspect(jumpQuery.trim()));
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpQuery]);
 
-  const handleIssueCredit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedTenantId) return;
-    setCreditSubmitting(true);
-    setCreditFeedback(null);
+  const openApp = async (appId: string) => {
+    const seq = inspectSeq.current;
+    setAppDetail({ appId });
     try {
-      const cents = Math.round(parseFloat(creditAmountUsd) * 100);
-      const res = await issueAccountCredit(selectedTenantId, cents, creditReason);
-      setCreditFeedback(`Issued $${(res.cents_remaining / 100).toFixed(2)} credit to account.`);
-      setTimeout(() => {
-        setCreditModalOpen(false);
-        setCreditFeedback(null);
-      }, 1500);
+      const data = await getObsAppDetail(appId);
+      if (seq === inspectSeq.current) setAppDetail({ appId, data });
     } catch (err) {
-      setCreditFeedback(`Error issuing credit: ${(err as Error).message}`);
-    } finally {
-      setCreditSubmitting(false);
+      if (seq === inspectSeq.current) setAppDetail({ appId, error: (err as Error).message });
     }
   };
 
-  const openRefundModal = (invoice: ObsInvoiceSummary) => {
-    const paidCents = invoice.amount_paid_cents > 0 ? invoice.amount_paid_cents : invoice.total_cents;
-    setRefundInvoice(invoice);
-    setRefundAmount((paidCents / 100).toFixed(2));
-    setRefundReason('Operator refund');
-    setRefundFeedback(null);
+  const startAction = (next: TenantAction) => {
+    setAmount(next.type === 'refund' ? ((next.invoice.amount_paid_cents || next.invoice.total_cents) / 100).toFixed(2) : '');
+    setAction(next);
   };
 
-  const handleRefund = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedTenantId || !refundInvoice) return;
-    const amount = Number(refundAmount);
-    const amountCents = Math.round(amount * 100);
-    const paidCents = refundInvoice.amount_paid_cents > 0 ? refundInvoice.amount_paid_cents : refundInvoice.total_cents;
-    if (!Number.isFinite(amount) || !Number.isInteger(amountCents) || amountCents <= 0 || amountCents > paidCents) {
-      setRefundFeedback(`Enter an amount between 0.01 and ${(paidCents / 100).toFixed(2)} ${refundInvoice.currency}.`);
-      return;
-    }
-    if (refundReason.trim().length < 3) {
-      setRefundFeedback('Refund reason must be at least 3 characters.');
-      return;
-    }
-    if (!window.confirm(`Refund ${(amountCents / 100).toFixed(2)} ${refundInvoice.currency} for invoice ${refundInvoice.number || refundInvoice.id}? This sends a money-moving request to the billing provider.`)) return;
-    setRefundSubmitting(true);
-    setRefundFeedback(null);
-    try {
-      const result = await refundAccount(selectedTenantId, refundInvoice.id, amountCents, refundReason.trim());
-      const feedback = `Refund accepted: ${(result.amount_cents / 100).toFixed(2)} ${result.currency} · ${result.provider_refund_id}.`;
-      setTenantFeedback(feedback);
-      setRefundInvoice(null);
-      await openInspectDrawer(selectedTenantId);
-    } catch (err) {
-      setRefundFeedback(`Refund failed: ${(err as Error).message}`);
-    } finally {
-      setRefundSubmitting(false);
-    }
-  };
+  const view = inspection && inspection.tenantId === inspectId ? inspection : null;
+  const detail = view?.detail;
+  const t360 = view?.tenant360;
+  const currency = t360?.billing.invoices[0]?.currency;
+  const accountLabel = detail?.account.email || inspectId || '';
 
-  const handleReconcile = async (tenantId: string) => {
-    setReconcilingId(tenantId);
-    setReconcileFeedback(null);
-    try {
-      await reconcileAccount(tenantId);
-      setReconcileFeedback(`Billing reconciled for tenant ${tenantId}`);
-      setTimeout(() => setReconcileFeedback(null), 3000);
-    } catch (err) {
-      setReconcileFeedback(`Reconcile error: ${(err as Error).message}`);
-    } finally {
-      setReconcilingId(null);
-    }
-  };
-
-  const handleTenantAction = async (action: 'suspend' | 'restore' | 'revoke-sessions') => {
-    if (!selectedTenantId) return;
-    const warning = action === 'suspend'
-      ? 'Suspend this tenant and revoke all of its active dashboard sessions?'
-      : action === 'revoke-sessions'
-      ? 'Revoke all active dashboard sessions for this tenant?'
-      : 'Restore this tenant account?';
-    if (!window.confirm(warning)) return;
-    setTenantAction(action);
-    setTenantFeedback(null);
-    try {
-      const result = action === 'suspend'
-        ? await suspendObsAccount(selectedTenantId)
-        : action === 'restore'
-        ? await restoreObsAccount(selectedTenantId)
-        : await revokeObsAccountSessions(selectedTenantId);
-      await openInspectDrawer(selectedTenantId);
-      setTenantFeedback(`${result.action} completed; ${result.revoked_sessions} session(s) revoked.`);
-      reload();
-    } catch (err) {
-      setTenantFeedback(`Tenant operation failed: ${(err as Error).message}`);
-    } finally {
-      setTenantAction(null);
-    }
-  };
-
-  const handleForceColdBootApp = async (slug: string) => {
-    setColdBootingSlug(slug);
-    setColdBootFeedback(null);
-    try {
-      await forceColdBootApp(slug, 'operator_tenant_inspect_force_cold_boot');
-      setColdBootFeedback(`Force cold-boot intent enqueued for app ${slug}. Snapshots invalidated.`);
-      setTimeout(() => setColdBootFeedback(null), 4000);
-    } catch (err) {
-      setColdBootFeedback(`Cold boot error: ${(err as Error).message}`);
-    } finally {
-      setColdBootingSlug(null);
-    }
-  };
-
-  const filteredItems = (data?.items || []).filter((t: ObsTenantRow) => {
-    const matchSearch =
-      t.account_id.toLowerCase().includes(search.toLowerCase()) ||
-      (t.email && t.email.toLowerCase().includes(search.toLowerCase())) ||
-      (t.org_slug && t.org_slug.toLowerCase().includes(search.toLowerCase()));
-
-    const matchPlan = planFilter === 'all' || t.plan === planFilter;
-    return matchSearch && matchPlan;
-  });
+  const query = search.trim().toLowerCase();
+  const visibleRows = query
+    ? rows.filter(
+        (t) =>
+          t.account_id.toLowerCase().includes(query) ||
+          t.email?.toLowerCase().includes(query) ||
+          t.org_slug?.toLowerCase().includes(query),
+      )
+    : rows;
 
   return (
     <div>
       <PageHeader
-        title="Tenant Directory"
-        subtitle="Platform account management, tenant inspect, credit issuance, and billing reconciliation"
+        title="Tenants"
+        subtitle="Find a customer account, inspect its apps, usage and billing, and act on it. Every action is audited."
         actions={
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setIncludePii(!includePii)}
-              className={`btn btn-sm ${includePii ? 'btn-danger' : 'btn-secondary'}`}
-              title="Toggling PII emits a pii.accessed audit row"
+              className={`btn btn-sm ${includePii ? 'btn-warning' : 'btn-secondary'}`}
+              title="Showing emails records a pii.accessed audit event"
             >
               <Icon name="shield" size={14} />
-              {includePii ? 'PII Unlocked (Emails Visible)' : 'PII Redacted'}
+              {includePii ? 'Emails visible' : 'Emails hidden'}
             </button>
-            <button onClick={reload} className="btn btn-secondary btn-sm">
+            <button onClick={() => setListNonce((n) => n + 1)} className="btn btn-secondary btn-sm">
               <Icon name="refresh" size={14} />
               Refresh
             </button>
@@ -256,132 +203,99 @@ export default function TenantsPage() {
       {includePii && (
         <div className="mb-4 rounded-lg bg-[var(--color-warning-subtle)] p-3 text-xs text-[var(--color-warning-bold)]">
           <Icon name="shield" size={14} className="mr-1.5 inline" />
-          <strong>PII Opt-in Active:</strong> Customer email addresses are unredacted. Access is audited backend-side per ADR-091.
+          Customer emails are visible. Each load is recorded as PII access in the audit log.
         </div>
       )}
 
-      {reconcileFeedback && (
-        <div className="mb-4 rounded-lg bg-[var(--color-surface-subtle)] p-3 text-xs text-[var(--color-ink-muted)]">
-          {reconcileFeedback}
-        </div>
-      )}
-
-      {/* Filters & Search */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder="Search Account ID, email, or org slug…"
-          className="w-full sm:w-72"
+          placeholder="Filter loaded tenants by ID, email or org…"
+          className="w-full sm:w-80"
         />
         <FilterSelect
           value={planFilter}
           onChange={setPlanFilter}
           options={[
-            { value: 'all', label: 'All Plans' },
+            { value: 'all', label: 'All plans' },
             { value: 'free', label: 'Free' },
             { value: 'hobby', label: 'Hobby' },
             { value: 'pro', label: 'Pro' },
             { value: 'scale', label: 'Scale' },
           ]}
         />
+        <FilterSelect
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: 'all', label: 'All statuses' },
+            { value: 'active', label: 'Active' },
+            { value: 'past_due', label: 'Past due' },
+            { value: 'suspended', label: 'Suspended' },
+            { value: 'deleted_pending', label: 'Deletion pending' },
+          ]}
+        />
       </div>
 
-      {/* Directory Table */}
       <SectionCard>
-        {loading && !data ? (
-          <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading Tenants…</div>
-        ) : error ? (
-          <div className="p-8 text-center text-sm text-[var(--color-danger)]">
-            {error.message || 'Operator access required to list tenants.'}
+        {listError && rows.length === 0 ? (
+          <div role="alert" className="p-8 text-center text-sm text-[var(--color-danger)]">
+            Could not load tenants: {listError}
           </div>
-        ) : filteredItems.length === 0 ? (
-          <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">No tenants found.</div>
+        ) : listLoading && rows.length === 0 ? (
+          <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading tenants…</div>
+        ) : visibleRows.length === 0 ? (
+          <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
+            {query && nextCursor ? 'No match among loaded tenants — load more to keep searching.' : 'No tenants match.'}
+          </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] font-medium text-[var(--color-ink-muted)]">
+            <table className="dtable text-xs">
+              <thead>
                 <tr>
-                  <th className="px-4 py-3">Account ID / Org</th>
-                  <th className="px-4 py-3">Email (PII)</th>
-                  <th className="px-4 py-3">Plan</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Apps / Live</th>
-                  <th className="px-4 py-3">MFA</th>
-                  <th className="px-4 py-3">Created</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th>Account</th>
+                  <th>Email</th>
+                  <th>Plan</th>
+                  <th>Status</th>
+                  <th>Apps / live</th>
+                  <th>MFA</th>
+                  <th>Created</th>
+                  <th />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--color-line)]">
-                {filteredItems.map((tenant) => (
-                  <tr key={tenant.account_id} className="hover:bg-[var(--color-surface-subtle)]">
-                    <td className="px-4 py-3 font-mono">
-                      <div>
-                        <Mono>{tenant.account_id.slice(0, 13)}…</Mono>
-                      </div>
+              <tbody>
+                {visibleRows.map((tenant) => (
+                  <tr key={tenant.account_id}>
+                    <td className="font-mono">
+                      <Mono>{tenant.account_id.slice(0, 13)}…</Mono>
                       {tenant.org_slug && (
-                        <div className="text-[11px] text-[var(--color-ink-muted)]">
-                          org: {tenant.org_slug}
-                        </div>
+                        <div className="text-[11px] text-[var(--color-ink-muted)]">org: {tenant.org_slug}</div>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td>
                       {tenant.email ? (
-                        <span className="font-medium text-[var(--color-ink)]">{tenant.email}</span>
+                        <span className="cell-primary">{tenant.email}</span>
                       ) : (
-                        <span className="text-[var(--color-ink-muted)] font-mono italic">[Redacted]</span>
+                        <span className="italic text-[var(--color-ink-muted)]">hidden</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td>
                       <span className="badge badge-neutral uppercase">{tenant.plan}</span>
                     </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`badge ${
-                          tenant.status === 'active'
-                            ? 'badge-success'
-                            : tenant.status === 'past_due'
-                            ? 'badge-warning'
-                            : 'badge-danger'
-                        }`}
-                      >
-                        {tenant.status}
-                      </span>
+                    <td>
+                      <StatusBadge status={tenant.status} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td>
                       <span className="font-semibold">{tenant.apps_count}</span> apps ·{' '}
-                      <span className="text-[var(--color-brand-bright)] font-semibold">
-                        {tenant.deployments_live_count}
-                      </span>{' '}
-                      live
+                      <span className="font-semibold text-[var(--color-brand-bright)]">{tenant.deployments_live_count}</span> live
                     </td>
-                    <td className="px-4 py-3">
-                      {tenant.mfa_enrolled ? (
-                        <span className="text-[var(--color-brand-bright)] font-medium">Enrolled</span>
-                      ) : (
-                        <span className="text-[var(--color-ink-muted)]">Off</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-ink-muted)]">
-                      {relativeTime(tenant.created_at)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-1.5">
-                        <button
-                          onClick={() => openInspectDrawer(tenant.account_id)}
-                          className="btn btn-secondary btn-xs"
-                        >
-                          Inspect
-                        </button>
-                        <button
-                          onClick={() => handleReconcile(tenant.account_id)}
-                          disabled={reconcilingId === tenant.account_id}
-                          className="btn btn-secondary btn-xs"
-                          title="Reconcile usage & billing"
-                        >
-                          {reconcilingId === tenant.account_id ? 'Reconciling…' : 'Reconcile'}
-                        </button>
-                      </div>
+                    <td>{tenant.mfa_enrolled ? 'Enrolled' : <span className="text-[var(--color-ink-muted)]">Off</span>}</td>
+                    <td>{relativeTime(tenant.created_at)}</td>
+                    <td className="text-right">
+                      <button onClick={() => inspect(tenant.account_id)} className="btn btn-secondary btn-xs">
+                        Inspect
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -389,446 +303,589 @@ export default function TenantsPage() {
             </table>
           </div>
         )}
+        <div className="table-foot">
+          <span>
+            {rows.length} loaded{query ? ` · ${visibleRows.length} match the filter` : ''}
+            {listError && rows.length > 0 ? ` · last load failed: ${listError}` : ''}
+          </span>
+          {nextCursor && (
+            <button
+              className="btn btn-secondary btn-xs"
+              disabled={listLoading}
+              onClick={() => void loadPage(nextCursor, true)}
+            >
+              {listLoading ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+        </div>
       </SectionCard>
 
-      {/* Tenant Inspect Drawer / Modal */}
-      {selectedTenantId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="card max-h-[85vh] w-full max-w-2xl overflow-y-auto p-6">
-            <div className="flex items-center justify-between border-b border-[var(--color-line)] pb-3">
-              <div>
-                <h3 className="text-lg font-bold">Tenant Detail Inspect</h3>
-                <Mono className="text-xs">{selectedTenantId}</Mono>
-              </div>
-              <button onClick={() => setSelectedTenantId(null)} className="btn-icon">
-                <Icon name="x" size={18} />
-              </button>
-            </div>
-
-            {detailLoading ? (
-              <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
-                Loading tenant breakdown…
-              </div>
-            ) : detailData ? (
-              <div className="mt-4 space-y-6 text-sm">
-                {/* Account Details */}
-                <div className="grid grid-cols-2 gap-4 rounded-lg bg-[var(--color-surface-subtle)] p-4 text-xs">
-                  <div>
-                    <span className="text-[var(--color-ink-muted)]">Plan:</span>{' '}
-                    <strong className="uppercase">{detailData.account.plan}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[var(--color-ink-muted)]">Status:</span>{' '}
-                    <strong>{detailData.account.status}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[var(--color-ink-muted)]">Email:</span>{' '}
-                    <strong>{detailData.account.email || '[Redacted]'}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[var(--color-ink-muted)]">MFA:</span>{' '}
-                    <strong>{detailData.account.mfa_enrolled ? 'Enrolled' : 'Off'}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[var(--color-ink-muted)]">Active API Keys:</span>{' '}
-                    <strong>{detailData.api_keys.active}</strong> ({detailData.api_keys.revoked} revoked)
-                  </div>
-                  <div>
-                    <span className="text-[var(--color-ink-muted)]">Active Sessions:</span>{' '}
-                    <strong>{detailData.sessions.active}</strong>
-                  </div>
-                </div>
-
-                {tenant360Data && (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">
-                        Tenant 360 · {tenant360Data.usage.month}
-                      </h4>
-                      <span className="text-[11px] text-[var(--color-ink-muted)]">
-                        {tenant360Data.usage.requests.toLocaleString()} requests
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      <div className="rounded-lg border border-[var(--color-line)] p-3">
-                        <div className="text-[11px] text-[var(--color-ink-muted)]">RAM usage</div>
-                        <div className="mt-1 font-semibold">{tenant360Data.usage.used_gb_hours.toFixed(2)} GB-h</div>
-                        <div className="text-[10px] text-[var(--color-ink-muted)]">of {tenant360Data.usage.included_gb_hours} included</div>
-                      </div>
-                      <div className="rounded-lg border border-[var(--color-line)] p-3">
-                        <div className="text-[11px] text-[var(--color-ink-muted)]">Overage</div>
-                        <div className="mt-1 font-semibold">{tenant360Data.usage.overage_gb_hours.toFixed(2)} GB-h</div>
-                        <div className="text-[10px] text-[var(--color-ink-muted)]">€{(tenant360Data.usage.overage_cents / 100).toFixed(2)} derived</div>
-                      </div>
-                      <div className="rounded-lg border border-[var(--color-line)] p-3">
-                        <div className="text-[11px] text-[var(--color-ink-muted)]">Active credits</div>
-                        <div className="mt-1 font-semibold">€{(tenant360Data.billing.active_credits_cents / 100).toFixed(2)}</div>
-                        <div className="text-[10px] text-[var(--color-ink-muted)]">
-                          {tenant360Data.billing.overage_cap_cents == null ? 'No overage cap' : `Cap €${(tenant360Data.billing.overage_cap_cents / 100).toFixed(2)}`}
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-[var(--color-line)] p-3">
-                        <div className="text-[11px] text-[var(--color-ink-muted)]">Current overage</div>
-                        <div className="mt-1 font-semibold">€{(tenant360Data.billing.current_month_overage_cents / 100).toFixed(2)}</div>
-                        <div className="text-[10px] text-[var(--color-ink-muted)]">{tenant360Data.usage.cold_boots} cold boots · {tenant360Data.usage.apps.length} usage apps</div>
-                      </div>
-                    </div>
-                    {tenant360Data.usage.apps.length > 0 && (
-                      <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
-                        <table className="w-full text-left text-xs">
-                          <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] text-[var(--color-ink-muted)]">
-                            <tr><th className="px-3 py-2">App</th><th className="px-3 py-2">GB-h</th><th className="px-3 py-2">Requests</th><th className="px-3 py-2">Egress</th><th className="px-3 py-2">Cold boots</th></tr>
-                          </thead>
-                          <tbody className="divide-y divide-[var(--color-line)]">
-                            {tenant360Data.usage.apps.map((app) => (
-                              <tr key={app.app_id}>
-                                <td className="px-3 py-2 font-semibold">{app.app_slug || app.app_id.slice(0, 12)}</td>
-                                <td className="px-3 py-2">{(app.mb_seconds / 3600000).toFixed(2)}</td>
-                                <td className="px-3 py-2">{app.requests.toLocaleString()}</td>
-                                <td className="px-3 py-2">{((app.tx_bytes + app.net_tx_bytes) / (1024 ** 3)).toFixed(3)} GB</td>
-                                <td className="px-3 py-2">{app.cold_boots}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                    {tenant360Data.billing.invoices.length > 0 && (
-                      <div>
-                        <div className="mb-2 text-xs font-semibold text-[var(--color-ink-muted)]">Recent invoices</div>
-                        <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
-                          {tenant360Data.billing.invoices.slice(0, 5).map((invoice) => (
-                            <div key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 p-3 text-xs">
-                              <div>
-                                <span className="font-semibold">{invoice.number || invoice.id.slice(0, 12)}</span>
-                                <span className="ml-2 text-[var(--color-ink-muted)]">{invoice.status} · {invoice.currency}</span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="font-semibold">{(invoice.total_cents / 100).toFixed(2)}</span>
-                                {['paid', 'partially_refunded'].includes(invoice.status.toLowerCase()) && (
-                                  <button type="button" className="btn btn-danger btn-xs" onClick={() => openRefundModal(invoice)}>
-                                    Refund
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {tenantFeedback && (
-                  <div className="rounded bg-[var(--color-surface-subtle)] p-3 text-xs text-[var(--color-ink-muted)]">
-                    {tenantFeedback}
-                  </div>
-                )}
-
-                {/* Operator Actions */}
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-line)] p-4">
-                  <div>
-                    <div className="font-semibold text-xs">Tenant Operations</div>
-                    <div className="text-xs text-[var(--color-ink-muted)]">
-                      Lifecycle, session security, and billing actions are audited.
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {detailData.account.status === 'suspended' ? (
-                      <button onClick={() => handleTenantAction('restore')} disabled={tenantAction !== null} className="btn btn-secondary btn-sm">
-                        {tenantAction === 'restore' ? 'Restoring…' : 'Restore Account'}
-                      </button>
-                    ) : (
-                      <button onClick={() => handleTenantAction('suspend')} disabled={tenantAction !== null} className="btn btn-danger btn-sm">
-                        {tenantAction === 'suspend' ? 'Suspending…' : 'Suspend Account'}
-                      </button>
-                    )}
-                    <button onClick={() => handleTenantAction('revoke-sessions')} disabled={tenantAction !== null} className="btn btn-secondary btn-sm">
-                      {tenantAction === 'revoke-sessions' ? 'Revoking…' : 'Revoke Sessions'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setCreditModalOpen(true);
-                        setCreditFeedback(null);
-                      }}
-                      className="btn btn-secondary btn-sm"
-                    >
-                      <Icon name="plus" size={14} />
-                      Issue Credit
-                    </button>
-                  </div>
-                </div>
-
-                {/* Tenant Apps */}
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <h4 className="font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">
-                      Deployed Applications ({detailData.apps.length})
-                    </h4>
-                  </div>
-
-                  {coldBootFeedback && (
-                    <div className="mb-2 rounded bg-[var(--color-surface-subtle)] p-2 text-xs text-[var(--color-brand-bright)]">
-                      {coldBootFeedback}
-                    </div>
-                  )}
-
-                  {detailData.apps.length === 0 ? (
-                    <div className="text-xs text-[var(--color-ink-muted)]">No applications created.</div>
-                  ) : (
-                    <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
-                      {detailData.apps.map((app) => (
-                        <div key={app.id} className="flex items-center justify-between p-3 text-xs">
-                          <div>
-                            <span className="font-semibold">{app.slug}</span>
-                            <span className="ml-2 text-[var(--color-ink-muted)]">({app.deployments} builds)</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="badge badge-neutral">{app.status}</span>
-                            <button
-                              onClick={() => openAppDetail(app.id)}
-                              className="btn btn-secondary btn-xs"
-                            >
-                              Inspect Workload
-                            </button>
-                            <button
-                              onClick={() => handleForceColdBootApp(app.slug)}
-                              disabled={coldBootingSlug === app.slug}
-                              className="btn btn-secondary btn-xs"
-                              title="Invalidate snapshots & force cold boot next wake"
-                            >
-                              {coldBootingSlug === app.slug ? 'Invalidating…' : 'Force Cold Boot'}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Customer activity */}
-                <div>
-                  <h4 className="mb-2 font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">
-                    Recent Customer Activity
-                  </h4>
-                  {activityData && activityData.invocations.length === 0 && activityData.audit_events.length === 0 ? (
-                    <div className="text-xs text-[var(--color-ink-muted)]">No invocation or audit activity recorded.</div>
-                  ) : (
-                    <div className="grid gap-4 lg:grid-cols-2">
-                      <div className="rounded-lg border border-[var(--color-line)]">
-                        <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Invocations</div>
-                        <div className="max-h-64 overflow-y-auto divide-y divide-[var(--color-line)]">
-                          {(activityData?.invocations || []).map((invocation) => (
-                            <div key={invocation.id} className="px-3 py-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-medium">{invocation.app_slug || invocation.app_id.slice(0, 13) + '…'} · {invocation.method} {invocation.path}</span>
-                                <span className={`badge ${invocation.state === 'completed' ? 'badge-success' : invocation.state === 'failed' ? 'badge-danger' : 'badge-neutral'}`}>{invocation.outcome || invocation.state}</span>
-                              </div>
-                              <div className="mt-1 text-[var(--color-ink-muted)]">{relativeTime(invocation.created_at)} · {invocation.source}{invocation.last_error ? ` · ${invocation.last_error}` : ''}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-[var(--color-line)]">
-                        <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Audit trail</div>
-                        <div className="max-h-64 overflow-y-auto divide-y divide-[var(--color-line)]">
-                          {(activityData?.audit_events || []).map((event) => (
-                            <div key={event.id} className="px-3 py-2">
-                              <div className="font-medium">{event.kind}</div>
-                              <div className="mt-1 text-[var(--color-ink-muted)]">{relativeTime(event.at)}{event.actor ? ` · ${event.actor}` : ''}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Selected app workload */}
-                {selectedAppId && (
-                  <div className="rounded-lg border border-[var(--color-brand-bright)]/30 p-4">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h4 className="font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">App Workload Detail</h4>
-                      <button onClick={() => setSelectedAppId(null)} className="btn btn-secondary btn-xs">Close</button>
-                    </div>
-                    {appDetailLoading ? <div className="py-4 text-center text-xs text-[var(--color-ink-muted)]">Loading workload…</div> : appDetail ? (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-                          <div><span className="text-[var(--color-ink-muted)]">App</span><div className="font-semibold">{appDetail.app.slug}</div></div>
-                          <div><span className="text-[var(--color-ink-muted)]">Runtime</span><div className="font-semibold">{appDetail.app.runtime}</div></div>
-                          <div><span className="text-[var(--color-ink-muted)]">Concurrency</span><div className="font-semibold">{appDetail.app.max_concurrency}</div></div>
-                          <div><span className="text-[var(--color-ink-muted)]">Instances</span><div className="font-semibold">{appDetail.instances.length}</div></div>
-                        </div>
-                        <div>
-                          <div className="mb-2 font-semibold">Health ({appDetail.health.metrics.range})</div>
-                          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
-                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Requests</span><div className="font-semibold">{appDetail.health.metrics.request_count}</div></div>
-                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">p95</span><div className="font-semibold">{appDetail.health.metrics.latency_p95_ms.toFixed(0)} ms</div></div>
-                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Errors</span><div className="font-semibold">{appDetail.health.metrics.error_rate_pct.toFixed(2)}%</div></div>
-                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Queue</span><div className="font-semibold">{appDetail.health.metrics.queue_depth ?? 0}</div></div>
-                            <div className="rounded bg-[var(--color-surface-subtle)] p-2"><span className="text-[var(--color-ink-muted)]">Source</span><div className="truncate font-semibold" title={appDetail.health.metrics.source}>{appDetail.health.metrics.source === 'prometheus' ? 'Prometheus' : 'Degraded'}</div></div>
-                          </div>
-                          {appDetail.health.errors.length > 0 && (
-                            <div className="mt-3 overflow-x-auto rounded border border-[var(--color-line)]"><table className="w-full text-left text-xs"><thead className="border-b border-[var(--color-line)]"><tr><th className="px-2 py-1.5">Error</th><th className="px-2 py-1.5">Route</th><th className="px-2 py-1.5">Requests</th><th className="px-2 py-1.5">Last seen</th></tr></thead><tbody className="divide-y divide-[var(--color-line)]">{appDetail.health.errors.map((error) => <tr key={error.fingerprint}><td className="px-2 py-1.5">{error.error_class} ({error.http_status})</td><td className="px-2 py-1.5">{error.route}</td><td className="px-2 py-1.5">{error.request_count}</td><td className="px-2 py-1.5">{relativeTime(error.last_seen_at)}</td></tr>)}</tbody></table></div>
-                          )}
-                        </div>
-                        <div>
-                          <div className="mb-1 font-semibold">Deployments ({appDetail.deployments.length})</div>
-                          <div className="overflow-x-auto rounded border border-[var(--color-line)]"><table className="w-full text-left text-xs"><thead className="border-b border-[var(--color-line)]"><tr><th className="px-2 py-1.5">Created</th><th className="px-2 py-1.5">Status</th><th className="px-2 py-1.5">Source</th><th className="px-2 py-1.5">Error</th></tr></thead><tbody className="divide-y divide-[var(--color-line)]">{appDetail.deployments.map((deployment) => <tr key={deployment.id}><td className="px-2 py-1.5">{relativeTime(deployment.created_at)}</td><td className="px-2 py-1.5">{deployment.status}</td><td className="px-2 py-1.5">{deployment.source_url || deployment.commit_sha || deployment.kind}</td><td className="px-2 py-1.5 text-[var(--color-danger)]">{deployment.error_code || '—'}</td></tr>)}</tbody></table></div>
-                        </div>
-                        <div>
-                          <div className="mb-1 font-semibold">Instances & recent invocations</div>
-                          <div className="text-[var(--color-ink-muted)]">{appDetail.instances.filter((instance) => ['RUNNING', 'WAKING', 'COLD_BOOTING'].includes(instance.state)).length} live instance(s), {appDetail.invocations.length} recent invocation(s).</div>
-                        </div>
-                      </div>
-                    ) : <div className="text-xs text-[var(--color-danger)]">Could not fetch app workload detail.</div>}
-                  </div>
-                )}
-
-                {/* Tenant Organizations */}
-                {detailData.orgs.length > 0 && (
-                  <div>
-                    <h4 className="mb-2 font-semibold text-xs uppercase tracking-wider text-[var(--color-ink-muted)]">
-                      Organizations ({detailData.orgs.length})
-                    </h4>
-                    <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
-                      {detailData.orgs.map((org) => (
-                        <div key={org.id} className="flex items-center justify-between p-3 text-xs">
-                          <span className="font-semibold">{org.slug}</span>
-                          <span className="badge badge-neutral uppercase">{org.role}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="p-8 text-center text-sm text-[var(--color-danger)]">
-                Could not fetch details for tenant.
+      <Modal open={inspectId !== null} onClose={() => setInspectId(null)} title={`Tenant ${accountLabel}`} width={900}>
+        {!view ? (
+          <div className="p-6 text-center text-sm text-[var(--color-ink-muted)]">Loading tenant…</div>
+        ) : (
+          <div className="space-y-6 text-sm">
+            {view.errors.length > 0 && (
+              <div role="alert" className="rounded-lg bg-[var(--color-danger-subtle)] p-3 text-xs text-[var(--color-danger)]">
+                Some sections could not be loaded: {view.errors.join(' · ')}
               </div>
             )}
-          </div>
-        </div>
-      )}
 
-      {/* Refund Modal */}
-      {refundInvoice && selectedTenantId && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
-          <div className="card w-full max-w-md p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-bold">Refund invoice</h3>
-                <p className="mt-1 text-xs text-[var(--color-ink-muted)]">
-                  {refundInvoice.number || refundInvoice.id} · {refundInvoice.currency}
-                </p>
-              </div>
-              <button type="button" onClick={() => setRefundInvoice(null)} className="btn-icon" aria-label="Close refund dialog">
-                <Icon name="x" size={18} />
-              </button>
-            </div>
-            <form onSubmit={handleRefund} className="mt-5 space-y-4">
-              <label className="block text-xs">
-                <span className="font-semibold">Amount ({refundInvoice.currency})</span>
-                <input
-                  type="number"
-                  min="0.01"
-                  max={((refundInvoice.amount_paid_cents || refundInvoice.total_cents) / 100).toFixed(2)}
-                  step="0.01"
-                  required
-                  value={refundAmount}
-                  onChange={(event) => setRefundAmount(event.target.value)}
-                  className="field field-sm mt-1 w-full font-mono"
-                />
-              </label>
-              <label className="block text-xs">
-                <span className="font-semibold">Reason</span>
-                <textarea
-                  required
-                  minLength={3}
-                  maxLength={500}
-                  value={refundReason}
-                  onChange={(event) => setRefundReason(event.target.value)}
-                  className="field mt-1 min-h-20 w-full"
-                />
-              </label>
-              {refundFeedback && (
-                <div className={`rounded p-3 text-xs ${refundFeedback.startsWith('Refund accepted') ? 'bg-[var(--color-surface-subtle)] text-[var(--color-brand-bright)]' : 'bg-[var(--color-danger-subtle)] text-[var(--color-danger)]'}`}>
-                  {refundFeedback}
+            {detail && (
+              <>
+                <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 text-xs sm:grid-cols-3">
+                  <Fact label="Account ID" value={<Mono>{detail.account.account_id}</Mono>} />
+                  <Fact label="Plan" value={<span className="uppercase">{detail.account.plan}</span>} />
+                  <Fact label="Status" value={<StatusBadge status={detail.account.status} />} />
+                  <Fact label="Email" value={detail.account.email || 'hidden'} />
+                  <Fact label="MFA" value={detail.account.mfa_enrolled ? 'Enrolled' : 'Off'} />
+                  <Fact
+                    label="API keys / sessions"
+                    value={`${detail.api_keys.active} keys (${detail.api_keys.revoked} revoked) · ${detail.sessions.active} sessions`}
+                  />
                 </div>
-              )}
-              <div className="flex justify-end gap-2">
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRefundInvoice(null)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-danger btn-sm" disabled={refundSubmitting}>
-                  {refundSubmitting ? 'Submitting…' : 'Confirm refund'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* Credit Issuance Modal */}
-      {creditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="card w-full max-w-md p-6">
-            <div className="flex items-center justify-between border-b border-[var(--color-line)] pb-3">
-              <h3 className="text-base font-bold">Issue Account Credit</h3>
-              <button onClick={() => setCreditModalOpen(false)} className="btn-icon">
-                <Icon name="x" size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={handleIssueCredit} className="mt-4 space-y-4 text-xs">
-              <div>
-                <label className="mb-1 block font-medium">Credit Amount ($ USD)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  value={creditAmountUsd}
-                  onChange={(e) => setCreditAmountUsd(e.target.value)}
-                  className="field field-sm w-full"
-                  placeholder="10.00"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block font-medium">Reason / Reference</label>
-                <input
-                  type="text"
-                  required
-                  value={creditReason}
-                  onChange={(e) => setCreditReason(e.target.value)}
-                  className="field field-sm w-full"
-                  placeholder="Operator promo credit"
-                />
-              </div>
-
-              {creditFeedback && (
-                <div className="rounded p-2 text-xs bg-[var(--color-surface-subtle)] text-[var(--color-ink)]">
-                  {creditFeedback}
+                <div className="flex flex-wrap gap-2 rounded-lg border border-[var(--color-line)] p-3">
+                  {detail.account.status === 'suspended' ? (
+                    <button onClick={() => startAction({ type: 'restore' })} className="btn btn-secondary btn-sm">
+                      Restore account…
+                    </button>
+                  ) : (
+                    <button onClick={() => startAction({ type: 'suspend' })} className="btn btn-danger btn-sm">
+                      Suspend account…
+                    </button>
+                  )}
+                  <button onClick={() => startAction({ type: 'revoke-sessions' })} className="btn btn-secondary btn-sm">
+                    Revoke sessions…
+                  </button>
+                  <button onClick={() => startAction({ type: 'credit' })} className="btn btn-secondary btn-sm">
+                    <Icon name="plus" size={14} />
+                    Issue credit…
+                  </button>
+                  <button onClick={() => startAction({ type: 'reconcile' })} className="btn btn-secondary btn-sm">
+                    Reconcile usage…
+                  </button>
+                  <span className="mx-1 hidden w-px self-stretch bg-[var(--color-line)] sm:block" />
+                  <Link href={`/deployments?account=${encodeURIComponent(detail.account.account_id)}`} className="btn btn-ghost btn-sm">
+                    <Icon name="deployments" size={14} />
+                    Deployments
+                  </Link>
+                  <Link href={`/jobs?account=${encodeURIComponent(detail.account.account_id)}`} className="btn btn-ghost btn-sm">
+                    <Icon name="queues" size={14} />
+                    Job runs
+                  </Link>
                 </div>
-              )}
+              </>
+            )}
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setCreditModalOpen(false)}
-                  className="btn btn-secondary btn-sm"
-                >
-                  Cancel
-                </button>
-                <button type="submit" disabled={creditSubmitting} className="btn btn-primary btn-sm">
-                  {creditSubmitting ? 'Issuing…' : 'Confirm Issue Credit'}
-                </button>
+            {t360 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-[var(--color-ink-soft)]">Usage & billing · {t360.usage.month}</h4>
+                  <span className="text-[11px] text-[var(--color-ink-muted)]">
+                    {t360.usage.requests.toLocaleString()} requests · {t360.usage.cold_boots} cold boots
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <Tile
+                    label="RAM usage"
+                    value={`${t360.usage.used_gb_hours.toFixed(2)} GB-h`}
+                    sub={`of ${t360.usage.included_gb_hours} included`}
+                  />
+                  <Tile
+                    label="Overage"
+                    value={`${t360.usage.overage_gb_hours.toFixed(2)} GB-h`}
+                    sub={`${formatCents(t360.usage.overage_cents, currency)} derived`}
+                  />
+                  <Tile
+                    label="Active credits"
+                    value={formatCents(t360.billing.active_credits_cents, currency)}
+                    sub={
+                      t360.billing.overage_cap_cents == null
+                        ? 'No overage cap'
+                        : `Cap ${formatCents(t360.billing.overage_cap_cents, currency)}`
+                    }
+                  />
+                  <Tile
+                    label="Overage this month"
+                    value={formatCents(t360.billing.current_month_overage_cents, currency)}
+                    sub={`${t360.usage.apps.length} app(s) with usage`}
+                  />
+                </div>
+                {t360.billing.invoices.length > 0 && (
+                  <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
+                    {t360.billing.invoices.slice(0, 6).map((invoice) => (
+                      <div key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 p-3 text-xs">
+                        <div>
+                          <span className="font-semibold">{invoice.number || invoice.id.slice(0, 12)}</span>
+                          <span className="ml-2 text-[var(--color-ink-muted)]">
+                            {invoice.status} · {new Date(invoice.period_start).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-semibold">{formatCents(invoice.total_cents, invoice.currency)}</span>
+                          {['paid', 'partially_refunded'].includes(invoice.status.toLowerCase()) && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-xs"
+                              onClick={() => startAction({ type: 'refund', invoice })}
+                            >
+                              Refund…
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {inspectId && (
+              <div className="grid gap-4 lg:grid-cols-2">
+                <AbuseHoldPanel accountId={inspectId} />
+                <AccountFlagsPanel accountId={inspectId} />
               </div>
-            </form>
+            )}
+
+            {detail && (
+              <section>
+                <h4 className="mb-2 text-xs font-semibold text-[var(--color-ink-soft)]">Apps ({detail.apps.length})</h4>
+                {detail.apps.length === 0 ? (
+                  <div className="text-xs text-[var(--color-ink-muted)]">No apps.</div>
+                ) : (
+                  <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
+                    {detail.apps.map((app) => (
+                      <div key={app.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-xs">
+                        <div>
+                          <span className="font-semibold">{app.slug}</span>
+                          <span className="ml-2 text-[var(--color-ink-muted)]">{app.deployments} deployments</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="badge badge-neutral">{app.status}</span>
+                          <button onClick={() => openApp(app.id)} className="btn btn-secondary btn-xs">
+                            Workload
+                          </button>
+                          <Link
+                            href={`/deployments?account=${encodeURIComponent(detail.account.account_id)}&app=${encodeURIComponent(app.id)}&status=all`}
+                            className="btn btn-secondary btn-xs"
+                          >
+                            Deployments
+                          </Link>
+                          <button
+                            onClick={() => startAction({ type: 'cold-boot', slug: app.slug })}
+                            className="btn btn-secondary btn-xs"
+                          >
+                            Force cold boot…
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {appDetail && (
+              <section className="rounded-lg border border-[var(--color-brand-line)] p-4 text-xs">
+                <div className="mb-3 flex items-center justify-between">
+                  <h4 className="font-semibold text-[var(--color-ink-soft)]">App workload</h4>
+                  <button onClick={() => setAppDetail(null)} className="btn btn-ghost btn-xs">
+                    Close
+                  </button>
+                </div>
+                {appDetail.error ? (
+                  <div role="alert" className="text-[var(--color-danger)]">
+                    Could not load app workload: {appDetail.error}
+                  </div>
+                ) : !appDetail.data ? (
+                  <div className="text-[var(--color-ink-muted)]">Loading workload…</div>
+                ) : (
+                  <AppWorkload detail={appDetail.data} />
+                )}
+              </section>
+            )}
+
+            {inspectId && <ManagedPostgresPanel accountId={inspectId} />}
+
+            {view.activity && (
+              <section>
+                <h4 className="mb-2 text-xs font-semibold text-[var(--color-ink-soft)]">Recent activity</h4>
+                {view.activity.invocations.length === 0 && view.activity.audit_events.length === 0 ? (
+                  <div className="text-xs text-[var(--color-ink-muted)]">No invocations or audit events recorded.</div>
+                ) : (
+                  <div className="grid gap-4 text-xs lg:grid-cols-2">
+                    <div className="rounded-lg border border-[var(--color-line)]">
+                      <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Invocations</div>
+                      <div className="max-h-64 divide-y divide-[var(--color-line)] overflow-y-auto">
+                        {view.activity.invocations.map((invocation) => (
+                          <div key={invocation.id} className="px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium">
+                                {invocation.app_slug || `${invocation.app_id.slice(0, 8)}…`} · {invocation.method} {invocation.path}
+                              </span>
+                              <span
+                                className={`badge ${invocation.state === 'completed' ? 'badge-success' : invocation.state === 'failed' ? 'badge-danger' : 'badge-neutral'}`}
+                              >
+                                {invocation.outcome || invocation.state}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[var(--color-ink-muted)]">
+                              {relativeTime(invocation.created_at)} · {invocation.source}
+                              {invocation.last_error ? ` · ${invocation.last_error}` : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-[var(--color-line)]">
+                      <div className="border-b border-[var(--color-line)] px-3 py-2 font-semibold">Audit trail</div>
+                      <div className="max-h-64 divide-y divide-[var(--color-line)] overflow-y-auto">
+                        {view.activity.audit_events.map((event) => (
+                          <div key={event.id} className="px-3 py-2">
+                            <div className="font-medium">{event.kind}</div>
+                            <div className="mt-1 text-[var(--color-ink-muted)]">
+                              {relativeTime(event.at)}
+                              {event.actor ? ` · ${event.actor}` : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {detail && detail.orgs.length > 0 && (
+              <section>
+                <h4 className="mb-2 text-xs font-semibold text-[var(--color-ink-soft)]">Organizations ({detail.orgs.length})</h4>
+                <div className="divide-y divide-[var(--color-line)] rounded-lg border border-[var(--color-line)]">
+                  {detail.orgs.map((org) => (
+                    <div key={org.id} className="flex items-center justify-between p-3 text-xs">
+                      <span className="font-semibold">{org.slug}</span>
+                      <span className="badge badge-neutral uppercase">{org.role}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
+        )}
+      </Modal>
+
+      {action && inspectId && (
+        <TenantActionDialog
+          action={action}
+          tenantId={inspectId}
+          accountLabel={accountLabel}
+          currency={action.type === 'refund' ? action.invoice.currency : currency}
+          amount={amount}
+          setAmount={setAmount}
+          onClose={() => setAction(null)}
+          onDone={() => {
+            void inspect(inspectId);
+            setListNonce((n) => n + 1);
+          }}
+          trackColdBoot={(intentId, slug) => track({ intentId, kind: 'force_cold_boot', target: slug })}
+        />
+      )}
+    </div>
+  );
+}
+
+function TenantActionDialog({
+  action,
+  tenantId,
+  accountLabel,
+  currency,
+  amount,
+  setAmount,
+  onClose,
+  onDone,
+  trackColdBoot,
+}: {
+  action: TenantAction;
+  tenantId: string;
+  accountLabel: string;
+  currency?: string;
+  amount: string;
+  setAmount: (value: string) => void;
+  onClose: () => void;
+  onDone: () => void;
+  trackColdBoot: (intentId: string, slug: string) => void;
+}) {
+  const cents = parseMoneyAmount(amount);
+  const refundCap = action.type === 'refund' ? action.invoice.amount_paid_cents || action.invoice.total_cents : 0;
+  const money = (value: number) => formatCents(value, currency);
+
+  const common = { open: true, onClose };
+  switch (action.type) {
+    case 'suspend':
+      return (
+        <OperatorActionDialog
+          {...common}
+          title="Suspend account"
+          tone="danger"
+          reason="code"
+          reasonSuggestions={REASON_SUGGESTIONS.account}
+          confirmText={accountLabel}
+          submitLabel="Suspend"
+          fingerprint={`suspend|${tenantId}`}
+          impact="Blocks sign-in and API access, revokes every dashboard session, and stops the account's apps from waking. Restorable."
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            const res = await suspendObsAccount(tenantId, reason, { idempotencyKey });
+            onDone();
+            return `Account suspended; ${res.revoked_sessions} session(s) revoked.`;
+          }}
+        />
+      );
+    case 'restore':
+      return (
+        <OperatorActionDialog
+          {...common}
+          title="Restore account"
+          reason="code"
+          reasonSuggestions={REASON_SUGGESTIONS.account}
+          submitLabel="Restore"
+          fingerprint={`restore|${tenantId}`}
+          impact="Re-enables sign-in, API access and app wakes for this account."
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            await restoreObsAccount(tenantId, reason, { idempotencyKey });
+            onDone();
+            return 'Account restored.';
+          }}
+        />
+      );
+    case 'revoke-sessions':
+      return (
+        <OperatorActionDialog
+          {...common}
+          title="Revoke all sessions"
+          tone="warning"
+          reason="code"
+          reasonSuggestions={REASON_SUGGESTIONS.account}
+          submitLabel="Revoke sessions"
+          fingerprint={`revoke|${tenantId}`}
+          impact="Signs the customer out of every dashboard session. API keys keep working."
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            const res = await revokeObsAccountSessions(tenantId, reason, { idempotencyKey });
+            onDone();
+            return `${res.revoked_sessions} session(s) revoked.`;
+          }}
+        />
+      );
+    case 'credit':
+      return (
+        <OperatorActionDialog
+          {...common}
+          title="Issue credit"
+          tone="warning"
+          reason="text"
+          submitLabel={cents ? `Issue ${money(cents)}` : 'Issue credit'}
+          canSubmit={cents !== null}
+          fingerprint={`credit|${tenantId}|${cents}`}
+          impact="Adds a credit the billing provider applies to this account's next invoices."
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            if (cents === null) throw new Error('Enter an amount.');
+            const res = await issueAccountCredit(tenantId, cents, reason, { idempotencyKey });
+            onDone();
+            return `Credit issued: ${money(cents)} (balance ${money(res.cents_remaining)}).`;
+          }}
+        >
+          <AmountField amount={amount} setAmount={setAmount} currency={currency} invalid={amount !== '' && cents === null} />
+        </OperatorActionDialog>
+      );
+    case 'refund':
+      return (
+        <OperatorActionDialog
+          {...common}
+          title={`Refund invoice ${action.invoice.number || action.invoice.id}`}
+          tone="danger"
+          reason="text"
+          confirmText={action.invoice.number || action.invoice.id}
+          submitLabel={cents ? `Refund ${money(cents)}` : 'Refund'}
+          canSubmit={cents !== null && cents <= refundCap}
+          fingerprint={`refund|${tenantId}|${action.invoice.id}|${cents}`}
+          impact={
+            <span>
+              Sends a refund to the billing provider. This moves money and cannot be undone. Paid on this invoice:{' '}
+              <strong>{money(refundCap)}</strong>; the provider rejects amounts above what is still refundable.
+            </span>
+          }
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            if (cents === null) throw new Error('Enter an amount.');
+            const res = await refundAccount(tenantId, action.invoice.id, cents, reason, { idempotencyKey });
+            onDone();
+            return `Refund ${res.status}: ${formatCents(res.amount_cents, res.currency)} (${res.provider_refund_id}).`;
+          }}
+        >
+          <AmountField
+            amount={amount}
+            setAmount={setAmount}
+            currency={currency}
+            invalid={amount !== '' && (cents === null || cents > refundCap)}
+            hint={`Up to ${money(refundCap)}`}
+          />
+        </OperatorActionDialog>
+      );
+    case 'reconcile':
+      return (
+        <OperatorActionDialog
+          {...common}
+          title="Reconcile usage"
+          reason="none"
+          submitLabel="Reconcile"
+          fingerprint={`reconcile|${tenantId}`}
+          impact="Recomputes this account's metered usage for the current billing period from raw meter rows."
+          onSubmit={async ({ idempotencyKey }) => {
+            const res = await reconcileAccount(tenantId, { idempotencyKey });
+            onDone();
+            return `Reconciled ${(res.mb_seconds / 3_600_000).toFixed(2)} GB-h for ${new Date(res.start).toLocaleDateString()} – ${new Date(res.end).toLocaleDateString()}.`;
+          }}
+        />
+      );
+    case 'cold-boot':
+      return (
+        <OperatorActionDialog
+          {...common}
+          title={`Force cold boot: ${action.slug}`}
+          tone="warning"
+          reason="code"
+          reasonSuggestions={REASON_SUGGESTIONS.instance}
+          submitLabel="Force cold boot"
+          fingerprint={`cold-boot|${action.slug}`}
+          impact="Marks this app's warm and init snapshots stale; every next wake cold boots. Use after a bad snapshot."
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            const res = await forceColdBootApp(action.slug, reason, { idempotencyKey });
+            trackColdBoot(res.intent_id, action.slug);
+            return `Cold boot queued for ${action.slug}; follow it under Emergency Controls.`;
+          }}
+        />
+      );
+  }
+}
+
+function AmountField({
+  amount,
+  setAmount,
+  currency,
+  invalid,
+  hint,
+}: {
+  amount: string;
+  setAmount: (value: string) => void;
+  currency?: string;
+  invalid: boolean;
+  hint?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="label">Amount{currency ? ` (${currency.toUpperCase()})` : ''}</span>
+      <input
+        className="field field-sm font-mono"
+        inputMode="decimal"
+        value={amount}
+        onChange={(event) => setAmount(event.target.value)}
+        placeholder="10.00"
+        autoComplete="off"
+      />
+      <span className={`mt-1 block text-xs ${invalid ? 'text-[var(--color-danger)]' : 'text-[var(--color-ink-muted)]'}`}>
+        {invalid ? 'Enter a positive amount with at most two decimals' + (hint ? ` (${hint.toLowerCase()})` : '') + '.' : hint}
+      </span>
+    </label>
+  );
+}
+
+function AppWorkload({ detail }: { detail: ObsAppDetailResponse }) {
+  const m = detail.health.metrics;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Fact label="App" value={detail.app.slug} />
+        <Fact label="Runtime" value={detail.app.runtime} />
+        <Fact label="Max concurrency" value={detail.app.max_concurrency} />
+        <Fact label="Instances" value={detail.instances.length} />
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <Tile label={`Requests (${m.range})`} value={m.request_count} />
+        <Tile label="p95" value={`${m.latency_p95_ms.toFixed(0)} ms`} />
+        <Tile label="Errors" value={`${m.error_rate_pct.toFixed(2)}%`} />
+        <Tile label="Queue" value={m.queue_depth ?? 0} />
+        <Tile label="Metrics source" value={m.source === 'prometheus' ? 'Prometheus' : 'Degraded'} />
+      </div>
+      {detail.health.errors.length > 0 && (
+        <div className="overflow-x-auto rounded border border-[var(--color-line)]">
+          <table className="dtable text-xs">
+            <thead>
+              <tr>
+                <th>Error</th>
+                <th>Route</th>
+                <th>Requests</th>
+                <th>Last seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.health.errors.map((error) => (
+                <tr key={error.fingerprint}>
+                  <td>
+                    {error.error_class} ({error.http_status})
+                  </td>
+                  <td>{error.route}</td>
+                  <td>{error.request_count}</td>
+                  <td>{relativeTime(error.last_seen_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
+      <div className="overflow-x-auto rounded border border-[var(--color-line)]">
+        <table className="dtable text-xs">
+          <thead>
+            <tr>
+              <th>Deployed</th>
+              <th>Status</th>
+              <th>Source</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {detail.deployments.map((deployment) => (
+              <tr key={deployment.id}>
+                <td>{relativeTime(deployment.created_at)}</td>
+                <td>{deployment.status}</td>
+                <td className="font-mono">{deployment.source_url || deployment.commit_sha || deployment.kind}</td>
+                <td className="text-[var(--color-danger)]">{deployment.error_code || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const tone = status === 'active' ? 'badge-success' : status === 'past_due' ? 'badge-warning' : 'badge-danger';
+  return <span className={`badge ${tone}`}>{status.replace('_', ' ')}</span>;
+}
+
+function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[var(--color-ink-muted)]">{label}</div>
+      <div className="mt-0.5 truncate font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function Tile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-line)] p-3">
+      <div className="text-[11px] text-[var(--color-ink-muted)]">{label}</div>
+      <div className="mt-1 font-semibold">{value}</div>
+      {sub && <div className="text-[10px] text-[var(--color-ink-muted)]">{sub}</div>}
     </div>
   );
 }

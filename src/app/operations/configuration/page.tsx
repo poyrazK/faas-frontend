@@ -1,24 +1,26 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ApiError,
   getOperatorRuntimeConfig,
   getOperatorRuntimeConfigOperation,
   getOperatorRuntimeConfigRevisions,
   rollbackOperatorRuntimeConfig,
+  updateOperatorRuntimeConfig,
   type OperatorRuntimeConfig,
-  type OperatorRuntimeConfigAck,
   type OperatorRuntimeConfigOperation,
   type OperatorRuntimeConfigRevision,
-  type OperatorRuntimeConfigTarget,
-  type RuntimeConfigScope,
-  updateOperatorRuntimeConfig,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { Icon } from '@/components/ui/Icons';
 import { PageHeader } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Spinner } from '@/components/ui/States';
+import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
+
+const JSON_KINDS = new Set(['platform_flag', 'platform_flag_groups', 'platform_flag_opt_ins']);
+const TERMINAL_OPERATION = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
 
 function valueText(value: unknown, sensitive = false): string {
   if (sensitive) return 'redacted';
@@ -29,227 +31,126 @@ function valueText(value: unknown, sensitive = false): string {
 function statusClass(status: string): string {
   if (status === 'applied' || status === 'succeeded') return 'badge-success';
   if (status === 'failed' || status === 'blocked') return 'badge-danger';
-  if (status === 'pending' || status === 'running' || status === 'stale') return 'badge-warning';
+  if (status === 'pending' || status === 'running') return 'badge-warning';
   return 'badge-neutral';
 }
 
-const SCOPE_OPTIONS: { value: RuntimeConfigScope; label: string; description: string }[] = [
-  { value: 'global', label: 'Global', description: 'Default control-plane value' },
-  { value: 'control_plane', label: 'Control plane', description: 'The apid control plane' },
-  { value: 'daemon', label: 'Daemon', description: 'A deterministic daemon canary target' },
-  { value: 'node', label: 'Node', description: 'One exact node target' },
-];
-
-function scopeLabel(scope: RuntimeConfigScope): string {
-  return SCOPE_OPTIONS.find((option) => option.value === scope)?.label ?? scope;
-}
-
-function targetLabel(target: OperatorRuntimeConfigTarget): string {
-  if (target.scope === 'global') return 'Global control plane';
-  return `${scopeLabel(target.scope)} · ${target.scopeId || 'target required'}`;
-}
-
-function ackStatus(ack: OperatorRuntimeConfigAck, version: number): string {
-  if (ack.status === 'applied' && ack.version < version) return 'stale';
-  return ack.status;
-}
-
-function ackCounts(acks: OperatorRuntimeConfigAck[], version: number) {
-  return acks.reduce(
-    (counts, ack) => {
-      const status = ackStatus(ack, version);
-      counts.total += 1;
-      if (status === 'applied') counts.applied += 1;
-      if (status === 'failed') counts.failed += 1;
-      if (status === 'stale') counts.stale += 1;
-      return counts;
-    },
-    { total: 0, applied: 0, failed: 0, stale: 0 },
-  );
-}
-
-function initialInput(item: OperatorRuntimeConfig): string {
+function editableText(item: OperatorRuntimeConfig): string {
+  if (JSON_KINDS.has(item.kind)) return JSON.stringify(item.desired_value ?? null, null, 2);
   if (typeof item.desired_value === 'string') return item.desired_value;
   return String(item.desired_value);
 }
 
-function parseInput(item: OperatorRuntimeConfig, input: string): unknown {
-  if (item.kind === 'boolean') return input === 'true';
-  if (item.kind === 'integer') return Number(input);
-  return input;
+/** Parses the operator's text into the value the backend expects, or explains why it can't. */
+function parseDraft(item: OperatorRuntimeConfig, input: string): { value: unknown } | { error: string } {
+  if (item.kind === 'boolean') return { value: input === 'true' };
+  if (item.kind === 'integer') {
+    const n = Number(input);
+    return Number.isSafeInteger(n) ? { value: n } : { error: 'Enter a whole number.' };
+  }
+  if (JSON_KINDS.has(item.kind)) {
+    try {
+      return { value: JSON.parse(input) };
+    } catch (err) {
+      return { error: `Invalid JSON: ${(err as Error).message}` };
+    }
+  }
+  return { value: input };
 }
 
+/** A draft remembers the version it was started from, so a concurrent change is a conflict, not an overwrite. */
+interface Draft {
+  text: string;
+  baseVersion: number;
+}
+
+type PendingChange =
+  | { type: 'apply'; item: OperatorRuntimeConfig; value: unknown; baseVersion: number }
+  | { type: 'rollback'; item: OperatorRuntimeConfig; revision: OperatorRuntimeConfigRevision };
+
 export default function RuntimeConfigurationPage() {
-  const [target, setTarget] = useState<OperatorRuntimeConfigTarget>({ scope: 'global' });
-  const [targetScope, setTargetScope] = useState<RuntimeConfigScope>('global');
-  const [targetID, setTargetID] = useState('');
-  const [rolloutPercent, setRolloutPercent] = useState('100');
-  const config = useAsync(
-    () => getOperatorRuntimeConfig(target.scope, target.scopeId),
-    [target.scope, target.scopeId],
-    30000,
-  );
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [reason, setReason] = useState('Operator console runtime configuration change');
-  const [saving, setSaving] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const config = useAsync(getOperatorRuntimeConfig, [], 30000);
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [pending, setPending] = useState<PendingChange | null>(null);
+  const [needsForce, setNeedsForce] = useState(false);
+  const [force, setForce] = useState(false);
   const [operation, setOperation] = useState<OperatorRuntimeConfigOperation | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [historyKey, setHistoryKey] = useState<string | null>(null);
-  const [history, setHistory] = useState<OperatorRuntimeConfigRevision[]>([]);
-  const [expandedAcks, setExpandedAcks] = useState<string | null>(null);
+  const [history, setHistory] = useState<{ key: string; items?: OperatorRuntimeConfigRevision[]; error?: string } | null>(null);
+  const historySeq = useRef(0);
 
-  const historyItem = config.data?.items.find((item) => item.key === historyKey);
-  const supportsScopedRollouts = useMemo(
-    () => (config.data?.items ?? []).some((item) => item.scope !== undefined),
-    [config.data],
-  );
-
-  const convergence = useMemo(() => {
-    const counts = { total: 0, applied: 0, failed: 0, stale: 0 };
-    for (const item of config.data?.items ?? []) {
-      const itemCounts = ackCounts(item.acks ?? [], item.version);
-      counts.total += itemCounts.total;
-      counts.applied += itemCounts.applied;
-      counts.failed += itemCounts.failed;
-      counts.stale += itemCounts.stale;
-    }
-    return counts;
-  }, [config.data]);
-
+  const items = useMemo(() => config.data?.items ?? [], [config.data]);
   const groups = useMemo(() => {
     const grouped = new Map<string, OperatorRuntimeConfig[]>();
-    for (const item of config.data?.items ?? []) {
-      const list = grouped.get(item.category) ?? [];
-      list.push(item);
-      grouped.set(item.category, list);
-    }
+    for (const item of items) grouped.set(item.category, [...(grouped.get(item.category) ?? []), item]);
     return [...grouped.entries()];
-  }, [config.data]);
+  }, [items]);
+  const historyItem = items.find((item) => item.key === historyKey);
+  const visibleHistory = history && history.key === historyKey ? history : null;
 
   useEffect(() => {
-    if (!operation || ['succeeded', 'failed', 'blocked', 'cancelled'].includes(operation.status)) return;
+    if (!operation || TERMINAL_OPERATION.has(operation.status)) return;
     const timer = window.setInterval(() => {
-      getOperatorRuntimeConfigOperation(operation.id).then(setOperation).catch(() => undefined);
+      getOperatorRuntimeConfigOperation(operation.id)
+        .then((next) => {
+          setOperation(next);
+          setOperationError(null);
+        })
+        .catch((err: Error) => setOperationError(err.message));
     }, 2000);
     return () => window.clearInterval(timer);
   }, [operation]);
 
-  function selectScope(nextScope: RuntimeConfigScope) {
-    setTargetScope(nextScope);
-    if (nextScope === 'global') setTargetID('');
-    if (nextScope === 'control_plane') setTargetID('apid');
-  }
-
-  function loadTarget() {
-    if (targetScope !== 'global' && !supportsScopedRollouts) {
-      setMessage('Scoped rollout controls are unavailable until the backend convergence API is deployed.');
-      return;
-    }
-    const scopeID = targetScope === 'global' ? '' : targetID.trim();
-    if (targetScope !== 'global' && !scopeID) {
-      setMessage(`Enter a target identifier for the ${scopeLabel(targetScope).toLowerCase()} scope.`);
-      return;
-    }
-    if (targetScope === 'control_plane' && scopeID !== 'apid') {
-      setMessage('The control-plane target identifier must be apid.');
-      return;
-    }
-    setMessage(null);
-    setDrafts({});
-    setOperation(null);
-    setHistoryKey(null);
-    setHistory([]);
-    setExpandedAcks(null);
-    setTarget({ scope: targetScope, ...(scopeID ? { scopeId: scopeID } : {}) });
-  }
-
-  async function save(item: OperatorRuntimeConfig) {
-    const scopedDaemonTarget = target.scope === 'daemon' || target.scope === 'node';
-    if (scopedDaemonTarget && item.apply_mode !== 'hot') {
-      setMessage(`${item.label} cannot target a daemon or node because ${item.apply_mode} settings require a controller rollout.`);
-      return;
-    }
-    const percent = target.scope === 'daemon' ? Number(rolloutPercent) : 100;
-    if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
-      setMessage('Rollout percentage must be a whole number between 0 and 100.');
-      return;
-    }
-    if (target.scope !== 'global' || percent < 100) {
-      const rollout = target.scope === 'daemon' ? ` at ${percent}%` : '';
-      if (!window.confirm(`Apply ${item.label} to ${targetLabel(target)}${rollout}? This change is audited and can be rolled back.`)) return;
-    }
-    setSaving(item.key);
-    setMessage(null);
-    try {
-      const raw = drafts[item.key] ?? initialInput(item);
-      const result = await updateOperatorRuntimeConfig(
-        item.key,
-        parseInput(item, raw),
-        reason,
-        item.version,
-        target,
-        percent,
-      );
-      if ('id' in result) {
-        setOperation(result);
-        setMessage(result.status === 'blocked'
-          ? `${item.label} blocked: ${result.error ?? 'no controller is enabled for this apply mode.'}`
-          : `${item.label} queued as operation ${result.id}.`);
-      } else {
-        setMessage(`${item.label} applied immediately.`);
-      }
-      config.reload();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Configuration update failed.');
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function showHistory(key: string) {
+  const loadHistory = async (key: string) => {
+    const seq = ++historySeq.current;
     setHistoryKey(key);
+    setHistory(null);
     try {
-      const response = await getOperatorRuntimeConfigRevisions(key, 20, target);
-      setHistory(response.items);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not load configuration history.');
+      const res = await getOperatorRuntimeConfigRevisions(key, 20);
+      if (seq === historySeq.current) setHistory({ key, items: res.items });
+    } catch (err) {
+      if (seq === historySeq.current) setHistory({ key, error: (err as Error).message });
     }
-  }
+  };
 
-  async function rollback(item: OperatorRuntimeConfig, revision: OperatorRuntimeConfigRevision) {
-    if (!item.mutable || item.apply_mode !== 'hot' || revision.version >= item.version) return;
-    if (!window.confirm(`Roll back ${item.label} on ${targetLabel(target)} to revision v${revision.version}? This creates a new live revision.`)) return;
-    setSaving(`rollback:${item.key}:${revision.version}`);
-    setMessage(null);
-    try {
-      await rollbackOperatorRuntimeConfig(
-        item.key,
-        revision.version,
-        `Rollback from the operator console to v${revision.version}`,
-        item.version,
-        target,
-      );
-      setMessage(`${item.label} rolled back to v${revision.version} without restarting apid.`);
-      await showHistory(item.key);
-      config.reload();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Configuration rollback failed.');
-    } finally {
-      setSaving(null);
-    }
-  }
+  const startEdit = (item: OperatorRuntimeConfig, text: string) => {
+    setDrafts((current) => ({
+      ...current,
+      [item.key]: { text, baseVersion: current[item.key]?.baseVersion ?? item.version },
+    }));
+  };
+
+  const discard = (key: string) =>
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+
+  const openChange = (change: PendingChange) => {
+    setNeedsForce(false);
+    setForce(false);
+    setPending(change);
+  };
 
   if (config.loading && !config.data) {
-    return <div className="flex h-64 items-center justify-center"><Spinner size={24} /></div>;
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Spinner size={24} />
+      </div>
+    );
   }
 
-  if (config.error) {
+  if (config.error && !config.data) {
     return (
       <div className="card p-8 text-center">
         <Icon name="shield" size={24} className="mx-auto text-[var(--color-danger)]" />
-        <h2 className="mt-4 text-lg font-semibold">Operator access required</h2>
+        <h2 className="mt-4 text-lg font-semibold">Could not load runtime configuration</h2>
         <p className="mt-1 text-sm text-[var(--color-ink-muted)]">{config.error.message}</p>
-        <button type="button" onClick={config.reload} className="btn btn-secondary btn-sm mt-4">Retry</button>
+        <button type="button" onClick={config.reload} className="btn btn-secondary btn-sm mt-4">
+          Retry
+        </button>
       </div>
     );
   }
@@ -258,218 +159,162 @@ export default function RuntimeConfigurationPage() {
     <div>
       <PageHeader
         title="Runtime Configuration"
-        subtitle="Versioned platform settings with explicit desired/effective state and no SSH dependency."
-        actions={<button type="button" onClick={config.reload} className="btn btn-secondary btn-sm"><Icon name="refresh" size={14} />Refresh</button>}
+        subtitle="Versioned platform settings with desired and effective state. Every change is audited and can be rolled back."
+        actions={
+          <button type="button" onClick={config.reload} className="btn btn-secondary btn-sm">
+            <Icon name="refresh" size={14} />
+            Refresh
+          </button>
+        }
       />
 
-      <div className="mb-6 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-4 text-sm">
-        <div className="flex items-start gap-3">
-          <Icon name="settings" size={18} className="mt-0.5 text-[var(--color-brand-bright)]" />
-          <div>
-            <div className="font-semibold">Safe change workflow</div>
-            <p className="mt-1 text-[var(--color-ink-muted)]">
-              Hot settings take effect immediately, and any earlier hot revision can be restored without restarting apid.
-              Scoped daemon and node changes are acknowledged by the matching watcher, while graceful and rolling settings
-              create a durable apply operation. Every write carries an operator reason, optimistic version, and idempotency key.
-            </p>
-          </div>
+      {config.error && (
+        <div role="alert" className="mb-4 rounded-lg bg-[var(--color-danger-subtle)] p-3 text-sm text-[var(--color-danger)]">
+          Refresh failed: {config.error.message}. Showing the last loaded values.
         </div>
-      </div>
-
-      <SectionCard
-        title="Rollout target"
-        className="mb-6"
-        action={
-          <span className={`badge ${target.scope === 'global' ? 'badge-neutral' : 'badge-info'}`}>
-            {targetLabel(target)}
-          </span>
-        }
-      >
-        <div className="grid gap-4 p-4 md:grid-cols-[180px_1fr_150px_auto] md:items-end">
-          <label className="text-xs">
-            <span className="text-[var(--color-ink-muted)]">Scope</span>
-            <select
-              className="input mt-1 w-full"
-              value={targetScope}
-              onChange={(event) => selectScope(event.target.value as RuntimeConfigScope)}
-            >
-              {SCOPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value} disabled={option.value !== 'global' && !supportsScopedRollouts}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {targetScope === 'global' ? (
-            <div className="text-xs text-[var(--color-ink-muted)]">
-              <div>Target identifier</div>
-              <div className="mt-1 font-mono text-[var(--color-ink)]">Not applicable</div>
-            </div>
-          ) : (
-            <label className="text-xs">
-              <span className="text-[var(--color-ink-muted)]">Target identifier</span>
-              <input
-                className="input mt-1 w-full"
-                value={targetID}
-                maxLength={128}
-                readOnly={targetScope === 'control_plane'}
-                placeholder={targetScope === 'daemon' ? 'e.g. gatewayd' : 'e.g. node-01'}
-                onChange={(event) => setTargetID(event.target.value)}
-              />
-            </label>
-          )}
-          {targetScope === 'daemon' ? (
-            <label className="text-xs">
-              <span className="text-[var(--color-ink-muted)]">Canary rollout (%)</span>
-              <input
-                className="input mt-1 w-full"
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={rolloutPercent}
-                onChange={(event) => setRolloutPercent(event.target.value)}
-              />
-            </label>
-          ) : (
-            <div className="text-xs text-[var(--color-ink-muted)]">
-              <div>Rollout</div>
-              <div className="mt-1 font-mono text-[var(--color-ink)]">100% exact target</div>
-            </div>
-          )}
-          <button type="button" className="btn btn-secondary btn-sm" onClick={loadTarget} disabled={config.loading && !config.data}>
-            <Icon name="check" size={14} />
-            Load target
-          </button>
-        </div>
-        <div className="border-t border-[var(--color-line)] px-4 py-3 text-xs text-[var(--color-ink-muted)]">
-          <div className="flex flex-wrap items-center gap-2">
-            <span>Active target: <strong className="text-[var(--color-ink)]">{targetLabel(target)}</strong></span>
-            {supportsScopedRollouts ? (
-              <span className="badge badge-success">convergence reporting enabled</span>
-            ) : (
-              <span className="badge badge-warning">global API only</span>
-            )}
-            {supportsScopedRollouts && convergence.total > 0 && (
-              <span>
-                {convergence.applied}/{convergence.total} consumers applied
-                {convergence.failed > 0 ? ` · ${convergence.failed} failed` : ''}
-                {convergence.stale > 0 ? ` · ${convergence.stale} stale` : ''}
-              </span>
-            )}
-          </div>
-          {!supportsScopedRollouts && (
-            <p className="mt-1">Scoped targeting is disabled until the backend convergence and rollout contract is deployed.</p>
-          )}
-        </div>
-      </SectionCard>
-
-      {message && <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3 text-sm">{message}</div>}
+      )}
 
       {operation && (
-        <SectionCard title="Latest apply operation" className="mb-6" action={<span className={`badge ${statusClass(operation.status)}`}>{operation.status}</span>}>
-          <div className="grid gap-3 p-4 text-sm sm:grid-cols-6">
-            <div><div className="text-xs text-[var(--color-ink-muted)]">Setting</div><div className="font-mono">{operation.key}</div></div>
-            <div><div className="text-xs text-[var(--color-ink-muted)]">Target</div><div>{scopeLabel(operation.scope)}{operation.scope_id ? ` · ${operation.scope_id}` : ''}</div></div>
-            <div><div className="text-xs text-[var(--color-ink-muted)]">Mode</div><div>{operation.apply_mode}</div></div>
-            <div><div className="text-xs text-[var(--color-ink-muted)]">Phase</div><div>{operation.phase}</div></div>
-            <div><div className="text-xs text-[var(--color-ink-muted)]">Progress</div><div>{operation.applied_count}/{operation.target_count} applied{operation.failed_count ? ` · ${operation.failed_count} failed` : ''}</div></div>
-            <div><div className="text-xs text-[var(--color-ink-muted)]">Operation</div><div className="truncate font-mono text-xs">{operation.id}</div></div>
+        <SectionCard
+          title="Latest apply operation"
+          className="mb-6"
+          action={<span className={`badge ${statusClass(operation.status)}`}>{operation.status}</span>}
+        >
+          <div className="grid gap-3 p-4 text-sm sm:grid-cols-5">
+            <Fact label="Setting" value={<span className="font-mono">{operation.key}</span>} />
+            <Fact label="Mode" value={operation.apply_mode} />
+            <Fact label="Phase" value={operation.phase} />
+            <Fact
+              label="Progress"
+              value={`${operation.applied_count}/${operation.target_count} applied${operation.failed_count ? ` · ${operation.failed_count} failed` : ''}`}
+            />
+            <Fact label="Operation" value={<span className="truncate font-mono text-xs">{operation.id}</span>} />
           </div>
-          {operation.error && <div className="border-t border-[var(--color-line)] px-4 py-3 text-sm text-[var(--color-danger)]">{operation.error}</div>}
+          {(operation.error || operationError) && (
+            <div className="border-t border-[var(--color-line)] px-4 py-3 text-sm text-[var(--color-danger)]">
+              {operation.error ?? `Status check failing: ${operationError}`}
+            </div>
+          )}
         </SectionCard>
       )}
 
       <div className="space-y-6">
-        {groups.map(([category, items]) => (
+        {groups.map(([category, groupItems]) => (
           <SectionCard key={category} title={category}>
             <div className="divide-y divide-[var(--color-line)]">
-              {items.map((item) => {
-                const draft = drafts[item.key] ?? initialInput(item);
-                const itemScope = item.scope ?? target.scope;
-                const itemScopeID = item.scope_id ?? target.scopeId;
-                const itemRollout = item.rollout_percent ?? 100;
-                const itemAcks = item.acks ?? [];
-                const itemAckCounts = ackCounts(itemAcks, item.version);
-                const ackKey = `${target.scope}:${target.scopeId ?? ''}:${item.key}`;
-                const scopedControllerRequired = (target.scope === 'daemon' || target.scope === 'node') && item.apply_mode !== 'hot';
-                const editable = item.mutable && !scopedControllerRequired;
+              {groupItems.map((item) => {
+                const draft = drafts[item.key];
+                const text = draft?.text ?? editableText(item);
+                const parsed = parseDraft(item, text);
+                const dirty = draft !== undefined && draft.text !== editableText(item);
+                const conflict = draft !== undefined && draft.baseVersion !== item.version;
+                const isJson = JSON_KINDS.has(item.kind);
                 return (
-                  <div key={item.key} className="grid gap-4 p-4 lg:grid-cols-[1fr_180px_180px_120px] lg:items-center">
+                  <div
+                    key={item.key}
+                    className={`grid gap-4 p-4 ${isJson ? '' : 'lg:grid-cols-[1fr_220px_180px_auto] lg:items-start'}`}
+                  >
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold">{item.label}</span>
                         <span className={`badge ${statusClass(item.status)}`}>{item.status}</span>
                         <span className="badge badge-neutral">{item.apply_mode}</span>
-                        {item.mutable && item.controller_enabled === false && <span className="badge badge-danger">controller unavailable</span>}
+                        {item.mutable && !item.controller_enabled && (
+                          <span className="badge badge-danger">controller unavailable</span>
+                        )}
                       </div>
                       <div className="mt-1 text-xs text-[var(--color-ink-muted)]">{item.description}</div>
                       <div className="mt-2 text-[11px] text-[var(--color-ink-muted)]">
-                        Effective: <span className="font-mono text-[var(--color-ink)]">{valueText(item.effective_value, item.sensitive)}</span>
-                        {' · '}Source: {item.source}{item.version ? ` · v${item.version}` : ''}
-                        {' · '}Target: {scopeLabel(itemScope)}{itemScopeID ? ` · ${itemScopeID}` : ''}{itemScope === 'daemon' ? ` · ${itemRollout}%` : ''}
+                        Effective:{' '}
+                        <span className="font-mono text-[var(--color-ink)]">
+                          {valueText(item.effective_value, item.sensitive)}
+                        </span>
+                        {' · '}
+                        {item.source === 'operator' ? 'set by an operator' : 'default or environment'}
+                        {item.version ? ` · v${item.version}` : ''}
                       </div>
                       {item.last_error && <div className="mt-1 text-xs text-[var(--color-danger)]">{item.last_error}</div>}
-                      {supportsScopedRollouts && (
-                        <div className="mt-2">
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-2 text-[11px] font-semibold text-[var(--color-brand-bright)] hover:underline"
-                            aria-expanded={expandedAcks === ackKey}
-                            onClick={() => setExpandedAcks((current) => (current === ackKey ? null : ackKey))}
-                          >
-                            <span>Convergence</span>
-                            {itemAcks.length === 0 ? (
-                              <span className="badge badge-neutral">no reports</span>
-                            ) : (
-                              <span className={`badge ${itemAckCounts.failed > 0 ? 'badge-danger' : itemAckCounts.stale > 0 ? 'badge-warning' : 'badge-success'}`}>
-                                {itemAckCounts.applied}/{itemAckCounts.total} applied
-                              </span>
-                            )}
-                          </button>
-                          {itemAcks.length > 0 && expandedAcks === ackKey && (
-                            <div className="mt-2 space-y-1 rounded border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-2 text-[11px]">
-                              {itemAcks.map((ack) => {
-                                const status = ackStatus(ack, item.version);
-                                return (
-                                  <div key={`${ack.consumer}:${ack.node_id ?? ''}`} className="flex flex-wrap items-center gap-2">
-                                    <span className="font-mono text-[var(--color-ink)]">{ack.consumer}{ack.node_id ? ` · ${ack.node_id}` : ''}</span>
-                                    <span className={`badge ${statusClass(status)}`}>{status}</span>
-                                    <span className="text-[var(--color-ink-muted)]">v{ack.version} · {new Date(ack.updated_at).toLocaleString()}</span>
-                                    {ack.error && <span className="text-[var(--color-danger)]">{ack.error}</span>}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                      {conflict && (
+                        <div role="alert" className="mt-2 rounded bg-[var(--color-warning-subtle)] p-2 text-xs text-[var(--color-warning-bold)]">
+                          Someone changed this setting (v{draft.baseVersion} → v{item.version}) while you were editing.
+                          Discard your edit and review the new value before applying.
                         </div>
                       )}
-                      <button type="button" className="mt-2 text-[11px] font-semibold text-[var(--color-brand-bright)] hover:underline" onClick={() => showHistory(item.key)}>
-                        View version history
+                      <button
+                        type="button"
+                        className="mt-2 text-[11px] font-semibold text-[var(--color-brand-bright)] hover:underline"
+                        onClick={() => loadHistory(item.key)}
+                      >
+                        Version history
                       </button>
                     </div>
+
                     <div className="text-xs">
                       <div className="text-[var(--color-ink-muted)]">Desired</div>
                       {item.kind === 'boolean' ? (
-                        <select className="input mt-1 w-full" disabled={!editable} value={draft} onChange={(event) => setDrafts((old) => ({ ...old, [item.key]: event.target.value }))}>
-                          <option value="true">true</option><option value="false">false</option>
+                        <select
+                          className="field field-sm mt-1"
+                          disabled={!item.mutable}
+                          value={text}
+                          onChange={(event) => startEdit(item, event.target.value)}
+                        >
+                          <option value="true">true</option>
+                          <option value="false">false</option>
                         </select>
+                      ) : isJson ? (
+                        <textarea
+                          className="field field-sm mt-1 font-mono"
+                          rows={Math.min(16, text.split('\n').length + 1)}
+                          disabled={!item.mutable}
+                          value={text}
+                          spellCheck={false}
+                          onChange={(event) => startEdit(item, event.target.value)}
+                        />
                       ) : (
-                        <input className="input mt-1 w-full" disabled={!editable} type={item.kind === 'integer' ? 'number' : 'text'} value={draft} onChange={(event) => setDrafts((old) => ({ ...old, [item.key]: event.target.value }))} />
+                        <input
+                          className="field field-sm mt-1"
+                          disabled={!item.mutable}
+                          type={item.kind === 'integer' ? 'number' : 'text'}
+                          value={item.sensitive && !draft ? '' : text}
+                          placeholder={item.sensitive ? 'redacted — enter a new value' : undefined}
+                          onChange={(event) => startEdit(item, event.target.value)}
+                        />
                       )}
+                      {dirty && 'error' in parsed && <div className="mt-1 text-[var(--color-danger)]">{parsed.error}</div>}
                     </div>
-                    <div className="text-xs text-[var(--color-ink-muted)]">
-                      <div>Default</div><div className="mt-1 font-mono text-[var(--color-ink)]">{valueText(item.default_value, item.sensitive)}</div>
-                    </div>
-                    <div className="flex justify-start lg:justify-end">
-                      {editable ? (
-                        <button type="button" className="btn btn-primary btn-sm" disabled={saving === item.key || !reason.trim()} onClick={() => save(item)}>
-                          {saving === item.key ? <Spinner size={14} /> : 'Apply'}
-                        </button>
+
+                    {!isJson && (
+                      <div className="text-xs text-[var(--color-ink-muted)]">
+                        <div>Default</div>
+                        <div className="mt-1 font-mono text-[var(--color-ink)]">
+                          {valueText(item.default_value, item.sensitive)}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 lg:justify-end">
+                      {!item.mutable ? (
+                        <span className="text-[11px] text-[var(--color-ink-muted)]">Deployment managed</span>
                       ) : (
-                        <span className="text-right text-[11px] text-[var(--color-ink-muted)]">
-                          {scopedControllerRequired ? 'Hot setting required for scoped target' : 'Deployment managed'}
-                        </span>
+                        <>
+                          {draft && (
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => discard(item.key)}>
+                              Discard
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            disabled={!dirty || conflict || 'error' in parsed}
+                            onClick={() =>
+                              'value' in parsed &&
+                              draft &&
+                              openChange({ type: 'apply', item, value: parsed.value, baseVersion: draft.baseVersion })
+                            }
+                          >
+                            Review & apply
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -481,28 +326,49 @@ export default function RuntimeConfigurationPage() {
       </div>
 
       {historyKey && (
-        <SectionCard title={`Version history · ${historyKey} · ${targetLabel(target)}`} className="mt-6" action={<button type="button" className="btn btn-secondary btn-sm" onClick={() => setHistoryKey(null)}>Close</button>}>
-          {history.length === 0 ? <div className="p-4 text-sm text-[var(--color-ink-muted)]">No revisions recorded.</div> : (
+        <SectionCard
+          title={`Version history · ${historyItem?.label ?? historyKey}`}
+          className="mt-6"
+          action={
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setHistoryKey(null)}>
+              Close
+            </button>
+          }
+        >
+          {!visibleHistory ? (
+            <div className="p-4 text-sm text-[var(--color-ink-muted)]">Loading revisions…</div>
+          ) : visibleHistory.error ? (
+            <div role="alert" className="p-4 text-sm text-[var(--color-danger)]">
+              Could not load history: {visibleHistory.error}
+            </div>
+          ) : !visibleHistory.items?.length ? (
+            <div className="p-4 text-sm text-[var(--color-ink-muted)]">No revisions recorded.</div>
+          ) : (
             <div className="divide-y divide-[var(--color-line)]">
-              {history.map((revision) => (
-                <div key={revision.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[80px_1fr_1fr_1fr_auto]">
+              {visibleHistory.items.map((revision) => (
+                <div key={revision.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[70px_1fr_1fr_1fr_auto]">
                   <span className="font-mono font-semibold">v{revision.version}</span>
-                  <span><span className="text-[var(--color-ink-muted)]">Old: </span><span className="font-mono">{valueText(revision.old_value, historyItem?.sensitive)}</span></span>
-                  <span><span className="text-[var(--color-ink-muted)]">New: </span><span className="font-mono">{valueText(revision.new_value, historyItem?.sensitive)}</span></span>
-                  <span className="text-[var(--color-ink-muted)]">
-                    {revision.reason} · {scopeLabel(revision.scope)}{revision.scope_id ? ` · ${revision.scope_id}` : ''} · {revision.rollout_percent ?? 100}% · {new Date(revision.created_at).toLocaleString()}
+                  <span>
+                    <span className="text-[var(--color-ink-muted)]">Old: </span>
+                    <span className="font-mono">{valueText(revision.old_value, historyItem?.sensitive)}</span>
                   </span>
                   <span>
-                    {historyItem && historyItem.mutable && historyItem.apply_mode === 'hot' && revision.version < historyItem.version ? (
+                    <span className="text-[var(--color-ink-muted)]">New: </span>
+                    <span className="font-mono">{valueText(revision.new_value, historyItem?.sensitive)}</span>
+                  </span>
+                  <span className="text-[var(--color-ink-muted)]">
+                    {revision.reason} · {new Date(revision.created_at).toLocaleString()}
+                  </span>
+                  <span>
+                    {historyItem?.mutable && historyItem.apply_mode === 'hot' && revision.version < historyItem.version && (
                       <button
                         type="button"
-                        className="btn btn-secondary btn-sm"
-                        disabled={saving === `rollback:${historyItem.key}:${revision.version}`}
-                        onClick={() => rollback(historyItem, revision)}
+                        className="btn btn-secondary btn-xs"
+                        onClick={() => openChange({ type: 'rollback', item: historyItem, revision })}
                       >
-                        {saving === `rollback:${historyItem.key}:${revision.version}` ? <Spinner size={14} /> : 'Rollback'}
+                        Roll back…
                       </button>
-                    ) : null}
+                    )}
                   </span>
                 </div>
               ))}
@@ -511,11 +377,86 @@ export default function RuntimeConfigurationPage() {
         </SectionCard>
       )}
 
-      <div className="mt-6 card p-4">
-        <label className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]" htmlFor="change-reason">Change reason</label>
-        <input id="change-reason" className="input mt-2 w-full" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} />
-        <p className="mt-2 text-xs text-[var(--color-ink-muted)]">Every change is stored with the operator identity, reason, version, and apply outcome.</p>
-      </div>
+      {pending && (
+        <OperatorActionDialog
+          open
+          title={pending.type === 'apply' ? `Apply ${pending.item.label}` : `Roll back ${pending.item.label}`}
+          tone={pending.item.category === 'Platform flags' || pending.item.apply_mode === 'break_glass' ? 'danger' : 'warning'}
+          reason="text"
+          submitLabel={pending.type === 'apply' ? 'Apply change' : `Roll back to v${pending.revision.version}`}
+          fingerprint={`${pending.type}|${pending.item.key}|${force}`}
+          impact={
+            <div className="space-y-2 text-xs">
+              <p>
+                {pending.item.apply_mode === 'hot'
+                  ? 'Takes effect immediately across the platform.'
+                  : `Applied by the ${pending.item.apply_mode} controller as a tracked operation.`}
+              </p>
+              <div className="grid gap-1 font-mono">
+                <span>
+                  <span className="text-[var(--color-ink-muted)]">from </span>
+                  {valueText(pending.item.desired_value, pending.item.sensitive)}
+                </span>
+                <span>
+                  <span className="text-[var(--color-ink-muted)]">to&nbsp;&nbsp; </span>
+                  {pending.type === 'apply'
+                    ? valueText(pending.value, pending.item.sensitive)
+                    : valueText(pending.revision.new_value, pending.item.sensitive)}
+                </span>
+              </div>
+            </div>
+          }
+          onClose={() => setPending(null)}
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            const opts = { idempotencyKey, force };
+            try {
+              const result =
+                pending.type === 'apply'
+                  ? await updateOperatorRuntimeConfig(pending.item.key, pending.value, reason, pending.baseVersion, opts)
+                  : await rollbackOperatorRuntimeConfig(
+                      pending.item.key,
+                      pending.revision.version,
+                      reason,
+                      pending.item.version,
+                      opts,
+                    );
+              discard(pending.item.key);
+              config.reload();
+              if (historyKey === pending.item.key) void loadHistory(pending.item.key);
+              if ('phase' in result) {
+                setOperation(result);
+                return result.status === 'blocked'
+                  ? `${pending.item.label} blocked: ${result.error ?? 'no controller is enabled for this apply mode.'}`
+                  : `${pending.item.label} queued as operation ${result.id}.`;
+              }
+              return `${pending.item.label} applied.`;
+            } catch (err) {
+              if (err instanceof ApiError && err.status === 409 && err.problem?.title === 'Core capability flag') {
+                setNeedsForce(true);
+              }
+              throw err;
+            }
+          }}
+        >
+          {needsForce && (
+            <label className="flex items-start gap-2 rounded-lg border border-[#f5d5d5] bg-[var(--color-danger-subtle)] p-3 text-xs">
+              <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
+              <span>
+                This turns off a core capability for every account. I understand and want to force the change.
+              </span>
+            </label>
+          )}
+        </OperatorActionDialog>
+      )}
+    </div>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs text-[var(--color-ink-muted)]">{label}</div>
+      <div>{value}</div>
     </div>
   );
 }

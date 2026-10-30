@@ -1,252 +1,107 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
+  ApiError,
   forceParkInstance,
   forceRestartInstance,
   forceColdBootApp,
   sweepStuckBuilds,
-  getOperatorIntent,
   getObsBuilderHeartbeats,
   getRekeyProgress,
   setGithubWebhookSecret,
-  type ObsBuilderHeartbeatListResponse,
-  type RekeyProgressResponse,
-  type SweepStuckBuildsResponse,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { formatBytes, REASON_SUGGESTIONS } from '@/lib/operator';
 import { PageHeader, Mono } from '@/components/ui/bits';
 import { StatTile, SectionCard } from '@/components/ui/Panels';
-import { Icon } from '@/components/ui/Icons';
+import { Icon, type IconName } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
+import {
+  IntentStatusBadge,
+  intentOutcome,
+  isTerminalIntent,
+  useOperatorIntents,
+} from '@/components/operator/OperatorIntents';
 
-interface ActiveIntentItem {
-  intentId: string;
-  kind: string;
-  targetId: string;
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-  requestedAt: string;
-  error?: string | null;
-  snapIdsMarkedStale?: string[];
-}
+type ActionId = 'park' | 'restart' | 'cold-boot' | 'sweep' | 'webhook';
+
+const ACTIONS: { id: ActionId; title: string; icon: IconName; summary: string; tone: 'danger' | 'warning' | 'default' }[] = [
+  {
+    id: 'park',
+    title: 'Force-park a microVM',
+    icon: 'bolt',
+    summary: 'Captures and stops one live instance. The customer’s next request wakes it from the snapshot.',
+    tone: 'warning',
+  },
+  {
+    id: 'restart',
+    title: 'Force-restart a microVM',
+    icon: 'refresh',
+    summary: 'Terminates one RUNNING instance and marks its snapshots stale; the next wake cold boots.',
+    tone: 'danger',
+  },
+  {
+    id: 'cold-boot',
+    title: 'Force cold boot for an app',
+    icon: 'spark',
+    summary: 'Invalidates warm and init snapshots for every instance of an app; next wakes cold boot.',
+    tone: 'warning',
+  },
+  {
+    id: 'sweep',
+    title: 'Sweep stuck builds',
+    icon: 'trash',
+    summary: 'Fails builds stuck in running longer than a threshold so the queue can drain.',
+    tone: 'warning',
+  },
+  {
+    id: 'webhook',
+    title: 'Rotate GitHub webhook secret',
+    icon: 'keys',
+    summary: 'Replaces the encrypted webhook secret for one GitHub App installation.',
+    tone: 'default',
+  },
+];
+
+const SWEEP_THRESHOLDS = ['1m', '5m', '15m', '30m', '60m'];
 
 export default function OperatorControlsPage() {
-  // Telemetry queries
   const builderQuery = useAsync(getObsBuilderHeartbeats, [], 15000);
   const rekeyQuery = useAsync(getRekeyProgress, [], 30000);
+  const { intents, track, dismiss, clearFinished } = useOperatorIntents();
 
-  // Intent tracker state
-  const [activeIntents, setActiveIntents] = useState<ActiveIntentItem[]>([]);
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Form states: Force Park
-  const [parkInstanceId, setParkInstanceId] = useState('');
-  const [parkReason, setParkReason] = useState('operator_force_park');
-  const [parkLoading, setParkLoading] = useState(false);
-  const [parkFeedback, setParkFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  // Form states: Force Restart
-  const [restartInstanceId, setRestartInstanceId] = useState('');
-  const [restartReason, setRestartReason] = useState('operator_force_restart');
-  const [restartLoading, setRestartLoading] = useState(false);
-  const [restartFeedback, setRestartFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  // Form states: Force Cold Boot
-  const [bootSlug, setBootSlug] = useState('');
-  const [bootReason, setBootReason] = useState('operator_force_cold_boot');
-  const [bootLoading, setBootLoading] = useState(false);
-  const [bootFeedback, setBootFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  // Form states: Sweep Stuck Builds
-  const [sweepDuration, setSweepDuration] = useState('15m');
-  const [sweepReason, setSweepReason] = useState('operator_reclaim_build');
-  const [sweepLoading, setSweepLoading] = useState(false);
-  const [sweepResult, setSweepResult] = useState<SweepStuckBuildsResponse | null>(null);
-  const [sweepError, setSweepError] = useState<string | null>(null);
-
-  // Form states: GitHub webhook secret rotation
+  const [open, setOpen] = useState<ActionId | null>(null);
+  const [target, setTarget] = useState('');
+  const [sweepThreshold, setSweepThreshold] = useState('15m');
   const [installationId, setInstallationId] = useState('');
-  const [webhookSecretHex, setWebhookSecretHex] = useState('');
-  const [webhookLoading, setWebhookLoading] = useState(false);
-  const [webhookFeedback, setWebhookFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [secretHex, setSecretHex] = useState('');
 
-  // Poll pending intents
-  useEffect(() => {
-    const pending = activeIntents.filter(
-      (i) => i.status === 'pending' || i.status === 'running',
-    );
-    if (pending.length === 0) {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-      return;
-    }
-
-    pollingRef.current = setInterval(async () => {
-      for (const item of pending) {
-        try {
-          const res = await getOperatorIntent(item.intentId);
-          setActiveIntents((prev) =>
-            prev.map((i) =>
-              i.intentId === item.intentId
-                ? {
-                    ...i,
-                    status: res.status,
-                    error: res.error,
-                    snapIdsMarkedStale: res.snap_ids_marked_stale,
-                  }
-                : i,
-            ),
-          );
-        } catch {
-          /* ignore poll errors */
-        }
-      }
-    }, 1500);
-
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
-  }, [activeIntents]);
-
-  const handleForcePark = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!parkInstanceId.trim()) return;
-    setParkLoading(true);
-    setParkFeedback(null);
-    try {
-      const res = await forceParkInstance(parkInstanceId.trim(), parkReason.trim());
-      setParkFeedback({
-        ok: true,
-        msg: `Intent enqueued (ID: ${res.intent_id}). Scheduling microVM park.`,
-      });
-      setActiveIntents((prev) => [
-        {
-          intentId: res.intent_id,
-          kind: 'force_park',
-          targetId: parkInstanceId.trim(),
-          status: 'pending',
-          requestedAt: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-      setParkInstanceId('');
-    } catch (err) {
-      setParkFeedback({ ok: false, msg: (err as Error).message });
-    } finally {
-      setParkLoading(false);
-    }
+  const openAction = (id: ActionId) => {
+    setTarget('');
+    setInstallationId('');
+    setSecretHex('');
+    setSweepThreshold('15m');
+    setOpen(id);
   };
 
-  const handleForceColdBoot = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!bootSlug.trim()) return;
-    setBootLoading(true);
-    setBootFeedback(null);
-    try {
-      const res = await forceColdBootApp(bootSlug.trim(), bootReason.trim());
-      setBootFeedback({
-        ok: true,
-        msg: `Intent enqueued (ID: ${res.intent_id}). Marking snapshots stale for app.`,
-      });
-      setActiveIntents((prev) => [
-        {
-          intentId: res.intent_id,
-          kind: 'force_cold_boot',
-          targetId: bootSlug.trim(),
-          status: 'pending',
-          requestedAt: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-      setBootSlug('');
-    } catch (err) {
-      setBootFeedback({ ok: false, msg: (err as Error).message });
-    } finally {
-      setBootLoading(false);
-    }
-  };
+  const builderData = builderQuery.data;
+  const rekeyDisabled = rekeyQuery.error instanceof ApiError && rekeyQuery.error.code === 'rekey_disabled';
+  const rekeyData = rekeyQuery.data;
+  const inFlight = intents.filter((intent) => !isTerminalIntent(intent.status)).length;
 
-  const handleForceRestart = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!restartInstanceId.trim()) return;
-    if (!window.confirm('Force-restart this running microVM? Its current process will be terminated and the next wake will cold-boot.')) return;
-    setRestartLoading(true);
-    setRestartFeedback(null);
-    try {
-      const res = await forceRestartInstance(restartInstanceId.trim(), restartReason.trim());
-      setRestartFeedback({
-        ok: true,
-        msg: `Intent enqueued (ID: ${res.intent_id}). The running microVM will be terminated and cold-booted on its next wake.`,
-      });
-      setActiveIntents((prev) => [
-        {
-          intentId: res.intent_id,
-          kind: 'force_restart',
-          targetId: restartInstanceId.trim(),
-          status: 'pending',
-          requestedAt: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-      setRestartInstanceId('');
-    } catch (err) {
-      setRestartFeedback({ ok: false, msg: (err as Error).message });
-    } finally {
-      setRestartLoading(false);
-    }
-  };
+  const parsedInstallation = Number(installationId.trim());
+  const installationValid = Number.isSafeInteger(parsedInstallation) && parsedInstallation > 0;
+  const secretValid = /^[0-9a-fA-F]{32,128}$/.test(secretHex.trim());
 
-  const handleSweepBuilds = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSweepLoading(true);
-    setSweepResult(null);
-    setSweepError(null);
-    try {
-      const res = await sweepStuckBuilds(sweepDuration, sweepReason.trim());
-      setSweepResult(res);
-      builderQuery.reload();
-    } catch (err) {
-      setSweepError((err as Error).message);
-    } finally {
-      setSweepLoading(false);
-    }
-  };
-
-  const handleWebhookSecret = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const parsedInstallationId = Number(installationId.trim());
-    const secret = webhookSecretHex.trim();
-    if (!Number.isSafeInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      setWebhookFeedback({ ok: false, msg: 'Installation ID must be a positive integer.' });
-      return;
-    }
-    if (!/^[0-9a-fA-F]{32,128}$/.test(secret)) {
-      setWebhookFeedback({ ok: false, msg: 'Secret must be 32–128 hexadecimal characters (16–64 bytes).' });
-      return;
-    }
-    setWebhookLoading(true);
-    setWebhookFeedback(null);
-    try {
-      const res = await setGithubWebhookSecret(parsedInstallationId, secret);
-      setWebhookFeedback({
-        ok: true,
-        msg: `Secret rotated for installation ${res.installation_id} at ${new Date(res.upgraded_at).toLocaleString()}.`,
-      });
-      setWebhookSecretHex('');
-    } catch (err) {
-      setWebhookFeedback({ ok: false, msg: (err as Error).message });
-    } finally {
-      setWebhookLoading(false);
-    }
-  };
-
-  const builderData: ObsBuilderHeartbeatListResponse | null = builderQuery.data || null;
-  const rekeyData: RekeyProgressResponse | null = rekeyQuery.data || null;
+  const action = ACTIONS.find((a) => a.id === open);
 
   return (
     <div>
       <PageHeader
         title="Recovery & Fleet Controls"
-        subtitle="Operator emergency primitives, microVM park/cold-boot interventions, stuck build reclamation, and intent tracking"
+        subtitle="Emergency primitives for live microVMs, apps, builds and integrations. Every action is audited."
         actions={
           <button
             onClick={() => {
@@ -256,411 +111,119 @@ export default function OperatorControlsPage() {
             className="btn btn-secondary btn-sm"
           >
             <Icon name="refresh" size={14} />
-            Refresh Telemetry
+            Refresh
           </button>
         }
       />
 
-      {/* Top Telemetry KPI Bar */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
-          label="Queued Build Tasks"
-          value={builderData?.queued_builds ?? 0}
-          sub="In-flight builderd job backlog"
-          color="var(--color-brand-bright)"
+          label="Queued builds"
+          value={builderQuery.error ? '—' : (builderData?.queued_builds ?? '…')}
+          sub={builderQuery.error ? `Unavailable: ${builderQuery.error.message}` : 'Waiting for a builder'}
         />
         <StatTile
-          label="Active Builder Nodes"
-          value={builderData?.items ? builderData.items.length : 0}
-          sub="Heartbeating builderd hosts (1h)"
+          label="Reporting builders"
+          value={builderQuery.error ? '—' : (builderData?.items.length ?? '…')}
+          sub={builderQuery.error ? 'Builder telemetry unavailable' : 'Heartbeat within the last hour'}
         />
         <StatTile
-          label="Secrets Rekey Engine"
+          label="Secrets rekey"
           value={
-            rekeyData?.enabled
-              ? `${rekeyData.completed} / ${rekeyData.total}`
-              : 'Disabled'
+            rekeyDisabled ? 'Off' : rekeyQuery.error ? '—' : rekeyData ? `${rekeyData.rekeyed} / ${rekeyData.total}` : '…'
           }
           sub={
-            rekeyData?.enabled
-              ? `${rekeyData.in_progress} in progress · ${rekeyData.failed} failed`
-              : 'FAAS_REKEY_ENABLED flag off'
+            rekeyDisabled
+              ? 'Rekey runner is not enabled'
+              : rekeyQuery.error
+                ? `Unavailable: ${rekeyQuery.error.message}`
+                : rekeyData
+                  ? `${rekeyData.skipped} skipped · ${rekeyData.failed} failed`
+                  : 'Loading'
           }
         />
-        <StatTile
-          label="Tracked Operator Actions"
-          value={activeIntents.length}
-          sub={`${activeIntents.filter((i) => i.status === 'pending' || i.status === 'running').length} in-flight intents`}
-        />
+        <StatTile label="Tracked actions" value={intents.length} sub={`${inFlight} still converging`} />
       </div>
 
-      {/* Operator Intervention Controls */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        {/* Force-Park MicroVM Instance */}
-        <SectionCard
-          title={
-            <div className="flex items-center gap-2">
-              <Icon name="bolt" size={16} className="text-[var(--color-warning)]" />
-              <span>Force-Park Live MicroVM</span>
-            </div>
-          }
-        >
-          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
-            Asynchronously triggers scheduler eviction to park a stuck or runaway microVM instance.
-            Requires exact instance UUID.
-          </div>
-          <form onSubmit={handleForcePark} className="border-t border-[var(--color-line)] p-4 space-y-3">
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {ACTIONS.map((a) => (
+          <div key={a.id} className="card flex flex-col justify-between p-4">
             <div>
-              <label className="mb-1 block text-xs font-semibold">Instance UUID</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
-                value={parkInstanceId}
-                onChange={(e) => setParkInstanceId(e.target.value)}
-                className="field field-sm w-full font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold">Reason Token (a-z0-9_)</label>
-              <input
-                type="text"
-                required
-                pattern="^[a-z0-9_]{1,64}$"
-                placeholder="operator_force_park"
-                value={parkReason}
-                onChange={(e) => setParkReason(e.target.value)}
-                className="field field-sm w-full font-mono text-xs"
-              />
-            </div>
-            {parkFeedback && (
-              <div
-                className={`rounded p-2 text-xs ${
-                  parkFeedback.ok
-                    ? 'bg-[var(--color-surface-subtle)] text-[var(--color-brand-bright)]'
-                    : 'bg-[var(--color-danger-subtle)] text-[var(--color-danger)]'
-                }`}
-              >
-                {parkFeedback.msg}
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Icon
+                  name={a.icon}
+                  size={16}
+                  className={
+                    a.tone === 'danger'
+                      ? 'text-[var(--color-danger)]'
+                      : a.tone === 'warning'
+                        ? 'text-[var(--color-warning)]'
+                        : 'text-[var(--color-ink-soft)]'
+                  }
+                />
+                {a.title}
               </div>
-            )}
-            <div className="flex justify-end pt-1">
-              <button
-                type="submit"
-                disabled={parkLoading || !parkInstanceId.trim()}
-                className="btn btn-danger btn-sm"
-              >
-                {parkLoading ? 'Dispatching…' : 'Confirm Force Park'}
+              <p className="mt-2 text-xs text-[var(--color-ink-muted)]">{a.summary}</p>
+            </div>
+            <div className="mt-4">
+              <button className="btn btn-secondary btn-sm" onClick={() => openAction(a.id)}>
+                {a.title.split(' ')[0]}…
               </button>
             </div>
-          </form>
-        </SectionCard>
-
-        {/* Force-Restart Live MicroVM */}
-        <SectionCard
-          title={
-            <div className="flex items-center gap-2">
-              <Icon name="refresh" size={16} className="text-[var(--color-danger)]" />
-              <span>Force-Restart Live MicroVM</span>
-            </div>
-          }
-        >
-          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
-            Terminates a running microVM and marks its snapshots stale so the next wake performs a clean cold boot.
-            Requires an instance currently in the RUNNING state.
           </div>
-          <form onSubmit={handleForceRestart} className="border-t border-[var(--color-line)] p-4 space-y-3">
-            <div>
-              <label className="mb-1 block text-xs font-semibold">Instance UUID</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
-                value={restartInstanceId}
-                onChange={(e) => setRestartInstanceId(e.target.value)}
-                className="field field-sm w-full font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold">Reason Token (a-z0-9_)</label>
-              <input
-                type="text"
-                required
-                pattern="^[a-z0-9_]{1,64}$"
-                placeholder="operator_force_restart"
-                value={restartReason}
-                onChange={(e) => setRestartReason(e.target.value)}
-                className="field field-sm w-full font-mono text-xs"
-              />
-            </div>
-            {restartFeedback && (
-              <div
-                className={`rounded p-2 text-xs ${
-                  restartFeedback.ok
-                    ? 'bg-[var(--color-surface-subtle)] text-[var(--color-brand-bright)]'
-                    : 'bg-[var(--color-danger-subtle)] text-[var(--color-danger)]'
-                }`}
-              >
-                {restartFeedback.msg}
-              </div>
-            )}
-            <div className="flex justify-end pt-1">
-              <button
-                type="submit"
-                disabled={restartLoading || !restartInstanceId.trim()}
-                className="btn btn-danger btn-sm"
-              >
-                {restartLoading ? 'Dispatching…' : 'Confirm Force Restart'}
+        ))}
+      </div>
+
+      <div className="mt-6">
+        <SectionCard
+          title="Operator actions in flight"
+          action={
+            intents.some((intent) => isTerminalIntent(intent.status)) ? (
+              <button className="btn btn-ghost btn-xs" onClick={clearFinished}>
+                Clear finished
               </button>
-            </div>
-          </form>
-        </SectionCard>
-
-        {/* Force Cold Boot Next Wake */}
-        <SectionCard
-          title={
-            <div className="flex items-center gap-2">
-              <Icon name="spark" size={16} className="text-[var(--color-brand-bright)]" />
-              <span>Force Cold Boot Next Wake</span>
-            </div>
+            ) : undefined
           }
         >
-          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
-            Marks warm and init snapshots stale for an application deployment. Forces the next request
-            wake to execute a clean cold boot.
-          </div>
-          <form onSubmit={handleForceColdBoot} className="border-t border-[var(--color-line)] p-4 space-y-3">
-            <div>
-              <label className="mb-1 block text-xs font-semibold">Application Slug</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. payment-processor"
-                value={bootSlug}
-                onChange={(e) => setBootSlug(e.target.value)}
-                className="field field-sm w-full font-mono text-xs"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold">Reason Token (a-z0-9_)</label>
-              <input
-                type="text"
-                required
-                pattern="^[a-z0-9_]{1,64}$"
-                placeholder="operator_force_cold_boot"
-                value={bootReason}
-                onChange={(e) => setBootReason(e.target.value)}
-                className="field field-sm w-full font-mono text-xs"
-              />
-            </div>
-            {bootFeedback && (
-              <div
-                className={`rounded p-2 text-xs ${
-                  bootFeedback.ok
-                    ? 'bg-[var(--color-surface-subtle)] text-[var(--color-brand-bright)]'
-                    : 'bg-[var(--color-danger-subtle)] text-[var(--color-danger)]'
-                }`}
-              >
-                {bootFeedback.msg}
-              </div>
-            )}
-            <div className="flex justify-end pt-1">
-              <button
-                type="submit"
-                disabled={bootLoading || !bootSlug.trim()}
-                className="btn btn-warning btn-sm"
-              >
-                {bootLoading ? 'Invalidating Snapshots…' : 'Force Cold Boot App'}
-              </button>
-            </div>
-          </form>
-        </SectionCard>
-      </div>
-
-      {/* GitHub webhook secret rotation */}
-      <div className="mt-6">
-        <SectionCard
-          title={
-            <div className="flex items-center gap-2">
-              <Icon name="keys" size={16} className="text-[var(--color-ink)]" />
-              <span>Rotate GitHub Webhook Secret</span>
-            </div>
-          }
-        >
-          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
-            Replaces the encrypted webhook secret for one GitHub App installation. The secret is accepted only as
-            32–128 hexadecimal characters and is never shown again after submission.
-          </div>
-          <form onSubmit={handleWebhookSecret} className="grid gap-4 border-t border-[var(--color-line)] p-4 md:grid-cols-[220px_1fr_auto] md:items-end">
-            <label className="text-xs">
-              <span className="font-semibold">Installation ID</span>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                required
-                placeholder="e.g. 12345678"
-                value={installationId}
-                onChange={(e) => setInstallationId(e.target.value)}
-                className="field field-sm mt-1 w-full font-mono text-xs"
-              />
-            </label>
-            <label className="text-xs">
-              <span className="font-semibold">New secret (hex)</span>
-              <input
-                type="password"
-                required
-                minLength={32}
-                maxLength={128}
-                pattern="^[0-9a-fA-F]{32,128}$"
-                placeholder="32–128 hexadecimal characters"
-                value={webhookSecretHex}
-                onChange={(e) => setWebhookSecretHex(e.target.value)}
-                className="field field-sm mt-1 w-full font-mono text-xs"
-                autoComplete="new-password"
-              />
-            </label>
-            <button type="submit" disabled={webhookLoading} className="btn btn-secondary btn-sm">
-              {webhookLoading ? 'Rotating…' : 'Rotate Secret'}
-            </button>
-          </form>
-          {webhookFeedback && (
-            <div className={`border-t border-[var(--color-line)] p-4 text-xs ${webhookFeedback.ok ? 'text-[var(--color-brand-bright)]' : 'text-[var(--color-danger)]'}`}>
-              {webhookFeedback.msg}
-            </div>
-          )}
-        </SectionCard>
-      </div>
-
-      {/* Sweep Stuck Builds */}
-      <div className="mt-6">
-        <SectionCard
-          title={
-            <div className="flex items-center gap-2">
-              <Icon name="trash" size={16} className="text-[var(--color-danger)]" />
-              <span>Sweep Stuck Builderd Tasks</span>
-            </div>
-          }
-        >
-          <div className="p-4 text-xs text-[var(--color-ink-muted)]">
-            Reclaims and terminates build tasks stuck in &apos;running&apos; state exceeding the duration threshold.
-            Closes build pipeline bottlenecks when builder microVMs crash or exceed timeout.
-          </div>
-          <form
-            onSubmit={handleSweepBuilds}
-            className="flex flex-wrap items-center justify-between gap-4 border-t border-[var(--color-line)] p-4"
-          >
-            <div className="flex items-center gap-3">
-              <label className="text-xs font-semibold">Older Than Threshold:</label>
-              <select
-                value={sweepDuration}
-                onChange={(e) => setSweepDuration(e.target.value)}
-                className="field field-sm"
-              >
-                <option value="1m">1 minute (aggressive sweep)</option>
-                <option value="5m">5 minutes</option>
-                <option value="15m">15 minutes (default reaper grace)</option>
-                <option value="30m">30 minutes</option>
-                <option value="60m">60 minutes (1 hour ceiling)</option>
-                </select>
-            </div>
-
-            <div className="flex min-w-64 flex-1 items-center gap-3">
-              <label className="text-xs font-semibold">Reason:</label>
-              <input
-                type="text"
-                required
-                pattern="^[a-z0-9_]{1,64}$"
-                title="Use 1–64 lowercase letters, numbers, or underscores."
-                value={sweepReason}
-                onChange={(e) => setSweepReason(e.target.value)}
-                className="field field-sm min-w-0 flex-1 font-mono text-xs"
-              />
-            </div>
-
-            <button type="submit" disabled={sweepLoading} className="btn btn-secondary btn-sm">
-              {sweepLoading ? 'Sweeping Builds…' : `Sweep Builds (> ${sweepDuration})`}
-            </button>
-          </form>
-
-          {sweepResult && (
-            <div className="border-t border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-4 text-xs">
-              <div className="flex items-center gap-2 text-[var(--color-brand-bright)] font-semibold">
-                <Icon name="check" size={14} />
-                <span>Successfully swept {sweepResult.swept_count} stuck build(s).</span>
-              </div>
-              <div className="mt-1 text-[11px] text-[var(--color-ink-muted)]">
-                Threshold cutoff: {new Date(sweepResult.threshold_iso).toLocaleTimeString()} · Older than {sweepResult.older_than_seconds}s
-              </div>
-            </div>
-          )}
-
-          {sweepError && (
-            <div className="border-t border-[var(--color-line)] bg-[var(--color-danger-subtle)] p-4 text-xs text-[var(--color-danger)]">
-              {sweepError}
-            </div>
-          )}
-        </SectionCard>
-      </div>
-
-      {/* Active Operator Intent Execution Monitor */}
-      <div className="mt-6">
-        <SectionCard title="Active Operator Intent Execution Queue">
-          {activeIntents.length === 0 ? (
+          {intents.length === 0 ? (
             <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">
-              No operator recovery intents triggered in this session.
+              Actions you start from any operations page are tracked here until they finish.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] font-medium text-[var(--color-ink-muted)]">
+              <table className="dtable text-xs">
+                <thead>
                   <tr>
-                    <th className="px-4 py-3">Intent ID</th>
-                    <th className="px-4 py-3">Action Kind</th>
-                    <th className="px-4 py-3">Target Object</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Triggered</th>
-                    <th className="px-4 py-3">Result / Diagnostics</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                    <th>Status</th>
+                    <th>Requested</th>
+                    <th>Result</th>
+                    <th />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[var(--color-line)]">
-                  {activeIntents.map((item) => (
-                    <tr key={item.intentId} className="hover:bg-[var(--color-surface-subtle)]">
-                      <td className="px-4 py-3 font-mono font-semibold">
-                        <Mono>{item.intentId.slice(0, 13)}…</Mono>
+                <tbody>
+                  {intents.map((intent) => (
+                    <tr key={intent.intentId}>
+                      <td className="font-mono">{intent.kind}</td>
+                      <td className="font-mono">
+                        <Mono>{intent.target}</Mono>
                       </td>
-                      <td className="px-4 py-3 font-mono uppercase">{item.kind}</td>
-                      <td className="px-4 py-3 font-mono">{item.targetId}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`badge ${
-                            item.status === 'succeeded'
-                              ? 'badge-success'
-                              : item.status === 'failed'
-                              ? 'badge-danger'
-                              : item.status === 'running'
-                              ? 'badge-warning'
-                              : 'badge-neutral'
-                          }`}
-                        >
-                          {item.status}
-                        </span>
+                      <td>
+                        <IntentStatusBadge status={intent.status} />
                       </td>
-                      <td className="px-4 py-3 text-[var(--color-ink-muted)]">
-                        {relativeTime(item.requestedAt)}
+                      <td title={intent.intentId}>{relativeTime(intent.requestedAt)}</td>
+                      <td
+                        className={
+                          intent.status === 'failed' || intent.pollError ? 'text-[var(--color-danger)]' : undefined
+                        }
+                      >
+                        {intentOutcome(intent)}
                       </td>
-                      <td className="px-4 py-3 text-xs">
-                        {item.error ? (
-                          <span className="text-[var(--color-danger)] font-mono">{item.error}</span>
-                        ) : item.snapIdsMarkedStale && item.snapIdsMarkedStale.length > 0 ? (
-                          <span className="text-[var(--color-brand-bright)] font-mono">
-                            {item.snapIdsMarkedStale.length} snapshot(s) marked stale
-                          </span>
-                        ) : item.status === 'succeeded' ? (
-                          <span className="text-[var(--color-brand-bright)]">Execution completed</span>
-                        ) : (
-                          <span className="text-[var(--color-ink-muted)] italic">Awaiting worker dispatch…</span>
-                        )}
+                      <td className="text-right">
+                        <button className="btn btn-ghost btn-xs" onClick={() => dismiss(intent.intentId)}>
+                          Dismiss
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -671,43 +234,36 @@ export default function OperatorControlsPage() {
         </SectionCard>
       </div>
 
-      {/* Builder Fleet Heartbeats Telemetry */}
       <div className="mt-6">
-        <SectionCard title="Builderd Fleet Host Heartbeats (Obs)">
-          {builderQuery.loading && !builderData ? (
-            <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">
-              Loading builderd fleet telemetry…
+        <SectionCard title="Builder hosts">
+          {builderQuery.error && !builderData ? (
+            <div role="alert" className="p-6 text-center text-xs text-[var(--color-danger)]">
+              Could not load builder telemetry: {builderQuery.error.message}
             </div>
-          ) : !builderData?.items || builderData.items.length === 0 ? (
+          ) : builderQuery.loading && !builderData ? (
+            <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">Loading builder telemetry…</div>
+          ) : !builderData?.items.length ? (
             <div className="p-8 text-center text-xs text-[var(--color-ink-muted)]">
-              No builder nodes currently reporting heartbeat ticks (Queue Depth: {builderData?.queued_builds ?? 0}).
+              No builder host has reported in the last hour.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] font-medium text-[var(--color-ink-muted)]">
+              <table className="dtable text-xs">
+                <thead>
                   <tr>
-                    <th className="px-4 py-3">Builder Host Node ID</th>
-                    <th className="px-4 py-3">Last Heartbeat</th>
-                    <th className="px-4 py-3">CPU (60s Avg)</th>
-                    <th className="px-4 py-3">Disk Utilization</th>
+                    <th>Builder node</th>
+                    <th>Last heartbeat</th>
+                    <th>CPU (60s)</th>
+                    <th>Disk used</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[var(--color-line)]">
+                <tbody>
                   {builderData.items.map((b) => (
-                    <tr key={b.node_id} className="hover:bg-[var(--color-surface-subtle)]">
-                      <td className="px-4 py-3 font-mono font-semibold">{b.node_id}</td>
-                      <td className="px-4 py-3 text-[var(--color-ink-muted)]">
-                        {relativeTime(b.received_at)}
-                      </td>
-                      <td className="px-4 py-3 font-mono">
-                        {b.cpu_pct_60s == null ? '—' : `${b.cpu_pct_60s.toFixed(1)}%`}
-                      </td>
-                      <td className="px-4 py-3 font-mono">
-                        {b.disk_used_bytes == null
-                          ? '—'
-                          : `${(b.disk_used_bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`}
-                      </td>
+                    <tr key={b.node_id}>
+                      <td className="cell-primary font-mono">{b.node_id}</td>
+                      <td>{relativeTime(b.received_at)}</td>
+                      <td className="font-mono">{b.cpu_pct_60s == null ? '—' : `${b.cpu_pct_60s.toFixed(1)}%`}</td>
+                      <td className="font-mono">{formatBytes(b.disk_used_bytes)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -716,6 +272,139 @@ export default function OperatorControlsPage() {
           )}
         </SectionCard>
       </div>
+
+      {action && (
+        <OperatorActionDialog
+          open
+          title={action.title}
+          tone={action.tone}
+          reason={action.id === 'webhook' ? 'none' : 'code'}
+          reasonSuggestions={action.id === 'sweep' ? REASON_SUGGESTIONS.build : REASON_SUGGESTIONS.instance}
+          submitLabel={
+            action.id === 'park'
+              ? 'Force park'
+              : action.id === 'restart'
+                ? 'Force restart'
+                : action.id === 'cold-boot'
+                  ? 'Force cold boot'
+                  : action.id === 'sweep'
+                    ? 'Sweep builds'
+                    : 'Rotate secret'
+          }
+          confirmText={action.id === 'restart' || action.id === 'cold-boot' ? target.trim() || undefined : undefined}
+          canSubmit={
+            action.id === 'webhook'
+              ? installationValid && secretValid
+              : action.id === 'sweep'
+                ? true
+                : target.trim().length > 0
+          }
+          fingerprint={[action.id, target.trim(), sweepThreshold, installationId.trim(), secretHex.trim()].join('|')}
+          impact={<span>{action.summary}</span>}
+          onClose={() => setOpen(null)}
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            const opts = { idempotencyKey };
+            const id = target.trim();
+            switch (action.id) {
+              case 'park': {
+                const res = await forceParkInstance(id, reason, opts);
+                track({ intentId: res.intent_id, kind: 'force_park', target: id });
+                return `Force park queued for ${id}.`;
+              }
+              case 'restart': {
+                const res = await forceRestartInstance(id, reason, opts);
+                track({ intentId: res.intent_id, kind: 'force_restart', target: id });
+                return `Force restart queued for ${id}.`;
+              }
+              case 'cold-boot': {
+                const res = await forceColdBootApp(id, reason, opts);
+                track({ intentId: res.intent_id, kind: 'force_cold_boot', target: id });
+                return `Cold boot queued for ${id}.`;
+              }
+              case 'sweep': {
+                const res = await sweepStuckBuilds(sweepThreshold, reason, opts);
+                builderQuery.reload();
+                return `Swept ${res.swept_count} build(s) older than ${res.older_than_seconds}s.`;
+              }
+              case 'webhook': {
+                const res = await setGithubWebhookSecret(parsedInstallation, secretHex.trim(), opts);
+                setSecretHex('');
+                return `Webhook secret rotated for installation ${res.installation_id}.`;
+              }
+            }
+          }}
+        >
+          {(action.id === 'park' || action.id === 'restart') && (
+            <label className="block">
+              <span className="label">Instance ID</span>
+              <input
+                className="field field-sm font-mono"
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+                placeholder="550e8400-e29b-41d4-a716-446655440000"
+                autoComplete="off"
+              />
+            </label>
+          )}
+          {action.id === 'cold-boot' && (
+            <label className="block">
+              <span className="label">App slug</span>
+              <input
+                className="field field-sm font-mono"
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+                placeholder="payment-processor"
+                autoComplete="off"
+              />
+            </label>
+          )}
+          {action.id === 'sweep' && (
+            <label className="block">
+              <span className="label">Stuck for longer than</span>
+              <select
+                className="field field-sm"
+                value={sweepThreshold}
+                onChange={(event) => setSweepThreshold(event.target.value)}
+              >
+                {SWEEP_THRESHOLDS.map((threshold) => (
+                  <option key={threshold} value={threshold}>
+                    {threshold}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {action.id === 'webhook' && (
+            <div className="grid gap-3">
+              <label className="block">
+                <span className="label">Installation ID</span>
+                <input
+                  className="field field-sm font-mono"
+                  inputMode="numeric"
+                  value={installationId}
+                  onChange={(event) => setInstallationId(event.target.value.replace(/\D/g, ''))}
+                  placeholder="12345678"
+                />
+              </label>
+              <label className="block">
+                <span className="label">New secret (32–128 hex characters)</span>
+                <input
+                  type="password"
+                  className="field field-sm font-mono"
+                  value={secretHex}
+                  onChange={(event) => setSecretHex(event.target.value)}
+                  autoComplete="new-password"
+                />
+                {secretHex && !secretValid && (
+                  <span className="mt-1 block text-xs text-[var(--color-danger)]">
+                    Must be 32–128 hexadecimal characters.
+                  </span>
+                )}
+              </label>
+            </div>
+          )}
+        </OperatorActionDialog>
+      )}
     </div>
   );
 }

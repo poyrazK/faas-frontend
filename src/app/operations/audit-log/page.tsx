@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   searchObsAuditLog,
   listObsEvents,
@@ -9,6 +9,7 @@ import {
   type ObsEventRow,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import { useDebounced } from '@/lib/useDebounced';
 import { PageHeader, Mono, SearchInput } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
@@ -23,77 +24,170 @@ export default function GlobalAuditLogPage() {
   const [targetAccountId, setTargetAccountId] = useState('');
   const [operatorOnly, setOperatorOnly] = useState(false);
   const [kindPrefix, setKindPrefix] = useState('');
+  const [olderAudit, setOlderAudit] = useState<GlobalAuditLogEntry[]>([]);
+  const [olderAuditFilterKey, setOlderAuditFilterKey] = useState<string | null>(null);
+  const [nextBefore, setNextBefore] = useState<string | null>(null);
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [olderError, setOlderError] = useState<Error | null>(null);
+  const [olderErrorFilterKey, setOlderErrorFilterKey] = useState<string | null>(null);
+  const [olderGlobal, setOlderGlobal] = useState<GlobalAuditLogEntry[]>([]);
+  const [globalNextBefore, setGlobalNextBefore] = useState<string | null>(null);
+  const [globalPageLoaded, setGlobalPageLoaded] = useState(false);
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [globalError, setGlobalError] = useState<Error | null>(null);
+  // Server-side filters settle before they hit the API; only the visible tab polls.
+  const actorFilter = useDebounced(actorEmail.trim());
+  const accountFilter = useDebounced(targetAccountId.trim());
+  const kindFilter = useDebounced(kindPrefix.trim());
+  const auditFilterKey = [actorFilter, accountFilter, operatorOnly ? 'true' : 'false', kindFilter].join('\u0000');
+  const auditFilterKeyRef = useRef(auditFilterKey);
+
+  useEffect(() => {
+    auditFilterKeyRef.current = auditFilterKey;
+  }, [auditFilterKey]);
 
   // 1. Audit log search query
   const auditQuery = useAsync(
     () =>
       searchObsAuditLog({
         limit: 150,
-        actor_email: actorEmail.trim() || undefined,
-        target_account_id: targetAccountId.trim() || undefined,
+        actor_email: actorFilter || undefined,
+        target_account_id: accountFilter || undefined,
         operator_only: operatorOnly ? true : undefined,
-        kind_prefix: kindPrefix.trim() || undefined,
+        kind_prefix: kindFilter || undefined,
       }),
-    [actorEmail, targetAccountId, operatorOnly, kindPrefix],
-    20000,
+    [actorFilter, accountFilter, operatorOnly, kindFilter],
+    view === 'audit' ? 20000 : 0,
   );
 
   // 2. Live diagnostic events query
   const eventsQuery = useAsync(
     () =>
-      listObsEvents(
-        150,
-        kindPrefix.trim() || undefined,
-        actorEmail.trim() || undefined,
-        targetAccountId.trim() || undefined,
-      ),
-    [kindPrefix, actorEmail, targetAccountId],
-    15000,
+      listObsEvents(150, kindFilter || undefined, actorFilter || undefined, accountFilter || undefined),
+    [kindFilter, actorFilter, accountFilter],
+    view === 'events' ? 15000 : 0,
   );
 
   // 3. Append-only global audit feed. This is intentionally kept as a
   // separate view because it has cursor pagination but no server-side
   // filtering contract like the newer observability search endpoint.
-  const globalQuery = useAsync(() => listGlobalAuditLog(150), [], 30000);
+  const globalQuery = useAsync(() => listGlobalAuditLog(150), [], view === 'global' ? 30000 : 0);
 
-  const filteredAudit = (auditQuery.data?.items || []).filter((entry: GlobalAuditLogEntry) => {
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (
-      entry.kind.toLowerCase().includes(s) ||
-      entry.actor.toLowerCase().includes(s) ||
-      (entry.account_id && entry.account_id.toLowerCase().includes(s)) ||
-      (entry.subject && entry.subject.toLowerCase().includes(s))
-    );
-  });
+  const auditCursor =
+    olderAuditFilterKey === auditFilterKey
+      ? nextBefore
+      : (auditQuery.data?.next_before ?? null);
+  const globalCursor = globalPageLoaded
+    ? globalNextBefore
+    : (globalQuery.data?.next_before ?? null);
+
+  const visibleOlderAudit = olderAuditFilterKey === auditFilterKey ? olderAudit : [];
+  const visibleOlderError = olderErrorFilterKey === auditFilterKey ? olderError : null;
+  const filteredAudit = [...(auditQuery.data?.items || []), ...visibleOlderAudit]
+    .filter((entry: GlobalAuditLogEntry, index, rows) =>
+      rows.findIndex((candidate) => candidate.id === entry.id) === index,
+    )
+    .filter((entry: GlobalAuditLogEntry) => {
+      if (!search.trim()) return true;
+      const s = search.toLowerCase();
+      return (
+        entry.kind.toLowerCase().includes(s) ||
+        (entry.actor ?? '').toLowerCase().includes(s) ||
+        (entry.account_id && entry.account_id.toLowerCase().includes(s)) ||
+        (entry.account_email && entry.account_email.toLowerCase().includes(s))
+      );
+    });
 
   const filteredEvents = (eventsQuery.data?.items || []).filter((event: ObsEventRow) => {
     if (!search.trim()) return true;
     const s = search.toLowerCase();
     return (
       event.kind.toLowerCase().includes(s) ||
-      event.actor.toLowerCase().includes(s) ||
+      (event.actor ?? '').toLowerCase().includes(s) ||
       (event.subject && event.subject.toLowerCase().includes(s))
     );
   });
 
-  const filteredGlobal = (globalQuery.data?.items || []).filter((entry: GlobalAuditLogEntry) => {
+  const filteredGlobal = [...(globalQuery.data?.entries || []), ...olderGlobal]
+    .filter((entry: GlobalAuditLogEntry, index, rows) =>
+      rows.findIndex((candidate) => candidate.id === entry.id) === index,
+    )
+    .filter((entry: GlobalAuditLogEntry) => {
     const text = search.trim().toLowerCase();
     return (
-      (!text || entry.kind.toLowerCase().includes(text) || entry.actor.toLowerCase().includes(text) ||
+      (!text || entry.kind.toLowerCase().includes(text) || (entry.actor ?? '').toLowerCase().includes(text) ||
         (entry.account_id && entry.account_id.toLowerCase().includes(text)) ||
-        (entry.subject && entry.subject.toLowerCase().includes(text))) &&
-      (!actorEmail.trim() || entry.actor.toLowerCase().includes(actorEmail.trim().toLowerCase())) &&
-      (!targetAccountId.trim() || entry.account_id === targetAccountId.trim() || entry.subject === targetAccountId.trim()) &&
+        (entry.account_email && entry.account_email.toLowerCase().includes(text))) &&
+      (!actorEmail.trim() || (entry.actor ?? '').toLowerCase().includes(actorEmail.trim().toLowerCase())) &&
+      (!targetAccountId.trim() || entry.account_id === targetAccountId.trim() || entry.account_email === targetAccountId.trim()) &&
       (!kindPrefix.trim() || entry.kind.startsWith(kindPrefix.trim())) &&
       (!operatorOnly || entry.kind.startsWith('operator.'))
     );
-  });
+    });
+
+  const loadOlderAudit = async () => {
+    const cursor = auditCursor;
+    if (!cursor || olderLoading) return;
+    const filterKeyAtStart = auditFilterKey;
+    setOlderLoading(true);
+    setOlderError(null);
+    try {
+      const page = await searchObsAuditLog({
+        before: cursor,
+        limit: 150,
+        actor_email: actorFilter || undefined,
+        target_account_id: accountFilter || undefined,
+        operator_only: operatorOnly ? true : undefined,
+        kind_prefix: kindFilter || undefined,
+      });
+      if (auditFilterKeyRef.current === filterKeyAtStart) {
+        setOlderAudit((current) => [...current, ...(page.items || [])]);
+        setOlderAuditFilterKey(filterKeyAtStart);
+        setNextBefore(page.next_before ?? null);
+      }
+    } catch (err) {
+      if (auditFilterKeyRef.current === filterKeyAtStart) {
+        setOlderErrorFilterKey(filterKeyAtStart);
+        setOlderError(err instanceof Error ? err : new Error('Could not load older audit records.'));
+      }
+    } finally {
+      setOlderLoading(false);
+    }
+  };
+
+  const loadOlderGlobal = async () => {
+    const cursor = globalCursor;
+    if (!cursor || globalLoading) return;
+    setGlobalLoading(true);
+    setGlobalError(null);
+    try {
+      const page = await listGlobalAuditLog(150, cursor);
+      setOlderGlobal((current) => [...current, ...(page.entries || [])]);
+      setGlobalNextBefore(page.next_before ?? null);
+      setGlobalPageLoaded(true);
+    } catch (err) {
+      setGlobalError(err instanceof Error ? err : new Error('Could not load older global audit records.'));
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
 
   const handleRefresh = () => {
-    if (view === 'audit') auditQuery.reload();
-    else if (view === 'events') eventsQuery.reload();
-    else globalQuery.reload();
+    if (view === 'audit') {
+      setOlderAudit([]);
+      setOlderAuditFilterKey(null);
+      setNextBefore(null);
+      setOlderError(null);
+      setOlderErrorFilterKey(null);
+      auditQuery.reload();
+    } else if (view === 'events') eventsQuery.reload();
+    else {
+      setOlderGlobal([]);
+      setGlobalNextBefore(null);
+      setGlobalPageLoaded(false);
+      setGlobalError(null);
+      globalQuery.reload();
+    }
   };
 
   return (
@@ -120,7 +214,7 @@ export default function GlobalAuditLogPage() {
           }`}
         >
           <Icon name="logs" size={14} />
-          <span>Regulator Audit Log (/v1/admin/obs/audit-log/search)</span>
+          <span>Audit search</span>
         </button>
 
         <button
@@ -132,7 +226,7 @@ export default function GlobalAuditLogPage() {
           }`}
         >
           <Icon name="bolt" size={14} />
-          <span>Live Diagnostic Events (/v1/admin/obs/events)</span>
+          <span>Platform events</span>
         </button>
 
         <button
@@ -144,7 +238,7 @@ export default function GlobalAuditLogPage() {
           }`}
         >
           <Icon name="invoices" size={14} />
-          <span>Append-only Global Feed (/v1/audit-log/all)</span>
+          <span>Global feed</span>
         </button>
       </div>
 
@@ -219,7 +313,7 @@ export default function GlobalAuditLogPage() {
             </div>
           ) : auditQuery.error ? (
             <div className="p-8 text-center text-sm text-[var(--color-danger)]">
-              {auditQuery.error.message || 'Operator access required to view global audit log.'}
+              {auditQuery.error.message || 'Request failed.'}
             </div>
           ) : filteredAudit.length === 0 ? (
             <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
@@ -234,7 +328,7 @@ export default function GlobalAuditLogPage() {
                     <th className="px-4 py-3">Action Kind</th>
                     <th className="px-4 py-3">Actor</th>
                     <th className="px-4 py-3">Target Account</th>
-                    <th className="px-4 py-3">Subject</th>
+                    <th className="px-4 py-3">Account email</th>
                     <th className="px-4 py-3">Payload Data</th>
                   </tr>
                 </thead>
@@ -242,20 +336,20 @@ export default function GlobalAuditLogPage() {
                   {filteredAudit.map((entry: GlobalAuditLogEntry) => (
                     <tr key={entry.id} className="hover:bg-[var(--color-surface-subtle)]">
                       <td className="px-4 py-3 font-mono">
-                        <div>{new Date(entry.at).toLocaleTimeString()}</div>
+                        <div>{new Date(entry.received_at).toLocaleTimeString()}</div>
                         <div className="text-[11px] text-[var(--color-ink-muted)]">
-                          {relativeTime(entry.at)}
+                          {relativeTime(entry.received_at)}
                         </div>
                       </td>
                       <td className="px-4 py-3 font-mono font-semibold text-[var(--color-brand-bright)]">
                         {entry.kind}
                       </td>
-                      <td className="px-4 py-3 font-mono">{entry.actor}</td>
+                      <td className="px-4 py-3 font-mono">{entry.actor || '—'}</td>
                       <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">
                         {entry.account_id ? <Mono>{entry.account_id.slice(0, 13)}…</Mono> : 'Anonymous'}
                       </td>
                       <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">
-                        {entry.subject || '—'}
+                        {entry.account_email || '—'}
                       </td>
                       <td className="px-4 py-3 font-mono text-[11px]">
                         {entry.data && Object.keys(entry.data).length > 0 ? (
@@ -268,8 +362,27 @@ export default function GlobalAuditLogPage() {
                       </td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
+              </tbody>
+            </table>
+          </div>
+          )}
+          {visibleOlderError && (
+            <div className="flex flex-wrap items-center justify-center gap-3 border-t border-[var(--color-line)] p-4 text-sm text-[var(--color-danger)]">
+              <span role="alert">Could not load older audit records: {visibleOlderError.message}</span>
+              <button onClick={() => void loadOlderAudit()} className="btn btn-secondary btn-xs">
+                Retry
+              </button>
+            </div>
+          )}
+          {!auditQuery.loading && !auditQuery.error && auditCursor && (
+            <div className="flex justify-center border-t border-[var(--color-line)] p-4">
+              <button
+                onClick={() => void loadOlderAudit()}
+                disabled={olderLoading}
+                className="btn btn-secondary btn-sm"
+              >
+                {olderLoading ? 'Loading older events…' : 'Load older events'}
+              </button>
             </div>
           )}
         </SectionCard>
@@ -281,7 +394,7 @@ export default function GlobalAuditLogPage() {
             </div>
           ) : eventsQuery.error ? (
             <div className="p-8 text-center text-sm text-[var(--color-danger)]">
-              {eventsQuery.error.message || 'Operator access required to view platform events.'}
+              {eventsQuery.error.message || 'Request failed.'}
             </div>
           ) : filteredEvents.length === 0 ? (
             <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
@@ -346,21 +459,40 @@ export default function GlobalAuditLogPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] font-medium text-[var(--color-ink-muted)]">
-                  <tr><th className="px-4 py-3">Timestamp</th><th className="px-4 py-3">Action Kind</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Target Account</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Payload Data</th></tr>
+                  <tr><th className="px-4 py-3">Timestamp</th><th className="px-4 py-3">Action Kind</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Target Account</th><th className="px-4 py-3">Account email</th><th className="px-4 py-3">Payload Data</th></tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--color-line)]">
                   {filteredGlobal.map((entry) => (
                     <tr key={entry.id} className="hover:bg-[var(--color-surface-subtle)]">
-                      <td className="px-4 py-3 font-mono"><div>{new Date(entry.at).toLocaleTimeString()}</div><div className="text-[11px] text-[var(--color-ink-muted)]">{relativeTime(entry.at)}</div></td>
+                      <td className="px-4 py-3 font-mono"><div>{new Date(entry.received_at).toLocaleTimeString()}</div><div className="text-[11px] text-[var(--color-ink-muted)]">{relativeTime(entry.received_at)}</div></td>
                       <td className="px-4 py-3 font-mono font-semibold text-[var(--color-brand-bright)]">{entry.kind}</td>
-                      <td className="px-4 py-3 font-mono">{entry.actor}</td>
+                      <td className="px-4 py-3 font-mono">{entry.actor || '—'}</td>
                       <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.account_id ? <Mono>{entry.account_id.slice(0, 13)}…</Mono> : 'Anonymous'}</td>
-                      <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.subject || '—'}</td>
+                      <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.account_email || '—'}</td>
                       <td className="px-4 py-3 font-mono text-[11px]"><span className="block max-w-xs truncate text-[var(--color-ink-muted)]">{entry.data && Object.keys(entry.data).length > 0 ? JSON.stringify(entry.data) : '—'}</span></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {globalError && (
+            <div className="flex flex-wrap items-center justify-center gap-3 border-t border-[var(--color-line)] p-4 text-sm text-[var(--color-danger)]">
+              <span role="alert">Could not load older global records: {globalError.message}</span>
+              <button onClick={() => void loadOlderGlobal()} className="btn btn-secondary btn-xs">
+                Retry
+              </button>
+            </div>
+          )}
+          {!globalQuery.loading && !globalQuery.error && globalCursor && (
+            <div className="flex justify-center border-t border-[var(--color-line)] p-4">
+              <button
+                onClick={() => void loadOlderGlobal()}
+                disabled={globalLoading}
+                className="btn btn-secondary btn-sm"
+              >
+                {globalLoading ? 'Loading older events…' : 'Load older events'}
+              </button>
             </div>
           )}
         </SectionCard>

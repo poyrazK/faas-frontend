@@ -1,14 +1,15 @@
 /* ==========================================================================
-   Gregale — typed REST client for the apid control plane (/v1/*)
+   Gregale operations — typed REST client for the apid control plane.
 
-   Contract source of truth: faas/api/openapi.yaml. Every path, method and
-   response shape below is verified against the live backend, not guessed.
+   Contract source of truth: the Go route table and response structs in
+   faas (pkg/apid/apidserver, pkg/api). Operator routes (/v1/admin/*) are
+   deliberately absent from api/openapi.yaml, so these types are maintained
+   by hand and checked against origin/main.
 
-   Auth model: the web console authenticates with the HttpOnly `faas_sid`
-   session cookie set by POST /login (and the OAuth flows). All requests go
-   out same-origin (Vercel rewrites proxy /v1/* to the DO backend) with
-   credentials:'include', so the cookie rides along automatically. We never
-   store the raw API key in the browser.
+   Auth model: the HttpOnly `faas_sid` session cookie set by POST /login.
+   Requests go out same-origin (next.config rewrites /v1/* to apid) with
+   credentials:'include'. Operator writes additionally need a fresh TOTP
+   step-up, handled by the transport below.
    ========================================================================== */
 
 /* ────────────────────────────── Models ─────────────────────────────────── */
@@ -206,364 +207,6 @@ export interface InvocationList {
   invocations: Invocation[];
 }
 
-/* ─────────────────────────── Metrics (#273 / #393) ─────────────────────── */
-
-/** Closed vocabulary bounded by Prometheus retention (prom_retention_days: 15). */
-export type MetricsRange = '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
-
-export const METRICS_RANGES: MetricsRange[] = ['5m', '15m', '1h', '6h', '24h', '7d', '15d'];
-
-/**
- * Gateway-measured metrics for one app. Latencies are 2xx-class only;
- * failures surface via error_rate_pct. `wake_p95_ms` is the FLEET p95 — the
- * underlying histogram is unlabeled, so it is NOT this app's wake latency.
- *
- * On Prometheus failure the endpoint still returns 200 with zeroed fields and
- * `source: "degraded: <reason>"`. Callers must branch on `source`, not on the
- * numbers, or they will render a convincing wall of zeros.
- */
-export interface AppMetrics {
-  app_id: string;
-  range: MetricsRange;
-  source: string;
-  as_of: string;
-  request_count: number;
-  latency_p50_ms: number;
-  latency_p95_ms: number;
-  latency_p99_ms: number;
-  error_rate_pct: number;
-  cold_start_pct: number;
-  wake_p95_ms: number;
-  queue_depth: number;
-}
-
-/** Account-wide rollup: same per-app shape, keyed by app slug. */
-export interface AppsMetrics {
-  range: MetricsRange;
-  source: string;
-  as_of: string;
-  apps: Record<string, AppMetrics> | null;
-}
-
-/** True when the rollup came back degraded and its numbers are meaningless. */
-export const isDegraded = (source: string | undefined): boolean =>
-  !!source && source.startsWith('degraded');
-
-/** Reason text from a `degraded: <reason>` source string. */
-export const degradedReason = (source: string): string =>
-  source.replace(/^degraded:\s*/, '') || 'metrics backend unavailable';
-
-/* ──────────────────────── Account-scoped lists (#393) ──────────────────── */
-
-export interface InstanceList {
-  instances: Instance[];
-  next_before?: string | null;
-}
-
-/** One sealed secret with its owning app attached. Plaintext never appears. */
-export interface AccountSecret {
-  app_id: string;
-  app_slug: string;
-  key: string;
-  ciphertext: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AccountSecretList {
-  secrets: AccountSecret[];
-  next_before?: string | null;
-}
-
-/* ────────────────────────────── Env vars (#395) ────────────────────────── */
-
-/** Env var envelope. The plaintext value is not returned on list. */
-export interface AppEnv {
-  key: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AppEnvList {
-  env: AppEnv[];
-  quota_max: number;
-  count: number;
-}
-
-/* ────────────────────────── Outbound Webhooks (#476) ───────────────────── */
-
-export type AppWebhookEventType = 'cron.fired' | 'app.created' | 'app.deleted' | 'build.succeeded' | 'build.failed';
-export type AppWebhookRetryPolicy = 'default' | 'aggressive' | 'none';
-export type AppWebhookDeliveryStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'dead';
-
-export interface AppWebhook {
-  id: string;
-  app_id: string;
-  account_id: string;
-  target_url: string;
-  webhook_secret_sealed_masked: string;
-  event_filter: AppWebhookEventType[];
-  retry_policy: AppWebhookRetryPolicy;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateAppWebhookInput {
-  target_url: string;
-  webhook_secret?: string;
-  event_filter?: AppWebhookEventType[];
-  retry_policy?: AppWebhookRetryPolicy;
-  enabled?: boolean;
-}
-
-export interface AppWebhookDelivery {
-  id: string;
-  webhook_id: string;
-  app_id: string;
-  account_id: string;
-  event: string;
-  payload?: Record<string, unknown>;
-  attempt: number;
-  status: AppWebhookDeliveryStatus;
-  last_error?: string;
-  last_response_code?: number;
-  next_attempt_at: string;
-  delivered_at?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AppWebhookDeliveryListResponse {
-  deliveries: AppWebhookDelivery[];
-  next_token?: string | null;
-}
-
-/* ─────────────────────── Queue introspection (#394) ────────────────────── */
-
-export interface QueueState {
-  app_slug: string;
-  plan: Plan;
-  plan_cap: number;
-  depth: number;
-  in_flight: number;
-  oldest_pending_at?: string | null;
-  oldest_pending_age_seconds?: number | null;
-  generated_at: string;
-}
-
-/** A pending row. Peeking acquires no lease and does not bump `attempts`. */
-export interface QueuePeekMessage {
-  id: string;
-  created_at: string;
-  attempts: number;
-  payload: string;
-  last_error?: string;
-}
-
-export interface QueuePeek {
-  app_slug: string;
-  messages: QueuePeekMessage[];
-  next_before?: string;
-}
-
-/** A row that exhausted the plan's retry budget. */
-export interface QueueDeadLetterMessage {
-  id: string;
-  created_at: string;
-  failed_at: string;
-  attempts: number;
-  last_error: string;
-  payload: string;
-}
-
-export interface QueueDeadLetter {
-  app_slug: string;
-  messages: QueueDeadLetterMessage[];
-  next_before?: string;
-}
-
-/* ────────────────────────── Alert rules (#396) ─────────────────────────── */
-
-export type AlertMetric =
-  | 'error_rate_pct'
-  | 'latency_p50_ms'
-  | 'latency_p95_ms'
-  | 'latency_p99_ms'
-  | 'cold_start_pct'
-  | 'request_count'
-  | 'failed_invocations';
-
-export type AlertComparison = 'gt' | 'gte' | 'lt' | 'lte';
-export type AlertFailureSource = 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke';
-
-export interface AlertRule {
-  id: string;
-  /** Empty string means an account-wide rule. */
-  app_id: string;
-  name: string;
-  enabled: boolean;
-  metric: AlertMetric;
-  comparison: AlertComparison;
-  threshold: number;
-  window_spec: MetricsRange;
-  failure_source?: AlertFailureSource;
-  webhook_url: string;
-  webhook_secret_sealed_masked: string;
-  cooldown_minutes: number;
-  state: 'ok' | 'firing';
-  last_fired_at?: string | null;
-  last_evaluated_at?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateAlertRuleInput {
-  name: string;
-  enabled?: boolean;
-  metric: AlertMetric;
-  comparison: AlertComparison;
-  threshold: number;
-  window_spec: MetricsRange;
-  /** Required when metric === 'failed_invocations'; must be omitted otherwise. */
-  failure_source?: AlertFailureSource;
-  webhook_url: string;
-  webhook_secret: string;
-  cooldown_minutes?: number;
-}
-
-/* ───────────────────────────── Sessions (IAM-3) ────────────────────────── */
-
-export interface SessionInfo {
-  id: string;
-  account_id: string;
-  issued_ip?: string;
-  issued_ua?: string;
-  issued_at: string;
-  last_seen_at?: string;
-  /** Exactly one row in a list response carries this. */
-  current_session: boolean;
-}
-
-export interface SessionList {
-  sessions: SessionInfo[];
-}
-
-/* ──────────────────────── GitHub App installation ──────────────────────── */
-
-/** A repo the account's GitHub App installation can see. */
-export interface InstallRepo {
-  id: number;
-  full_name: string;
-  default_branch: string;
-  private: boolean;
-}
-
-export interface InstallBindResult {
-  binding_id?: string;
-}
-
-/**
- * Lists repos for one installation. This is a POST, not a GET, because the
- * installation id travels in the body.
- *
- * SPEC ODDITY: the endpoint reuses `InstallBindRequest`, which declares
- * `repo_full_name` as required — a field that has no meaning when listing.
- * Only `installation_id` is sent here; inventing a placeholder repo name to
- * satisfy a schema would put fiction on the wire. If the server enforces the
- * shared schema this surfaces as a validation error the caller can act on.
- */
-export const listInstallRepos = (installationId: number) =>
-  request<InstallRepo[]>('/v1/install/repos/list', {
-    method: 'POST',
-    body: JSON.stringify({ installation_id: installationId }),
-    cache: 'no-store',
-  });
-
-/** Persists the (account, app, installation, repo, branch) bind row. */
-export const bindAppInstall = (
-  slug: string,
-  installationId: number,
-  repoFullName: string,
-  productionBranch?: string,
-) =>
-  request<InstallBindResult>(`/v1/apps/${slug}/install/bind`, {
-    method: 'POST',
-    body: JSON.stringify({
-      installation_id: installationId,
-      repo_full_name: repoFullName,
-      ...(productionBranch ? { production_branch: productionBranch } : {}),
-    }),
-  });
-
-/* ────────────────────── Build provenance / SBOM (#197) ─────────────────── */
-
-/**
- * "What actually ran" record for one successful build. Empty strings are
- * meaningful: they mark columns the Phase-3 populator (cosign + syft) has not
- * filled yet, so the UI must distinguish empty from absent.
- */
-export interface BuildProvenance {
-  id: string;
-  build_id: string;
-  buildkit_version?: string;
-  railpack_version?: string;
-  base_digest?: string;
-  source_sha256: string;
-  source_url?: string;
-  commit_sha?: string;
-  plan: string;
-  runner_digest?: string;
-  builder_node_id: string;
-  started_at: string;
-  finished_at: string;
-  sbom_storage_key?: string | null;
-}
-
-/* ───────────────────────────── Invoices (#259) ─────────────────────────── */
-
-export interface Invoice {
-  id: string;
-  provider: 'stripe' | 'paddle';
-  provider_invoice_id: string;
-  number?: string;
-  status: 'draft' | 'open' | 'paid' | 'uncollectible' | 'void';
-  period_start: string;
-  period_end: string;
-  subtotal_cents: number;
-  tax_cents: number;
-  total_cents: number;
-  amount_paid_cents: number;
-  currency: string;
-  /**
-   * The hosted PDF URL is provider-scoped and deliberately not on the wire —
-   * customers fetch it from the Stripe/Paddle portal. This flag is the only
-   * PDF surface the API exposes.
-   */
-  pdf_available: boolean;
-  created_at: string;
-}
-
-export interface InvoiceList {
-  items: Invoice[];
-  next_before?: string | null;
-}
-
-/** Security-event timeline row (GET /v1/audit-events). */
-export interface AuditEvent {
-  id: string;
-  at: string;
-  actor: string;
-  kind: string;
-  subject?: string;
-  data?: Record<string, unknown>;
-}
-
-export interface AuditEventList {
-  events: AuditEvent[];
-  limit: number;
-}
-
 /** RFC 7807 problem envelope returned by the backend on errors. */
 export interface Problem {
   type?: string;
@@ -593,13 +236,47 @@ export class ApiError extends Error {
 
 /* ────────────────────────────── Transport ──────────────────────────────── */
 
+/** A fresh key for one logical operation; reuse it when that operation is retried. */
+export function newIdempotencyKey(): string {
+  return typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `op-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Every /v1/admin/* write requires a TOTP step-up less than five minutes old
+ * (403 step_up_required). The operations shell registers a handler that asks
+ * the operator for a code and resolves true once /v1/account/mfa/verify has
+ * re-issued the session cookie; the request is then replayed with the same
+ * headers, including its Idempotency-Key, so the retry cannot double-apply.
+ */
+type StepUpHandler = () => Promise<boolean>;
+let stepUpHandler: StepUpHandler | null = null;
+
+export function setStepUpHandler(handler: StepUpHandler | null): void {
+  stepUpHandler = handler;
+}
+
+export function isStepUpError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 403 && (err.code === 'step_up_required' || err.code === 'mfa_required');
+}
+
+async function readProblem(res: Response): Promise<Problem | null> {
+  try {
+    return (await res.json()) as Problem;
+  } catch {
+    /* non-JSON error body (e.g. rate-limit plain text) */
+    return null;
+  }
+}
+
 /**
  * All calls are relative and same-origin. In production the Vercel rewrites
  * in next.config.ts proxy /v1/* (and /login, /auth/*, /logout, /oauth/*) to
  * the DO backend, so the browser sees one origin and the session cookie is
  * first-party.
  */
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   parse: 'json' | 'none' = 'json',
@@ -612,40 +289,35 @@ async function request<T>(
     // multipart boundary, and forcing application/json here would produce
     // a body the server cannot parse.
     ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-    ...(typeof window !== 'undefined' && localStorage.getItem('faas_active_org')
-      ? { 'X-Active-Org': localStorage.getItem('faas_active_org')! }
-      : {}),
     ...(init.headers as Record<string, string>),
   };
   if (isAdminMutation && !requestHeaders['Idempotency-Key']) {
-    requestHeaders['Idempotency-Key'] =
-      typeof globalThis.crypto?.randomUUID === 'function'
-        ? globalThis.crypto.randomUUID()
-        : `admin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    requestHeaders['Idempotency-Key'] = newIdempotencyKey();
   }
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      ...init,
-      credentials: 'include',
-      // API calls must never silently follow an HTML navigation redirect.
-      // A redirect usually means middleware or auth routing is misconfigured;
-      // surface it as an API error instead.
-      redirect: 'manual',
-      headers: requestHeaders,
-    });
-  } catch (err) {
-    throw new ApiError(null, 0, `Network error: could not reach the control plane (${(err as Error).message})`);
-  }
-
-  if (!res.ok) {
-    let problem: Problem | null = null;
+  const send = async (): Promise<Response> => {
     try {
-      problem = (await res.json()) as Problem;
-    } catch {
-      /* non-JSON error body (e.g. rate-limit plain text) */
+      return await fetch(path, {
+        ...init,
+        credentials: 'include',
+        // API calls must never silently follow an HTML navigation redirect.
+        // A redirect usually means middleware or auth routing is misconfigured;
+        // surface it as an API error instead.
+        redirect: 'manual',
+        headers: requestHeaders,
+      });
+    } catch (err) {
+      throw new ApiError(null, 0, `Network error: could not reach the control plane (${(err as Error).message})`);
     }
-    throw new ApiError(problem, res.status, `Request failed (HTTP ${res.status})`);
+  };
+
+  let res = await send();
+  if (!res.ok) {
+    let error = new ApiError(await readProblem(res), res.status, `Request failed (HTTP ${res.status})`);
+    if (isStepUpError(error) && stepUpHandler && (await stepUpHandler())) {
+      res = await send();
+      if (!res.ok) error = new ApiError(await readProblem(res), res.status, `Request failed (HTTP ${res.status})`);
+    }
+    if (!res.ok) throw error;
   }
 
   if (parse === 'none' || res.status === 204) return undefined as T;
@@ -658,7 +330,7 @@ async function request<T>(
 
 /* ─────────────────────────────── Auth ──────────────────────────────────── */
 
-/** Body of a successful POST /login or /signup. No API key is ever returned. */
+/** Body of a successful POST /login. No API key is ever returned. */
 export interface LoginResult {
   account_id: string;
   plan: Plan;
@@ -715,14 +387,6 @@ async function authPost(path: string, fields: Record<string, string>): Promise<L
 export const login = (email: string, password: string) =>
   authPost('/api/auth/login', { email, password });
 
-/**
- * POST /signup — creates the account and signs in. Idempotent when the email
- * exists AND the password matches; a colliding email with a different password
- * returns 401, not 409, to avoid leaking which addresses are registered.
- */
-export const signup = (email: string, password: string) =>
-  authPost('/api/auth/signup', { email, password });
-
 /** POST /login/forgot — always succeeds, so it can't be used to probe emails. */
 export async function requestPasswordReset(email: string): Promise<void> {
   await authPost('/api/auth/forgot', { email }).catch((err) => {
@@ -733,8 +397,57 @@ export async function requestPasswordReset(email: string): Promise<void> {
   });
 }
 
+/** Mints a double-submit token bound to one browser action (GET /v1/auth/csrf). */
+export const issueCSRF = async (action: 'auth.logout' | 'mfa_recover') =>
+  (await request<{ csrf_token: string }>(`/v1/auth/csrf?action=${encodeURIComponent(action)}`, { cache: 'no-store' })).csrf_token;
+
+/**
+ * Ends the server session. apid revokes it only when the JSON body carries a
+ * CSRF token bound to auth.logout; without one it answers 400 csrf_mismatch
+ * and the cookie stays valid. A 401 means the session is already gone.
+ */
 export async function logout(): Promise<void> {
-  await fetch('/logout', { method: 'POST', credentials: 'include', redirect: 'manual' }).catch(() => {});
+  try {
+    const csrf_token = await issueCSRF('auth.logout');
+    await request<void>('/v1/auth/logout', { method: 'POST', body: JSON.stringify({ csrf_token }) }, 'none');
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return;
+    if (err instanceof ApiError && err.status === 0) return; // offline: the cookie expires on its own
+    throw err;
+  }
+}
+
+/** POST /v1/account/mfa/verify — refreshes the session's five-minute step-up stamp. */
+export const verifyMfa = (totp: string) =>
+  request<void>('/v1/account/mfa/verify', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': newIdempotencyKey() },
+    body: JSON.stringify({ totp }),
+  }, 'none');
+
+/** POST /v1/account/mfa/recover — burns a recovery code; also refreshes step-up. */
+export async function recoverMfa(code: string): Promise<void> {
+  const csrf_token = await issueCSRF('mfa_recover');
+  await request<void>('/v1/account/mfa/recover', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': newIdempotencyKey() },
+    body: JSON.stringify({ code, csrf_token }),
+  }, 'none');
+}
+
+/**
+ * Whether the signed-in account is a platform operator. The admin scope alone
+ * is held by every customer session; only the FAAS_ADMIN_EMAILS allowlist
+ * admits /v1/admin/*, so a cheap admin read is the authoritative check.
+ */
+export async function probeOperatorAccess(): Promise<'granted' | 'denied'> {
+  try {
+    await request('/v1/admin/config', { cache: 'no-store' });
+    return 'granted';
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 403 && !isStepUpError(err)) return 'denied';
+    throw err;
+  }
 }
 
 /** Lightweight unauthenticated probe used by the operations shell. */
@@ -752,502 +465,9 @@ export async function probeControlPlane(): Promise<boolean> {
   }
 }
 
-/** OAuth consent redirects. Both 302 to the provider; the callback mints the session. */
-export const googleAuthUrl = '/v1/auth/google';
-export const githubAuthUrl = '/v1/auth/github';
-
 /* ────────────────────────────── Account ────────────────────────────────── */
 
 export const getAccount = () => request<Account>('/v1/account', { cache: 'no-store' });
-
-export const changePlan = (plan: Plan) =>
-  request<Account>('/v1/account/plan', { method: 'PATCH', body: JSON.stringify({ plan }) });
-
-export const exportAccount = () => request<unknown>('/v1/account/export');
-
-export const deleteAccount = () => request<unknown>('/v1/account', { method: 'DELETE' });
-
-export const restoreAccount = () => request<Account>('/v1/account/restore', { method: 'POST' });
-
-/* ──────────────────────────────── Apps ─────────────────────────────────── */
-
-export const listApps = () => request<App[]>('/v1/apps', { cache: 'no-store' });
-
-export const getApp = (slug: string) => request<App>(`/v1/apps/${slug}`);
-
-export interface CreateAppInput {
-  slug: string;
-  type?: AppType;
-  runtime?: Runtime;
-  ram_mb?: number;
-  max_concurrency?: number;
-  idle_timeout_s?: number;
-}
-export const createApp = (input: CreateAppInput) =>
-  request<App>('/v1/apps', { method: 'POST', body: JSON.stringify(input) });
-
-export interface UpdateAppInput {
-  ram_mb?: number;
-  idle_timeout_s?: number;
-  max_concurrency?: number;
-  min_instances?: number;
-}
-export const updateApp = (slug: string, input: UpdateAppInput) =>
-  request<App>(`/v1/apps/${slug}`, { method: 'PATCH', body: JSON.stringify(input) });
-
-export const deleteApp = (slug: string) =>
-  request<void>(`/v1/apps/${slug}`, { method: 'DELETE' }, 'none');
-
-export const renameApp = (slug: string, newSlug: string) =>
-  request<App>(`/v1/apps/${slug}/rename`, { method: 'POST', body: JSON.stringify({ new_slug: newSlug }) });
-
-export const parkApp = (slug: string) =>
-  request<void>(`/v1/apps/${slug}/park`, { method: 'POST' }, 'none');
-
-export const wakeApp = (slug: string) =>
-  request<Instance>(`/v1/apps/${slug}/wake`, { method: 'POST' });
-
-/** Roll back to the latest eligible deployment or to an explicit target. */
-export const rollbackApp = (slug: string, targetDeploymentId?: string) => {
-  const idempotencyKey =
-    typeof globalThis.crypto?.randomUUID === 'function'
-      ? globalThis.crypto.randomUUID()
-      : `rollback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return request<Deployment>(`/v1/apps/${slug}/rollback`, {
-    method: 'POST',
-    headers: { 'Idempotency-Key': idempotencyKey },
-    ...(targetDeploymentId
-      ? { body: JSON.stringify({ target_deployment_id: targetDeploymentId }) }
-      : {}),
-  });
-};
-
-export const listInstances = (slug: string) =>
-  request<Instance[]>(`/v1/apps/${slug}/instances`, { cache: 'no-store' });
-
-/** Account-wide instance list — one call instead of one per app (#393). */
-export const listAllInstances = (limit = 100, before?: string) => {
-  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
-  if (before) q.set('before', before);
-  return request<InstanceList>(`/v1/instances?${q}`, { cache: 'no-store' });
-};
-
-/* ────────────────────────────── Metrics ────────────────────────────────── */
-
-export const getAppMetrics = (slug: string, range: MetricsRange = '24h') =>
-  request<AppMetrics>(`/v1/apps/${slug}/metrics?range=${range}`, { cache: 'no-store' });
-
-/** Account-wide per-app rollup, keyed by slug — one call for the whole page. */
-export const getAppsMetrics = (range: MetricsRange = '24h') =>
-  request<AppsMetrics>(`/v1/apps/metrics?range=${range}`, { cache: 'no-store' });
-
-/* ─────────────────────────────── Env vars ──────────────────────────────── */
-
-export const listEnv = (slug: string) => request<AppEnvList>(`/v1/apps/${slug}/env`, { cache: 'no-store' });
-
-/** key must match ^[A-Z][A-Z0-9_]*$. Plaintext by contract — not for secrets. */
-export const setEnv = (slug: string, key: string, value: string) =>
-  request<void>(`/v1/apps/${slug}/env/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }, 'none');
-
-export const deleteEnv = (slug: string, key: string) =>
-  request<void>(`/v1/apps/${slug}/env/${key}`, { method: 'DELETE' }, 'none');
-
-/* ────────────────────────── Queue introspection ────────────────────────── */
-
-export const getQueueState = (slug: string) =>
-  request<QueueState>(`/v1/apps/${slug}/queues/state`, { cache: 'no-store' });
-
-/** Read-only: acquires no lease and does not increment `attempts`. */
-export const peekQueue = (slug: string, limit = 25, before?: string) => {
-  const q = new URLSearchParams({ limit: String(limit) });
-  if (before) q.set('before', before);
-  return request<QueuePeek>(`/v1/apps/${slug}/queues/peek?${q}`, { cache: 'no-store' });
-};
-
-export const listDeadLetter = (slug: string, limit = 25, before?: string) => {
-  const q = new URLSearchParams({ limit: String(limit) });
-  if (before) q.set('before', before);
-  return request<QueueDeadLetter>(`/v1/apps/${slug}/queues/dead_letter?${q}`, { cache: 'no-store' });
-};
-
-/* ──────────────────────────── Alert rules ──────────────────────────────── */
-
-export const listAlertRules = (slug: string) =>
-  request<AlertRule[]>(`/v1/apps/${slug}/alerts`, { cache: 'no-store' });
-
-export const createAlertRule = (slug: string, input: CreateAlertRuleInput) =>
-  request<AlertRule>(`/v1/apps/${slug}/alerts`, { method: 'POST', body: JSON.stringify(input) });
-
-export const updateAlertRule = (slug: string, id: string, input: Partial<CreateAlertRuleInput>) =>
-  request<AlertRule>(`/v1/apps/${slug}/alerts/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
-
-export const deleteAlertRule = (slug: string, id: string) =>
-  request<void>(`/v1/apps/${slug}/alerts/${id}`, { method: 'DELETE' }, 'none');
-
-export const rotateAlertSecret = (slug: string, id: string, secret: string) =>
-  request<AlertRule>(`/v1/apps/${slug}/alerts/${id}/rotate-secret`, {
-    method: 'POST',
-    body: JSON.stringify({ webhook_secret: secret }),
-  });
-
-/* ────────────────────────── Outbound Webhooks ─────────────────────────── */
-
-export const listAppWebhooks = (slug: string) =>
-  request<AppWebhook[]>(`/v1/apps/${slug}/webhooks`, { cache: 'no-store' });
-
-export const createAppWebhook = (slug: string, input: CreateAppWebhookInput) =>
-  request<AppWebhook>(`/v1/apps/${slug}/webhooks`, { method: 'POST', body: JSON.stringify(input) });
-
-export const getAppWebhook = (slug: string, id: string) =>
-  request<AppWebhook>(`/v1/apps/${slug}/webhooks/${id}`, { cache: 'no-store' });
-
-export const updateAppWebhook = (slug: string, id: string, input: Partial<CreateAppWebhookInput>) =>
-  request<AppWebhook>(`/v1/apps/${slug}/webhooks/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
-
-export const deleteAppWebhook = (slug: string, id: string) =>
-  request<void>(`/v1/apps/${slug}/webhooks/${id}`, { method: 'DELETE' }, 'none');
-
-export const rotateAppWebhookSecret = (slug: string, id: string) =>
-  request<{ webhook_secret_sealed_masked: string; rotated_at: string }>(`/v1/apps/${slug}/webhooks/${id}/rotate-secret`, {
-    method: 'POST',
-  });
-
-export const listAppWebhookDeliveries = (slug: string, id: string, pageSize = 50, pageToken?: string) => {
-  const q = new URLSearchParams({ page_size: String(pageSize) });
-  if (pageToken) q.set('page_token', pageToken);
-  return request<AppWebhookDeliveryListResponse>(`/v1/apps/${slug}/webhooks/${id}/deliveries?${q}`, { cache: 'no-store' });
-};
-
-export const retryAppWebhookDelivery = (slug: string, id: string, did: string) =>
-  request<AppWebhookDelivery>(`/v1/apps/${slug}/webhooks/${id}/deliveries/${did}/retry`, { method: 'POST' });
-
-/* ───────────────────────────── Sessions ────────────────────────────────── */
-
-export const listSessions = () => request<SessionList>('/v1/auth/sessions', { cache: 'no-store' });
-
-export const revokeSession = (id: string) =>
-  request<void>(`/v1/auth/sessions/${id}`, { method: 'DELETE' }, 'none');
-
-/** Revokes every session including the caller's — the UI must sign out after. */
-export const revokeAllSessions = () =>
-  request<void>('/v1/auth/sessions/revoke_all', { method: 'POST' }, 'none');
-
-/* ───────────────────────────── Invoices ────────────────────────────────── */
-
-export const listInvoices = (limit = 25, before?: string, month?: string) => {
-  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
-  if (before) q.set('before', before);
-  if (month) q.set('month', month);
-  return request<InvoiceList>(`/v1/invoices?${q}`, { cache: 'no-store' });
-};
-
-/* ────────────────────────────── Deployments ────────────────────────────── */
-
-export const listDeployments = () => request<DeploymentList>('/v1/deployments', { cache: 'no-store' });
-
-export const getDeployment = (id: string) => request<Deployment>(`/v1/deployments/${id}`);
-
-export const getAppDeploymentSummary = (slug: string, id: string) =>
-  request<DeploymentSummaryResponse>(`/v1/apps/${slug}/deployments/${id}/summary`, { cache: 'no-store' });
-
-export const listAppDeployments = (slug: string) =>
-  request<DeploymentList>(`/v1/apps/${slug}/deployments`, { cache: 'no-store' });
-
-/**
- * Deploy a prebuilt, digest-pinned OCI image. Returns 202 — the build is
- * queued, not finished; poll the deployment or watch its build log.
- */
-export const deployImage = (slug: string, image: string) =>
-  request<Deployment>(`/v1/apps/${slug}/deployments`, {
-    method: 'POST',
-    body: JSON.stringify({ image }),
-  });
-
-/**
- * Deploy from a source tarball. Sent as multipart, so `Content-Type` is left
- * to the browser — setting it manually would omit the multipart boundary and
- * the backend would reject the body.
- */
-export async function deploySource(
-  slug: string,
-  file: File,
-  opts: { dockerfile?: boolean; kind?: AppType; runtime?: Runtime } = {},
-): Promise<Deployment> {
-  const form = new FormData();
-  form.append('source', file);
-  if (opts.dockerfile) form.append('dockerfile', 'true');
-  if (opts.kind) form.append('kind', opts.kind);
-  if (opts.runtime) form.append('runtime', opts.runtime);
-
-  return request<Deployment>(`/v1/apps/${slug}/deployments`, { method: 'POST', body: form });
-}
-
-/** CycloneDX SBOM for a build. Served as vnd.cyclonedx+json. */
-export const getBuildSbom = (id: string) =>
-  request<Record<string, unknown>>(`/v1/builds/${id}/sbom`, {
-    headers: { Accept: 'application/vnd.cyclonedx+json' },
-    cache: 'no-store',
-  });
-
-export const getBuildProvenance = (id: string) =>
-  request<BuildProvenance>(`/v1/builds/${id}/provenance`, { cache: 'no-store' });
-
-/* ───────────────────────────── Invocations ─────────────────────────────── */
-
-/**
- * Newest-first page of invocations. This is the only per-request telemetry the
- * control plane exposes, so it backs the Overview charts, the queue/cron run
- * histories and the Metrics page. `limit` is capped server-side at 200.
- */
-export const listInvocations = (limit = 100, before?: string) => {
-  const q = new URLSearchParams({ limit: String(Math.min(limit, 200)) });
-  if (before) q.set('before', before);
-  return request<InvocationList>(`/v1/invocations?${q}`, { cache: 'no-store' });
-};
-
-export const getInvocation = (id: string) => request<Invocation>(`/v1/invocations/${id}`);
-
-/* ────────────────────────── Queues & delayed tasks ─────────────────────── */
-
-export interface InvokeInput {
-  payload?: Record<string, unknown>;
-  headers?: Record<string, string>;
-  method?: string;
-  path?: string;
-}
-
-export interface InvokeResult {
-  id: string;
-  status: InvocationState;
-  result?: Record<string, unknown>;
-}
-
-/**
- * Sync invoke: the server long-polls until the drain reaches a terminal
- * state, capped at 30s on paid plans and 5s on Free. A 504 is NOT a failure —
- * the work continues, and the row can be read back from /v1/invocations/{id}.
- */
-export const invokeApp = (slug: string, input: InvokeInput) =>
-  request<InvokeResult>(`/v1/apps/${slug}/invoke`, { method: 'POST', body: JSON.stringify(input) });
-
-/** Async invoke: returns immediately with the row id. */
-export const invokeAppAsync = (slug: string, input: InvokeInput) =>
-  request<InvokeResult>(`/v1/apps/${slug}/invoke/async`, { method: 'POST', body: JSON.stringify(input) });
-
-export const queueSend = (slug: string, payload: Record<string, unknown>) =>
-  request<Invocation>(`/v1/apps/${slug}/queues/send`, { method: 'POST', body: JSON.stringify({ payload }) });
-
-export const createDelayedTask = (slug: string, scheduledAt: string, payload: Record<string, unknown>) =>
-  request<Invocation>(`/v1/apps/${slug}/delayed-tasks`, {
-    method: 'POST',
-    body: JSON.stringify({ scheduled_at: scheduledAt, payload }),
-  });
-
-export const cancelDelayedTask = (id: string) =>
-  request<void>(`/v1/delayed-tasks/${id}`, { method: 'DELETE' }, 'none');
-
-/* ─────────────────────────── Audit / activity ──────────────────────────── */
-
-export const listAuditEvents = (limit = 50, kindPrefix?: string) => {
-  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
-  if (kindPrefix) q.set('kind_prefix', kindPrefix);
-  return request<AuditEventList>(`/v1/audit-events?${q}`, { cache: 'no-store' });
-};
-
-/* ──────────────────────────────── Logs ─────────────────────────────────── */
-
-/**
- * SSE endpoints. These stream `text/event-stream`, so callers attach an
- * EventSource rather than going through `request()`. Same-origin, so the
- * session cookie rides along without extra config.
- */
-export const appLogsUrl = (slug: string, follow = true) =>
-  `/v1/apps/${slug}/logs?follow=${follow ? 1 : 0}`;
-
-export const deploymentLogsUrl = (id: string, follow = true) =>
-  `/v1/deployments/${id}/logs?follow=${follow ? 1 : 0}`;
-
-/* ─────────────────────────── Per-app secrets ───────────────────────────── */
-
-export const listSecrets = (slug: string) => request<AppSecretList>(`/v1/apps/${slug}/secrets`);
-
-/** Account-wide sealed-secret list — one call instead of one per app (#393). */
-export const listAllSecrets = (limit = 100, before?: string) => {
-  const q = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
-  if (before) q.set('before', before);
-  return request<AccountSecretList>(`/v1/secrets?${q}`, { cache: 'no-store' });
-};
-
-/** key must match ^[A-Z][A-Z0-9_]*$. Body carries the plaintext value. */
-export const setSecret = (slug: string, key: string, value: string) =>
-  request<void>(`/v1/apps/${slug}/secrets/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }, 'none');
-
-export const deleteSecret = (slug: string, key: string) =>
-  request<void>(`/v1/apps/${slug}/secrets/${key}`, { method: 'DELETE' }, 'none');
-
-/* ───────────────────────────────── Domains ─────────────────────────────── */
-
-export const listDomains = () => request<CustomDomain[]>('/v1/domains', { cache: 'no-store' });
-
-export const createDomain = (domain: string, appId: string) =>
-  request<CustomDomain>('/v1/domains', { method: 'POST', body: JSON.stringify({ domain, app_id: appId }) });
-
-export const deleteDomain = (domain: string) =>
-  request<void>(`/v1/domains/${domain}`, { method: 'DELETE' }, 'none');
-
-/* ────────────────────────────────── Crons ──────────────────────────────── */
-
-export const listCrons = () => request<Cron[]>('/v1/crons', { cache: 'no-store' });
-
-export interface CreateCronInput {
-  app_id: string;
-  schedule: string;
-  path?: string;
-  enabled?: boolean;
-}
-export const createCron = (input: CreateCronInput) =>
-  request<Cron>('/v1/crons', { method: 'POST', body: JSON.stringify(input) });
-
-export const updateCron = (id: string, input: Partial<Pick<Cron, 'schedule' | 'path' | 'enabled'>>) =>
-  request<Cron>(`/v1/crons/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
-
-export const deleteCron = (id: string) =>
-  request<void>(`/v1/crons/${id}`, { method: 'DELETE' }, 'none');
-
-/* ────────────────────────────────── Keys ───────────────────────────────── */
-
-export const listKeys = () => request<ApiKey[]>('/v1/keys', { cache: 'no-store' });
-
-export const createKey = (label: string) =>
-  request<ApiKey>('/v1/keys', { method: 'POST', body: JSON.stringify({ label }) });
-
-export const deleteKey = (id: string) =>
-  request<void>(`/v1/keys/${id}`, { method: 'DELETE' }, 'none');
-
-/* ────────────────────────────────── Usage ──────────────────────────────── */
-
-export const getUsageSummary = (month?: string) =>
-  request<UsageSummary>(`/v1/usage/summary${month ? `?month=${month}` : ''}`, { cache: 'no-store' });
-
-/** Per-app rows for a billing month (YYYY-MM); defaults to the current month. */
-export const getUsageByApp = (month?: string) =>
-  request<AppUsage[]>(`/v1/usage${month ? `?month=${month}` : ''}`, { cache: 'no-store' });
-
-/* ───────────────────────────── CLI Device Auth ──────────────────────────── */
-
-export interface CliAuthClaimInput {
-  code: string;
-  email: string;
-}
-
-/** Claim a CLI authorization device code. */
-export const claimCliAuthCode = async (code: string, email: string) => {
-  const form = new URLSearchParams();
-  form.set('code', code);
-  form.set('email', email);
-  return request<void>('/api/cli-auth', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form.toString(),
-  }, 'none');
-};
-
-/* ───────────────────────────── Organizations ──────────────────────────── */
-
-export type OrgRole = 'owner' | 'admin' | 'developer' | 'viewer' | 'billing';
-
-export interface Org {
-  id: string;
-  slug: string;
-  name: string;
-  personal: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface OrgWithRole extends Org {
-  role: OrgRole;
-}
-
-export interface OrgMeResponse {
-  org: OrgWithRole | null;
-}
-
-export interface OrgMember {
-  user_id: string;
-  email: string;
-  role: OrgRole;
-  joined_at: string;
-}
-
-export interface OrgInvitation {
-  token: string;
-  email: string;
-  role: OrgRole;
-  invited_by: string;
-  expires_at: string;
-  created_at: string;
-}
-
-export interface OrgSeatUsage {
-  total_members: number;
-  pending_invitations: number;
-}
-
-export interface CreateOrgInput {
-  slug: string;
-  name: string;
-}
-
-export interface UpdateOrgInput {
-  name?: string;
-  owner_id?: string;
-}
-
-export interface ListOrgsResponse { orgs: OrgWithRole[]; }
-export const listOrgs = () => request<ListOrgsResponse>('/v1/orgs', { cache: 'no-store' });
-
-export const createOrg = (input: CreateOrgInput) =>
-  request<Org>('/v1/orgs', { method: 'POST', body: JSON.stringify(input) });
-
-export const getOrgMe = () => request<OrgMeResponse>('/v1/orgs/me', { cache: 'no-store' });
-
-export const getOrg = (slug: string) => request<Org>(`/v1/orgs/${slug}`, { cache: 'no-store' });
-
-export const updateOrg = (slug: string, input: UpdateOrgInput) =>
-  request<Org>(`/v1/orgs/${slug}`, { method: 'PATCH', body: JSON.stringify(input) });
-
-export interface ListOrgMembersResponse { members: OrgMember[]; }
-export const listOrgMembers = (slug: string) =>
-  request<ListOrgMembersResponse>(`/v1/orgs/${slug}/members`, { cache: 'no-store' });
-
-export const addOrgMember = (slug: string, email: string, role: OrgRole) =>
-  request<OrgInvitation>(`/v1/orgs/${slug}/members`, { method: 'POST', body: JSON.stringify({ email, role }) });
-
-export const updateOrgMemberRole = (slug: string, userId: string, role: OrgRole) =>
-  request<void>(`/v1/orgs/${slug}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }, 'none');
-
-export const removeOrgMember = (slug: string, userId: string) =>
-  request<void>(`/v1/orgs/${slug}/members/${userId}`, { method: 'DELETE' }, 'none');
-
-export interface ListOrgInvitationsResponse { invitations: OrgInvitation[]; }
-export const listOrgInvitations = (slug: string) =>
-  request<ListOrgInvitationsResponse>(`/v1/orgs/${slug}/invitations`, { cache: 'no-store' });
-
-export const revokeOrgInvitation = (slug: string, token: string) =>
-  request<void>(`/v1/orgs/${slug}/invitations/${token}`, { method: 'DELETE' }, 'none');
-
-export const getInvitation = (token: string) =>
-  request<OrgInvitation>(`/v1/invitations/${token}`, { cache: 'no-store' });
-
-export const acceptInvitation = (token: string) =>
-  request<OrgMember>(`/v1/invitations/${token}/accept`, { method: 'POST' });
-
-export const transferOrgOwnership = (slug: string, newOwnerId: string) =>
-  request<void>(`/v1/orgs/${slug}/transfer_ownership`, { method: 'POST', body: JSON.stringify({ new_owner_id: newOwnerId }) }, 'none');
-
-export const getOrgSeatUsage = (slug: string) =>
-  request<OrgSeatUsage>(`/v1/orgs/${slug}/seat_usage`, { cache: 'no-store' });
 
 /* ────────────────────────── Operator & Admin (/v1/admin/*) ─────────────────────── */
 
@@ -1291,6 +511,7 @@ export interface ObsOverviewResponse {
 
 export interface ObsHealthResponse {
   generated_at: string;
+  prometheus_available: boolean;
   audit_log_write_total_5m: number;
   audit_log_write_failures_5m: number;
   audit_log_coverage_ratio_5m: number;
@@ -1532,6 +753,24 @@ export interface ObsAppErrorSummary {
   sample_message: string;
 }
 
+export type MetricsRange = '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
+
+/** Per-app request metrics as embedded in the admin app drill-down. */
+export interface AppMetrics {
+  app_id: string;
+  range: MetricsRange;
+  source: string;
+  as_of: string;
+  request_count: number;
+  latency_p50_ms: number;
+  latency_p95_ms: number;
+  latency_p99_ms: number;
+  error_rate_pct: number;
+  cold_start_pct: number;
+  wake_p95_ms: number;
+  queue_depth: number;
+}
+
 export interface ObsAppHealth {
   generated_at: string;
   metrics: AppMetrics;
@@ -1597,14 +836,37 @@ export interface ObsNodeDrainStatus {
   observed_at: string;
 }
 
+export interface ObsNodeOperationPreflight {
+  affected_apps: number;
+  affected_tenants: number;
+  total_instances: number;
+  live_instances: number;
+  live_ram_mb: number;
+  capacity_change_mb: number;
+  reversible: boolean;
+  disruption_warning: boolean;
+}
+
+/**
+ * 202 Accepted: the lifecycle change is queued as an operator intent and
+ * converges asynchronously. `active` is the requested state, not the observed
+ * one — poll `status_url` (getOperatorIntent) for the outcome.
+ */
 export interface ObsNodeMutationResponse {
   ok: boolean;
+  intent_id: string;
+  status_url: string;
+  expires_at: string;
+  kind: string;
   node: string;
   previous_active: boolean;
   active: boolean;
+  previous_lifecycle: string;
+  requested_lifecycle: string;
   live_instances: number;
   forced: boolean;
   reason: string;
+  preflight: ObsNodeOperationPreflight;
 }
 
 export interface ObsHeartbeatRow {
@@ -1666,33 +928,39 @@ export interface ObsRateLimitResponse {
   live: ObsRateLimitLiveRow[];
 }
 
+/** One provider product/price handle. Plan is a billable plan (free has none). */
 export interface BillingCatalogEntry {
-  id: string;
-  kind: string;
-  plan?: string;
-  price_cents: number;
-  currency: string;
-  interval?: string;
-  created_at: string;
+  plan: string;
+  kind: 'monthly' | 'overage' | 'product' | string;
+  handle: string;
+  synced_at: string;
 }
 
+/** Providers without a catalog surface answer 501 instead of this body. */
 export interface BillingCatalogResponse {
-  items: BillingCatalogEntry[];
+  provider: string;
+  synced_at: string;
+  entries: BillingCatalogEntry[];
 }
 
+/** One audit_log row, as both /v1/audit-log/all and the admin search return it. */
 export interface GlobalAuditLogEntry {
   id: string;
-  at: string;
-  account_id?: string | null;
-  actor: string;
   kind: string;
-  subject?: string | null;
-  data?: Record<string, unknown>;
+  account_id?: string;
+  account_email?: string;
+  actor?: string;
+  received_at: string;
+  data?: Record<string, unknown> | null;
+  /** Admin search only: true for operator.action.* kinds. */
+  is_operator_action?: boolean;
 }
 
+/** GET /v1/audit-log/all. next_before is omitted on the last page. */
 export interface GlobalAuditLogResponse {
-  items: GlobalAuditLogEntry[];
-  next_before?: string | null;
+  entries: GlobalAuditLogEntry[];
+  limit: number;
+  next_before?: string;
 }
 
 export const getObsOverview = () =>
@@ -1701,21 +969,28 @@ export const getObsOverview = () =>
 export const getObsHealth = () =>
   request<ObsHealthResponse>('/v1/admin/obs/health', { cache: 'no-store' });
 
-export const listObsTenants = (limit = 200, cursor?: string, includePii = false) => {
+export interface ObsTenantFilters {
+  plan?: string;
+  status?: string;
+}
+
+export const listObsTenants = (limit = 200, cursor?: string, includePii = false, filters: ObsTenantFilters = {}) => {
   const q = new URLSearchParams({ limit: String(limit) });
   if (cursor) q.set('cursor', cursor);
   if (includePii) q.set('include_pii', '1');
+  if (filters.plan) q.set('plan', filters.plan);
+  if (filters.status) q.set('status', filters.status);
   return request<ObsTenantListResponse>(`/v1/admin/obs/tenants?${q}`, { cache: 'no-store' });
 };
 
 export const getObsTenantDetail = (id: string, includePii = false) => {
   const q = includePii ? '?include_pii=1' : '';
-  return request<ObsTenantDetailResponse>(`/v1/admin/obs/tenants/${id}${q}`, { cache: 'no-store' });
+  return request<ObsTenantDetailResponse>(`/v1/admin/obs/tenants/${encodeURIComponent(id)}${q}`, { cache: 'no-store' });
 };
 
 export const getObsTenantActivity = (id: string, limit = 50) =>
   request<ObsTenantActivityResponse>(
-    `/v1/admin/obs/tenants/${id}/activity?limit=${limit}`,
+    `/v1/admin/obs/tenants/${encodeURIComponent(id)}/activity?limit=${limit}`,
     { cache: 'no-store' },
   );
 
@@ -1725,7 +1000,7 @@ export const getObsTenant360 = (id: string, month?: string, includePii = false) 
   if (includePii) q.set('include_pii', '1');
   const query = q.toString();
   return request<ObsTenant360Response>(
-    `/v1/admin/obs/tenants/${id}/360${query ? `?${query}` : ''}`,
+    `/v1/admin/obs/tenants/${encodeURIComponent(id)}/360${query ? `?${query}` : ''}`,
     { cache: 'no-store' },
   );
 };
@@ -1733,28 +1008,52 @@ export const getObsTenant360 = (id: string, month?: string, includePii = false) 
 export const getObsCapacity = () =>
   request<ObsCapacityResponse>('/v1/admin/obs/capacity', { cache: 'no-store' });
 
-const mutateObsAccount = (id: string, action: 'suspend' | 'restore' | 'revoke-sessions', reason: string) =>
+/**
+ * Operator writes take the caller's Idempotency-Key so a retry of the same
+ * logical operation (timeout, step-up prompt, double click) replays instead of
+ * applying twice. Pages hold one key per open dialog (useOperationKey).
+ */
+export interface OperatorWrite {
+  idempotencyKey?: string;
+}
+
+/** Headers for an operator write; area clients in src/lib/ops/* use this too. */
+export const writeHeaders = (opts?: OperatorWrite): Record<string, string> =>
+  opts?.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : {};
+
+/**
+ * Lifecycle endpoints require `reason` to match [a-z0-9_]{1,64} and an
+ * explicit `confirm=true`, which the console sends only after the operator has
+ * confirmed in a dialog.
+ */
+const mutateObsAccount = (id: string, action: 'suspend' | 'restore' | 'revoke-sessions', reason: string, opts?: OperatorWrite) =>
   request<ObsAccountMutationResponse>(
     `/v1/admin/ops/accounts/${encodeURIComponent(id)}/${action}?confirm=true&reason=${encodeURIComponent(reason)}`,
-    { method: 'POST' },
+    { method: 'POST', headers: writeHeaders(opts) },
   );
 
-export const suspendObsAccount = (id: string, reason = 'operator_console_suspend') =>
-  mutateObsAccount(id, 'suspend', reason);
+export const suspendObsAccount = (id: string, reason: string, opts?: OperatorWrite) =>
+  mutateObsAccount(id, 'suspend', reason, opts);
 
-export const restoreObsAccount = (id: string, reason = 'operator_console_restore') =>
-  mutateObsAccount(id, 'restore', reason);
+export const restoreObsAccount = (id: string, reason: string, opts?: OperatorWrite) =>
+  mutateObsAccount(id, 'restore', reason, opts);
 
-export const revokeObsAccountSessions = (id: string, reason = 'operator_console_revoke_sessions') =>
-  mutateObsAccount(id, 'revoke-sessions', reason);
+export const revokeObsAccountSessions = (id: string, reason: string, opts?: OperatorWrite) =>
+  mutateObsAccount(id, 'revoke-sessions', reason, opts);
 
 export const getObsAppDetail = (id: string) =>
-  request<ObsAppDetailResponse>(`/v1/admin/obs/apps/${id}`, { cache: 'no-store' });
+  request<ObsAppDetailResponse>(`/v1/admin/obs/apps/${encodeURIComponent(id)}`, { cache: 'no-store' });
 
-export const issueAccountCredit = (accountId: string, amountCents: number, reason: string) =>
-  request<{ id: string; cents_remaining: number; reason: string }>(
-    `/v1/admin/accounts/${accountId}/credits`,
-    { method: 'POST', body: JSON.stringify({ cents: amountCents, reason }) },
+export interface AccountCreditResponse {
+  id: string;
+  cents_remaining: number;
+  reason: string;
+}
+
+export const issueAccountCredit = (accountId: string, amountCents: number, reason: string, opts?: OperatorWrite) =>
+  request<AccountCreditResponse>(
+    `/v1/admin/accounts/${encodeURIComponent(accountId)}/credits`,
+    { method: 'POST', headers: writeHeaders(opts), body: JSON.stringify({ cents: amountCents, reason }) },
   );
 
 export interface AdminRefundResponse {
@@ -1773,27 +1072,42 @@ export const refundAccount = (
   invoiceId: string,
   amountCents: number,
   reason: string,
+  opts?: OperatorWrite,
 ) =>
   request<AdminRefundResponse>(
     `/v1/admin/accounts/${encodeURIComponent(accountId)}/refunds`,
     {
       method: 'POST',
+      headers: writeHeaders(opts),
       body: JSON.stringify({ invoice_id: invoiceId, amount_cents: amountCents, reason }),
     },
   );
 
-export const reconcileAccount = (accountId: string) =>
-  request<{ account_id: string; reconciled_at: string; status: string }>(
-    `/v1/admin/billing-reconcile/${accountId}`,
-    { method: 'POST' },
+export interface BillingReconcileResponse {
+  account_id: string;
+  start: string;
+  end: string;
+  mb_seconds: number;
+}
+
+export const reconcileAccount = (accountId: string, opts?: OperatorWrite) =>
+  request<BillingReconcileResponse>(
+    `/v1/admin/billing-reconcile/${encodeURIComponent(accountId)}`,
+    { method: 'POST', headers: writeHeaders(opts) },
   );
 
-export const listObsNodes = () =>
-  request<ObsNodeListResponse>('/v1/admin/obs/nodes', { cache: 'no-store' });
+/** Drained and retired nodes are listed only with include_inactive=1. */
+export const listObsNodes = (cursor?: string, includeInactive = true) => {
+  const q = new URLSearchParams();
+  if (cursor) q.set('cursor', cursor);
+  if (includeInactive) q.set('include_inactive', '1');
+  const query = q.toString();
+  return request<ObsNodeListResponse>(`/v1/admin/obs/nodes${query ? `?${query}` : ''}`, { cache: 'no-store' });
+};
 
 export const getObsNodeHeartbeats = (name: string, sinceMinutes = 30) =>
   request<ObsHeartbeatListResponse>(
-    `/v1/admin/obs/nodes/${encodeURIComponent(name)}/heartbeats?since=${sinceMinutes}m`,
+    `/v1/admin/obs/nodes/${encodeURIComponent(name)}/heartbeats?since=${encodeURIComponent(new Date(Date.now() - sinceMinutes * 60000).toISOString())}`,
     { cache: 'no-store' },
   );
 
@@ -1803,20 +1117,25 @@ export const getObsNodeDetail = (name: string) =>
     { cache: 'no-store' },
   );
 
-const mutateObsNode = (name: string, action: 'drain' | 'force-drain' | 'activate', reason: string) =>
+export type ObsNodeAction = 'drain' | 'force-drain' | 'activate' | 'retire';
+
+export const mutateObsNode = (name: string, action: ObsNodeAction, reason: string, opts?: OperatorWrite) =>
   request<ObsNodeMutationResponse>(
     `/v1/admin/ops/nodes/${encodeURIComponent(name)}/${action}?confirm=true&reason=${encodeURIComponent(reason)}`,
-    { method: 'POST' },
+    { method: 'POST', headers: writeHeaders(opts) },
   );
 
-export const drainObsNode = (name: string, reason = 'operator_console_drain') =>
-  mutateObsNode(name, 'drain', reason);
+export const drainObsNode = (name: string, reason: string, opts?: OperatorWrite) =>
+  mutateObsNode(name, 'drain', reason, opts);
 
-export const forceDrainObsNode = (name: string, reason = 'operator_console_force_drain') =>
-  mutateObsNode(name, 'force-drain', reason);
+export const forceDrainObsNode = (name: string, reason: string, opts?: OperatorWrite) =>
+  mutateObsNode(name, 'force-drain', reason, opts);
 
-export const activateObsNode = (name: string, reason = 'operator_console_activate') =>
-  mutateObsNode(name, 'activate', reason);
+export const activateObsNode = (name: string, reason: string, opts?: OperatorWrite) =>
+  mutateObsNode(name, 'activate', reason, opts);
+
+export const retireObsNode = (name: string, reason: string, opts?: OperatorWrite) =>
+  mutateObsNode(name, 'retire', reason, opts);
 
 export const getObsAnomalies = (windowHours = 24) =>
   request<ObsAnomalyListResponse>(`/v1/admin/obs/anomalies?window_hours=${windowHours}`, { cache: 'no-store' });
@@ -1827,11 +1146,11 @@ export const getObsRateLimits = (windowHours = 24) =>
 export const listPaddleCatalog = () =>
   request<BillingCatalogResponse>('/v1/admin/billing-paddle-catalog', { cache: 'no-store' });
 
-export const syncPaddleCatalog = () =>
-  request<BillingCatalogResponse>('/v1/admin/billing-paddle-catalog/sync', { method: 'POST' });
+export const syncPaddleCatalog = (opts?: OperatorWrite) =>
+  request<BillingCatalogResponse>('/v1/admin/billing-paddle-catalog/sync', { method: 'POST', headers: writeHeaders(opts) });
 
-export const resetPaddleCatalog = () =>
-  request<void>('/v1/admin/billing-paddle-catalog', { method: 'DELETE' }, 'none');
+export const resetPaddleCatalog = (opts?: OperatorWrite) =>
+  request<void>('/v1/admin/billing-paddle-catalog', { method: 'DELETE', headers: writeHeaders(opts) }, 'none');
 
 export interface BillingPaddleOveragePreflightResponse {
   table_exists: boolean;
@@ -1847,12 +1166,12 @@ export const getPaddleOveragePreflight = () =>
   request<BillingPaddleOveragePreflightResponse>('/v1/admin/billing-paddle-overage/preflight', { cache: 'no-store' });
 
 export interface ObsEventRow {
-  id: string;
+  id: number;
   at: string;
   kind: string;
   actor: string;
-  subject: string | null;
-  data: Record<string, unknown> | null;
+  subject?: string;
+  data?: Record<string, unknown> | null;
 }
 
 export interface ObsEventListResponse {
@@ -1882,9 +1201,10 @@ export interface AdminSetGithubWebhookSecretResponse {
   upgraded_by: string;
 }
 
-export const setGithubWebhookSecret = (installationId: number, secretHex: string) =>
+export const setGithubWebhookSecret = (installationId: number, secretHex: string, opts?: OperatorWrite) =>
   request<AdminSetGithubWebhookSecretResponse>('/v1/admin/github-webhook-secrets', {
     method: 'POST',
+    headers: writeHeaders(opts),
     body: JSON.stringify({ installation_id: installationId, secret_hex: secretHex }),
   });
 
@@ -1895,17 +1215,42 @@ export const listGlobalAuditLog = (limit = 100, before?: string, includeAnonymou
   return request<GlobalAuditLogResponse>(`/v1/audit-log/all?${q}`, { cache: 'no-store' });
 };
 
+export type OperatorIntentStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'outcome_unknown';
+
+export const TERMINAL_INTENT_STATUSES: readonly OperatorIntentStatus[] = ['succeeded', 'failed', 'cancelled', 'outcome_unknown'];
+
+export interface OperatorParkExecution {
+  phase: string;
+  node_id: string;
+  wake_id: string;
+  generation: string;
+  action: string;
+  capture_completed: boolean;
+  stopped_at?: string;
+  terminal_state?: string;
+  cold_boot_required: boolean;
+  reason?: string;
+  updated_at: string;
+}
+
 export interface OperatorIntentResponse {
   intent_id: string;
   kind: string;
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  status: OperatorIntentStatus;
   target_id: string;
   account_id?: string;
+  actor_id: string;
+  reason: string;
+  metadata?: Record<string, unknown> | null;
+  trace_id?: string;
   requested_at: string;
   started_at?: string | null;
   finished_at?: string | null;
   error?: string | null;
   snap_ids_marked_stale?: string[];
+  park_execution?: OperatorParkExecution;
+  restart_execution?: Record<string, unknown>;
+  cold_boot_generation?: number;
 }
 
 export interface OperatorIntentAcceptedResponse {
@@ -1918,6 +1263,17 @@ export interface OperatorIntentAcceptedResponse {
 export type RuntimeConfigApplyMode = 'hot' | 'graceful' | 'rolling' | 'break_glass';
 export type RuntimeConfigStatus = 'pending' | 'applied' | 'failed' | 'blocked';
 export type RuntimeConfigScope = 'global' | 'control_plane' | 'daemon' | 'node';
+export type RuntimeConfigKind =
+  | 'boolean'
+  | 'integer'
+  | 'duration'
+  | 'string'
+  | 'enum'
+  | 'secret_reference'
+  /** ADR-1700 platform flags: values are JSON objects, edited as JSON. */
+  | 'platform_flag'
+  | 'platform_flag_groups'
+  | 'platform_flag_opt_ins';
 
 export interface OperatorRuntimeConfigAck {
   consumer: string;
@@ -1940,14 +1296,10 @@ export interface OperatorRuntimeConfig {
   label: string;
   description: string;
   category: string;
-  kind: 'boolean' | 'integer' | 'duration' | 'string' | 'enum' | 'secret_reference';
+  kind: RuntimeConfigKind;
   default_value: unknown;
   desired_value: unknown;
   effective_value: unknown;
-  /** Present when the backend supports scoped runtime configuration. */
-  scope?: RuntimeConfigScope;
-  scope_id?: string;
-  rollout_percent?: number;
   source: 'default_or_environment' | 'operator';
   apply_mode: RuntimeConfigApplyMode;
   controller_enabled: boolean;
@@ -1958,8 +1310,6 @@ export interface OperatorRuntimeConfig {
   version: number;
   updated_at?: string;
   applied_at?: string;
-  /** Per-daemon observations; omitted when no consumer has acknowledged it. */
-  acks?: OperatorRuntimeConfigAck[];
 }
 
 export interface OperatorRuntimeConfigListResponse {
@@ -2002,34 +1352,33 @@ export interface OperatorRuntimeConfigRevision {
   created_at: string;
 }
 
-export const getOperatorRuntimeConfig = (
-  scope: RuntimeConfigScope = 'global',
-  scopeId = '',
-) => {
-  const query = new URLSearchParams({ scope });
-  if (scopeId.trim()) query.set('scope_id', scopeId.trim());
-  return request<OperatorRuntimeConfigListResponse>(`/v1/admin/config?${query.toString()}`, { cache: 'no-store' });
-};
+export const getOperatorRuntimeConfig = () =>
+  request<OperatorRuntimeConfigListResponse>('/v1/admin/config', { cache: 'no-store' });
 
+/**
+ * apid accepts exactly {value, reason, expected_version, force} and rejects
+ * unknown fields with 400, so no scope or rollout fields are sent. `force` is
+ * required to disable a core platform flag (the first attempt answers 409).
+ * expected_version must be the version the operator was looking at when they
+ * started editing, so a concurrent change surfaces as a conflict.
+ */
 export const updateOperatorRuntimeConfig = (
   key: string,
   value: unknown,
   reason: string,
-  expectedVersion?: number,
-  target: OperatorRuntimeConfigTarget = { scope: 'global' },
-  rolloutPercent?: number,
+  expectedVersion: number,
+  opts: OperatorWrite & { force?: boolean } = {},
 ) =>
   request<OperatorRuntimeConfig | OperatorRuntimeConfigOperation>(
     `/v1/admin/config/${encodeURIComponent(key)}`,
     {
       method: 'PATCH',
+      headers: writeHeaders(opts),
       body: JSON.stringify({
         value,
         reason,
-        ...(expectedVersion != null ? { expected_version: expectedVersion } : {}),
-        scope: target.scope,
-        ...(target.scopeId?.trim() ? { scope_id: target.scopeId.trim() } : {}),
-        ...(rolloutPercent != null ? { rollout_percent: rolloutPercent } : {}),
+        expected_version: expectedVersion,
+        ...(opts.force ? { force: true } : {}),
       }),
     },
   );
@@ -2038,19 +1387,19 @@ export const rollbackOperatorRuntimeConfig = (
   key: string,
   version: number,
   reason: string,
-  expectedVersion?: number,
-  target: OperatorRuntimeConfigTarget = { scope: 'global' },
+  expectedVersion: number,
+  opts: OperatorWrite & { force?: boolean } = {},
 ) =>
-  request<OperatorRuntimeConfig>(
+  request<OperatorRuntimeConfig | OperatorRuntimeConfigOperation>(
     `/v1/admin/config/${encodeURIComponent(key)}/rollback`,
     {
       method: 'POST',
+      headers: writeHeaders(opts),
       body: JSON.stringify({
         version,
         reason,
-        ...(expectedVersion != null ? { expected_version: expectedVersion } : {}),
-        scope: target.scope,
-        ...(target.scopeId?.trim() ? { scope_id: target.scopeId.trim() } : {}),
+        expected_version: expectedVersion,
+        ...(opts.force ? { force: true } : {}),
       }),
     },
   );
@@ -2061,13 +1410,8 @@ export const getOperatorRuntimeConfigOperation = (operationId: string) =>
     { cache: 'no-store' },
   );
 
-export const getOperatorRuntimeConfigRevisions = (
-  key: string,
-  limit = 20,
-  target: OperatorRuntimeConfigTarget = { scope: 'global' },
-) => {
-  const query = new URLSearchParams({ limit: String(limit), scope: target.scope });
-  if (target.scopeId?.trim()) query.set('scope_id', target.scopeId.trim());
+export const getOperatorRuntimeConfigRevisions = (key: string, limit = 20) => {
+  const query = new URLSearchParams({ limit: String(limit) });
   return request<{ items: OperatorRuntimeConfigRevision[] }>(
     `/v1/admin/config/${encodeURIComponent(key)}/revisions?${query.toString()}`,
     { cache: 'no-store' },
@@ -2094,31 +1438,40 @@ export interface ObsBuilderHeartbeatListResponse {
   queued_builds: number;
 }
 
+/**
+ * Cumulative counters of the secret rekey walk. When the rekey runner is off
+ * the endpoint answers 503 rekey_disabled rather than a body.
+ */
 export interface RekeyProgressResponse {
   total: number;
-  completed: number;
+  rekeyed: number;
+  skipped: number;
   failed: number;
-  in_progress: number;
-  enabled: boolean;
+  last_id?: string;
 }
 
 export interface ObsWakeLatencyRow {
-  node: string;
+  node_id: string;
+  node_name: string;
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
   sample_count: number;
-  window_hours: number;
 }
 
 export interface ObsWakeLatencyResponse {
-  items: ObsWakeLatencyRow[];
+  window: string;
+  quantiles: ObsWakeLatencyRow[];
+  fleet_p95_ms: number;
+  as_of: string;
+  prometheus_available: boolean;
 }
 
 export interface AuditLogSearchParams {
   since?: string;
+  before?: string;
   kind_prefix?: string;
-  include_anon?: boolean;
+  include_anonymous?: boolean;
   limit?: number;
   actor_email?: string;
   operator_only?: boolean;
@@ -2126,27 +1479,31 @@ export interface AuditLogSearchParams {
 }
 
 export interface ObsAuditLogSearchResponse {
+  generated_at: string;
   items: GlobalAuditLogEntry[];
-  total?: number;
-  has_more?: boolean;
+  limit: number;
+  include_anonymous: boolean;
+  window_hours: number;
+  /** Omitted on the last page. */
+  next_before?: string;
 }
 
-export const forceParkInstance = (instanceId: string, reason = 'operator_force_park') =>
+export const forceParkInstance = (instanceId: string, reason: string, opts?: OperatorWrite) =>
   request<OperatorIntentAcceptedResponse>(
     `/v1/admin/instances/${encodeURIComponent(instanceId)}/force-park?confirm=true&reason=${encodeURIComponent(reason)}`,
-    { method: 'POST' },
+    { method: 'POST', headers: writeHeaders(opts) },
   );
 
-export const forceRestartInstance = (instanceId: string, reason = 'operator_force_restart') =>
+export const forceRestartInstance = (instanceId: string, reason: string, opts?: OperatorWrite) =>
   request<OperatorIntentAcceptedResponse>(
     `/v1/admin/instances/${encodeURIComponent(instanceId)}/force-restart?confirm=true&reason=${encodeURIComponent(reason)}`,
-    { method: 'POST' },
+    { method: 'POST', headers: writeHeaders(opts) },
   );
 
-export const forceColdBootApp = (slug: string, reason = 'operator_force_cold_boot') =>
+export const forceColdBootApp = (slug: string, reason: string, opts?: OperatorWrite) =>
   request<OperatorIntentAcceptedResponse>(
     `/v1/admin/apps/${encodeURIComponent(slug)}/force-cold-boot?confirm=true&reason=${encodeURIComponent(reason)}`,
-    { method: 'POST' },
+    { method: 'POST', headers: writeHeaders(opts) },
   );
 
 export const getOperatorIntent = (intentId: string) =>
@@ -2154,10 +1511,10 @@ export const getOperatorIntent = (intentId: string) =>
     cache: 'no-store',
   });
 
-export const sweepStuckBuilds = (olderThan = '15m', reason = 'operator_reclaim_build') =>
+export const sweepStuckBuilds = (olderThan: string, reason: string, opts?: OperatorWrite) =>
   request<SweepStuckBuildsResponse>(
     `/v1/admin/builds/sweep-stuck?confirm=true&older_than=${encodeURIComponent(olderThan)}&reason=${encodeURIComponent(reason)}`,
-    { method: 'POST' },
+    { method: 'POST', headers: writeHeaders(opts) },
   );
 
 export const getObsBuilderHeartbeats = () =>
@@ -2170,16 +1527,17 @@ export const getRekeyProgress = () =>
     cache: 'no-store',
   });
 
-export const getObsWakeLatencies = (windowHours = 24) =>
-  request<ObsWakeLatencyResponse>(`/v1/admin/obs/nodes/wake-latency?window_hours=${windowHours}`, {
+export const getObsWakeLatencies = () =>
+  request<ObsWakeLatencyResponse>('/v1/admin/obs/nodes/wake-latency', {
     cache: 'no-store',
   });
 
 export const searchObsAuditLog = (params: AuditLogSearchParams = {}) => {
   const q = new URLSearchParams();
   if (params.since) q.set('since', params.since);
+  if (params.before) q.set('before', params.before);
   if (params.kind_prefix) q.set('kind_prefix', params.kind_prefix);
-  if (params.include_anon !== undefined) q.set('include_anon', String(params.include_anon));
+  if (params.include_anonymous !== undefined) q.set('include_anonymous', String(params.include_anonymous));
   if (params.limit) q.set('limit', String(params.limit));
   if (params.actor_email) q.set('actor_email', params.actor_email);
   if (params.operator_only) q.set('operator_only', 'true');

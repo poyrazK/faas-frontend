@@ -17,14 +17,11 @@ export default function NotFound() {
         />
         <h1 className="mt-6 text-3xl font-bold tracking-tight">404</h1>
         <p className="mt-2 text-sm" style={{ color: 'var(--color-ink-muted)' }}>
-          That page doesn&apos;t exist. It may have been renamed, or the workflow it belonged to was deleted.
+          That page doesn&apos;t exist. It may have been renamed or removed.
         </p>
         <div className="mt-6 flex justify-center gap-2">
-          <Link href="/dashboard" className="btn btn-primary">
-            Go to the console
-          </Link>
-          <Link href="/" className="btn btn-secondary">
-            Home
+          <Link href="/overview" className="btn btn-primary">
+            Fleet overview
           </Link>
         </div>
       </div>

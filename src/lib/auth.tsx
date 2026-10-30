@@ -1,10 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useCallback, useEffect, useState } from 'react';
-import {
-  Account, getAccount, login as apiLogin, signup as apiSignup, logout as apiLogout, ApiError,
-  OrgWithRole, listOrgs, getOrgMe,
-} from './api';
+import { Account, getAccount, login as apiLogin, logout as apiLogout, ApiError } from './api';
 
 export type AuthFailureKind = 'mfa_required' | 'forbidden' | 'unavailable';
 
@@ -29,8 +26,6 @@ export class AuthRefreshError extends Error {
 
 interface AuthState {
   account: Account | null;
-  activeOrg: OrgWithRole | null;
-  orgs: OrgWithRole[];
   loading: boolean;
   authFailure: AuthFailure | null;
   /**
@@ -39,11 +34,9 @@ interface AuthState {
    * (or null if the cookie could not be established).
    */
   signIn: (email: string, password: string) => Promise<Account | null>;
-  /** Creates the account and signs in, in one call. */
-  signUp: (email: string, password: string) => Promise<Account | null>;
-  signOut: () => Promise<void>;
+  /** Resolves false when the server session could not be revoked (local state is cleared regardless). */
+  signOut: () => Promise<boolean>;
   refresh: (options?: { throwOnFailure?: boolean }) => Promise<Account | null>;
-  switchOrg: (slug: string | null) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -74,29 +67,14 @@ function classifyAuthFailure(error: unknown): AuthFailure {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
-  const [orgs, setOrgs] = useState<OrgWithRole[]>([]);
-  const [activeOrg, setActiveOrg] = useState<OrgWithRole | null>(null);
   const [loading, setLoading] = useState(true);
   const [authFailure, setAuthFailure] = useState<AuthFailure | null>(null);
 
   const refresh = useCallback(async (options: { throwOnFailure?: boolean } = {}) => {
     try {
-      const [acct, orgRes, meRes] = await Promise.all([
-        getAccount(),
-        listOrgs().catch(() => ({ orgs: [] })),
-        getOrgMe().catch(() => ({ org: null })),
-      ]);
-      const orgList = orgRes.orgs;
+      const acct = await getAccount();
       setAccount(acct);
-      setOrgs(orgList);
       setAuthFailure(null);
-      
-      const storedSlug = typeof window !== 'undefined' ? localStorage.getItem('faas_active_org') : null;
-      const matched = meRes.org || null;
-      setActiveOrg(matched);
-      if (storedSlug && !matched && typeof window !== 'undefined') {
-        localStorage.removeItem('faas_active_org');
-      }
       return acct;
     } catch (err) {
       // 401 simply means "not signed in". Preserve other failures so the UI
@@ -108,8 +86,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const failure = classifyAuthFailure(err);
         setAuthFailure(failure);
         setAccount(null);
-        setOrgs([]);
-        setActiveOrg(null);
         if (options.throwOnFailure) throw new AuthRefreshError(failure);
         console.warn('auth.refresh failed:', err);
       }
@@ -133,38 +109,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
-  const signUp = useCallback(
-    async (email: string, password: string) => {
-      await apiSignup(email, password);
-      return refresh({ throwOnFailure: true });
-    },
-    [refresh],
-  );
-
   const signOut = useCallback(async () => {
     try {
       await apiLogout();
+      return true;
+    } catch (err) {
+      console.warn('Sign-out did not end the server session', err);
+      return false;
     } finally {
       setAccount(null);
-      setOrgs([]);
-      setActiveOrg(null);
       setAuthFailure(null);
     }
   }, []);
 
-  const switchOrg = useCallback((slug: string | null) => {
-    if (typeof window === 'undefined') return;
-    if (slug) {
-      localStorage.setItem('faas_active_org', slug);
-    } else {
-      localStorage.removeItem('faas_active_org');
-    }
-    // Hard reload to clear all caches and reset the dashboard state to the new org
-    window.location.href = '/dashboard';
-  }, []);
-
   return (
-    <AuthContext.Provider value={{ account, activeOrg, orgs, loading, authFailure, signIn, signUp, signOut, refresh, switchOrg }}>
+    <AuthContext.Provider value={{ account, loading, authFailure, signIn, signOut, refresh }}>
       {children}
     </AuthContext.Provider>
   );
@@ -172,6 +131,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within <AuthProvider>');
+  if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
   return ctx;
 }
