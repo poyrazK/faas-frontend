@@ -10,12 +10,13 @@ import {
   type EgressFlowQuery,
 } from '@/lib/ops/metering';
 import { relativeTime } from '@/lib/format';
-import { FilterSelect, Mono } from '@/components/ui/bits';
+import { FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { TenantLink } from '@/components/operator/TenantLink';
 import { useKeyed } from '@/components/operator/tenant/shared';
 import { Field } from './form';
+import { EntityId } from '@/components/operator/EntityId';
 
 /**
  * ADR-371 egress flow log: which tenant opened a connection to an address at
@@ -150,10 +151,10 @@ export function EgressFlows({ defaultAccount }: { defaultAccount: string | null 
                     </td>
                     <td>{flow.account_id ? <TenantLink accountId={flow.account_id} short /> : '—'}</td>
                     <td>
-                      <Mono>{flow.app_id.slice(0, 8)}</Mono>
+                      <EntityId id={flow.app_id} kind="app" />
                     </td>
                     <td>
-                      <Mono>{flow.instance_id.slice(0, 8)}</Mono>
+                      <EntityId id={flow.instance_id} kind="instance" />
                     </td>
                     <td>{flow.node}</td>
                     <td className="cell-primary font-mono">

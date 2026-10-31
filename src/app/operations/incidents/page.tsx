@@ -1,13 +1,12 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ApiError, searchObsAuditLog } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { relativeTime } from '@/lib/format';
 import {
   ALERT_STATUSES,
-  DEFAULT_INCIDENT_FILTERS,
   INCIDENT_SEVERITIES,
   INCIDENT_TYPES,
   INCIDENT_TYPE_LABELS,
@@ -20,13 +19,14 @@ import {
   getIncidentContext,
   getIncidentEvidence,
   incidentConsoleLinks,
+  incidentFiltersFromSearch,
   incidentFiltersKey,
+  incidentFiltersToSearch,
   incidentRefKey,
   incidentStatusTone,
   loadIncidentInbox,
   mergeIncidentContext,
   mergeTriageHistory,
-  normalizeIncidentFilters,
   parseIncidentId,
   runbookHref,
   severityTone,
@@ -41,7 +41,7 @@ import {
 } from '@/lib/ops/incidents';
 import { badgeClass, formatSeconds, getObsHealthDetail, humanize } from '@/lib/ops/telemetry';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
-import { FilterSelect, Mono, PageHeader } from '@/components/ui/bits';
+import { FilterSelect, PageHeader } from '@/components/ui/bits';
 import { SectionCard, StatTile } from '@/components/ui/Panels';
 import { Modal } from '@/components/ui/Modal';
 import { Icon } from '@/components/ui/Icons';
@@ -51,6 +51,8 @@ import { AlertInsights } from './AlertInsights';
 import { PipelineHealth } from './PipelineHealth';
 import { FleetEventStream } from './FleetEventStream';
 import { EmptyRow, ErrorRow, LoadingRow, Notice, RefreshFailed, StateBadge, When } from './parts';
+import { useUrlParams } from '@/lib/useUrlState';
+import { EntityId } from '@/components/operator/EntityId';
 
 const errorMessage = (err: unknown) => (err as Error)?.message || 'Request failed';
 
@@ -91,8 +93,31 @@ interface PendingTriage {
 }
 
 export default function IncidentsPage() {
-  const [filters, setFilters] = useState<IncidentFilters>(DEFAULT_INCIDENT_FILTERS);
-  const [previousCursors, setPreviousCursors] = useState<string[]>([]);
+  return (
+    <Suspense>
+      <Incidents />
+    </Suspense>
+  );
+}
+
+interface Paging {
+  /** The filter set these cursors belong to; other filters start on the newest page. */
+  key: string;
+  cursor: string;
+  previous: string[];
+}
+
+function Incidents() {
+  // Filters and the open incident live in the URL so they can be shared;
+  // paging cursors stay in memory because the server expires them.
+  const [params, setParams] = useUrlParams();
+  const baseFilters = incidentFiltersFromSearch(params);
+  const baseKey = incidentFiltersKey(baseFilters);
+  const [storedPaging, setPaging] = useState<Paging>({ key: '', cursor: '', previous: [] });
+  const paging = storedPaging.key === baseKey ? storedPaging : { key: baseKey, cursor: '', previous: [] };
+  const filters: IncidentFilters = { ...baseFilters, cursor: paging.cursor };
+  const previousCursors = paging.previous;
+  const incidentParam = params.get('incident');
   const [insightsToken, setInsightsToken] = useState(0);
   const inboxKey = incidentFiltersKey(filters);
   const inbox = useAsync(() => loadIncidentInbox(filters), [inboxKey], 30000);
@@ -164,19 +189,29 @@ export default function IncidentsPage() {
     patchDetail(gen, { refreshing: false });
   };
 
-  const openIncident = (ref: IncidentRef) => void loadIncident(ref, false);
-
-  const openIncidentId = (incidentId: string) => {
-    const ref = parseIncidentId(incidentId);
-    if (ref) openIncident(ref);
-  };
-
-  const closeDetail = () => {
+  const resetDetail = () => {
     detailGen.current++;
     openKey.current = null;
     setDetail(null);
     setPendingTriage(null);
   };
+
+  // The URL decides which incident is open (?incident=<type>/<id>).
+  const openIncident = (ref: IncidentRef) => setParams({ incident: incidentRefKey(ref) });
+  const openIncidentId = (incidentId: string) => {
+    if (parseIncidentId(incidentId)) setParams({ incident: incidentId });
+  };
+  const closeDetail = () => setParams({ incident: null });
+
+  useEffect(() => {
+    const ref = incidentParam ? parseIncidentId(incidentParam) : null;
+    queueMicrotask(() => {
+      if (!ref) resetDetail();
+      else if (openKey.current !== incidentRefKey(ref)) void loadIncident(ref, false);
+    });
+    // Runs only when the URL changes; loadIncident reads everything else through refs and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidentParam]);
 
   const loadMoreContext = async () => {
     const current = detail;
@@ -257,28 +292,17 @@ export default function IncidentsPage() {
 
   /* ──────────────────────────────── Filters ───────────────────────────── */
 
-  const updateFilters = (patch: Partial<IncidentFilters>) => {
-    setFilters((current) => normalizeIncidentFilters({ ...current, ...patch, cursor: '' }));
-    setPreviousCursors([]);
-  };
+  const updateFilters = (patch: Partial<IncidentFilters>) => setParams(incidentFiltersToSearch({ ...baseFilters, ...patch }));
 
   const olderPage = () => {
     if (!page?.next_cursor) return;
-    const next = page.next_cursor;
-    setPreviousCursors((cursors) => [...cursors, filters.cursor]);
-    setFilters((current) => ({ ...current, cursor: next }));
+    setPaging({ key: baseKey, cursor: page.next_cursor, previous: [...previousCursors, filters.cursor] });
   };
 
-  const newerPage = () => {
-    const previous = previousCursors[previousCursors.length - 1] ?? '';
-    setPreviousCursors(previousCursors.slice(0, -1));
-    setFilters((current) => ({ ...current, cursor: previous }));
-  };
+  const newerPage = () =>
+    setPaging({ key: baseKey, cursor: previousCursors[previousCursors.length - 1] ?? '', previous: previousCursors.slice(0, -1) });
 
-  const newestPage = () => {
-    setPreviousCursors([]);
-    setFilters((current) => ({ ...current, cursor: '' }));
-  };
+  const newestPage = () => setPaging({ key: baseKey, cursor: '', previous: [] });
 
   const refreshAll = () => {
     inbox.reload();
@@ -637,7 +661,7 @@ function InboxRow({ item, onInspect }: { item: ObsIncident; onInspect: (ref: Inc
           {item.summary}
         </div>
         <div className="truncate text-[var(--color-ink-muted)]">
-          {INCIDENT_TYPE_LABELS[item.type] ?? item.type} · {item.resource_name || <Mono>{item.resource_id.slice(0, 13)}</Mono>}
+          {INCIDENT_TYPE_LABELS[item.type] ?? item.type} · {item.resource_name || <EntityId id={item.resource_id} copy={false} href={null} />}
         </div>
       </td>
       <td>

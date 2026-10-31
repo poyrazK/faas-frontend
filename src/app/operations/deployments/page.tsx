@@ -2,7 +2,6 @@
 
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import {
   cancelOperatorDeployment,
   defaultRetryStage,
@@ -22,7 +21,8 @@ import {
   type OperatorDeploymentStatus,
 } from '@/lib/ops/workloads';
 import { useAsync } from '@/lib/useAsync';
-import { useDebounced } from '@/lib/useDebounced';
+import { useUrlParams, useUrlText } from '@/lib/useUrlState';
+import { intParam, pickParam } from '@/lib/urlState';
 import { formatBytes, isRealTimestamp } from '@/lib/operator';
 import { relativeTime } from '@/lib/format';
 import { FilterSelect, Mono, PageHeader, SearchInput } from '@/components/ui/bits';
@@ -31,7 +31,8 @@ import { Modal } from '@/components/ui/Modal';
 import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
-import { tenantHref } from '@/lib/routes';
+import { appDeploymentsHref, deploymentHref, tenantHref } from '@/lib/routes';
+import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
 
 const PAGE_SIZE = 50;
 const POLL_MS = 30000;
@@ -55,7 +56,8 @@ const AGE_OPTIONS = [
   { value: '1440', label: 'Older than 24 h' },
 ];
 
-const short = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
+const PRESET_KEYS = Object.keys(STATUS_PRESETS);
+const AGE_VALUES = AGE_OPTIONS.map((option) => option.value);
 
 type DeploymentAction = { type: 'cancel' | 'retry'; deployment: OperatorDeployment; defaultStage: DeploymentStageName };
 
@@ -68,44 +70,21 @@ export default function DeploymentsPage() {
 }
 
 function DeploymentOperations() {
-  const params = useSearchParams();
-  const accountParam = params.get('account');
-  const appParam = params.get('app');
-  const statusParam = params.get('status');
+  // Filters, the page and the open deployment live in the URL, so any view
+  // can be pasted into a channel and opened as-is.
+  const [params, setParams] = useUrlParams();
+  const accountFilter = useUrlText('account', { resets: { offset: null } });
+  const appFilter = useUrlText('app', { resets: { offset: null } });
+  const account = accountFilter.value;
+  const app = appFilter.value;
+  const preset = pickParam(params.get('status'), PRESET_KEYS, 'incident');
+  const age = pickParam(params.get('age'), AGE_VALUES, '');
+  const includeDeleted = params.get('deleted') === '1';
+  const offset = intParam(params.get('offset'));
   const deploymentParam = params.get('deployment');
+  /** Any filter change starts again from the first page. */
+  const setFilters = (updates: Parameters<typeof setParams>[0]) => setParams({ ...updates, offset: null });
 
-  const [accountInput, setAccountInput] = useState(accountParam ?? '');
-  const [appInput, setAppInput] = useState(appParam ?? '');
-  const [preset, setPreset] = useState(statusParam && statusParam in STATUS_PRESETS ? statusParam : 'incident');
-  const [age, setAge] = useState('');
-  const [includeDeleted, setIncludeDeleted] = useState(false);
-  const [offset, setOffset] = useState(0);
-
-  // Deep links (tenant page, GitHub recovery) may change the query while mounted.
-  useEffect(() => {
-    if (accountParam !== null)
-      queueMicrotask(() => {
-        setAccountInput(accountParam);
-        setOffset(0);
-      });
-  }, [accountParam]);
-  useEffect(() => {
-    if (appParam !== null)
-      queueMicrotask(() => {
-        setAppInput(appParam);
-        setOffset(0);
-      });
-  }, [appParam]);
-  useEffect(() => {
-    if (statusParam && statusParam in STATUS_PRESETS)
-      queueMicrotask(() => {
-        setPreset(statusParam);
-        setOffset(0);
-      });
-  }, [statusParam]);
-
-  const account = useDebounced(accountInput.trim(), 400);
-  const app = useDebounced(appInput.trim(), 400);
   const filterProblem =
     account && !isUuid(account)
       ? 'The account filter needs a full account UUID.'
@@ -161,14 +140,20 @@ function DeploymentOperations() {
     }
   };
 
-  const closeDetail = () => {
+  const resetDetail = () => {
     detailSeq.current++;
     setDetailId(null);
     setDetail(null);
   };
 
+  // The URL decides which deployment is open: Inspect writes it, and so do
+  // links from incidents, tenants and GitHub recovery.
+  const openDetail = (id: string) => setParams({ deployment: id });
+  const closeDetail = () => setParams({ deployment: null });
+
   useEffect(() => {
-    if (deploymentParam && isUuid(deploymentParam)) queueMicrotask(() => void loadDetail(deploymentParam.trim()));
+    const id = deploymentParam?.trim();
+    queueMicrotask(() => (id && isUuid(id) ? void loadDetail(id) : resetDetail()));
   }, [deploymentParam]);
 
   const view = detail && detail.id === detailId ? detail : null;
@@ -213,11 +198,11 @@ function DeploymentOperations() {
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3 text-xs">
           <Icon name="user" size={14} />
           <span>Scoped to account</span>
-          <Mono>{scopeAccount}</Mono>
+          <EntityId id={scopeAccount} kind="account" full href={null} />
           {app && isUuid(app) && (
             <>
               <span>· app</span>
-              <Mono>{app}</Mono>
+              <EntityId id={app} kind="app" full href={null} />
             </>
           )}
           <Link href={tenantHref(scopeAccount)} className="btn btn-ghost btn-xs">
@@ -226,11 +211,7 @@ function DeploymentOperations() {
           </Link>
           <button
             className="btn btn-ghost btn-xs"
-            onClick={() => {
-              setAccountInput('');
-              setAppInput('');
-              setOffset(0);
-            }}
+            onClick={() => setFilters({ account: null, app: null })}
           >
             <Icon name="x" size={12} />
             Clear scope
@@ -240,47 +221,32 @@ function DeploymentOperations() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <SearchInput
-          value={accountInput}
-          onChange={(value) => {
-            setAccountInput(value);
-            setOffset(0);
-          }}
+          value={accountFilter.draft}
+          onChange={accountFilter.setDraft}
           placeholder="Account ID (UUID)"
           className="w-full sm:w-80"
         />
         <SearchInput
-          value={appInput}
-          onChange={(value) => {
-            setAppInput(value);
-            setOffset(0);
-          }}
+          value={appFilter.draft}
+          onChange={appFilter.setDraft}
           placeholder="App ID (UUID)"
           className="w-full sm:w-72"
         />
         <FilterSelect
           value={preset}
-          onChange={(value) => {
-            setPreset(value);
-            setOffset(0);
-          }}
+          onChange={(value) => setFilters({ status: value === 'incident' ? null : value })}
           options={Object.entries(STATUS_PRESETS).map(([value, p]) => ({ value, label: p.label }))}
         />
         <FilterSelect
           value={age}
-          onChange={(value) => {
-            setAge(value);
-            setOffset(0);
-          }}
+          onChange={(value) => setFilters({ age: value })}
           options={AGE_OPTIONS}
         />
         <label className="flex items-center gap-1.5 text-xs text-[var(--color-ink-soft)]">
           <input
             type="checkbox"
             checked={includeDeleted}
-            onChange={(event) => {
-              setIncludeDeleted(event.target.checked);
-              setOffset(0);
-            }}
+            onChange={(event) => setFilters({ deleted: event.target.checked })}
           />
           Include deleted apps
         </label>
@@ -323,9 +289,7 @@ function DeploymentOperations() {
                 {page.deployments.map((d) => (
                   <tr key={d.id}>
                     <td>
-                      <span className="font-mono" title={d.id}>
-                        {short(d.id)}
-                      </span>
+                      <EntityId id={d.id} kind="deployment" href={null} />
                       <div className="text-[11px] text-[var(--color-ink-muted)]">
                         {d.kind || 'image'} · {formatBytes(d.source_bytes)}
                       </div>
@@ -339,11 +303,7 @@ function DeploymentOperations() {
                         <div>
                           <button
                             className="text-[11px] text-[var(--color-ink-muted)] hover:underline"
-                            onClick={() => {
-                              setAccountInput(d.account_id);
-                              setAppInput(d.app_id);
-                              setOffset(0);
-                            }}
+                            onClick={() => setFilters({ account: d.account_id, app: d.app_id })}
                           >
                             Only this app
                           </button>
@@ -351,18 +311,12 @@ function DeploymentOperations() {
                       )}
                     </td>
                     <td>
-                      <Link href={tenantHref(d.account_id)} className="font-mono hover:underline" title={d.account_id}>
-                        {short(d.account_id)}
-                      </Link>
+                      <EntityId id={d.account_id} kind="account" />
                       {account !== d.account_id && (
                         <div>
                           <button
                             className="text-[11px] text-[var(--color-ink-muted)] hover:underline"
-                            onClick={() => {
-                              setAccountInput(d.account_id);
-                              setAppInput('');
-                              setOffset(0);
-                            }}
+                            onClick={() => setFilters({ account: d.account_id, app: null })}
                           >
                             Only this account
                           </button>
@@ -393,7 +347,7 @@ function DeploymentOperations() {
                     </td>
                     <td title={d.created_at}>{relativeTime(d.created_at)}</td>
                     <td className="text-right">
-                      <button onClick={() => loadDetail(d.id)} className="btn btn-secondary btn-xs">
+                      <button onClick={() => openDetail(d.id)} className="btn btn-secondary btn-xs">
                         Inspect
                       </button>
                     </td>
@@ -415,8 +369,8 @@ function DeploymentOperations() {
             page={Math.floor(offset / PAGE_SIZE) + 1}
             hasPrev={offset > 0}
             hasNext={page.next_offset > 0}
-            onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-            onNext={() => setOffset(page.next_offset)}
+            onPrev={() => setParams({ offset: Math.max(0, offset - PAGE_SIZE) || null })}
+            onNext={() => setParams({ offset: page.next_offset })}
           />
         )}
       </SectionCard>
@@ -508,7 +462,7 @@ function DeploymentOperations() {
               )}
               {liveCheck?.state === 'newer' && (
                 <p className="text-xs font-semibold text-[var(--color-danger)]">
-                  The customer has a newer live release (<Mono>{short(liveCheck.live.id)}</Mono>, deployed{' '}
+                  The customer has a newer live release (<EntityId id={liveCheck.live.id} kind="deployment" />, deployed{' '}
                   {relativeTime(liveCheck.live.created_at)}). If this retry succeeds it replaces that release with this
                   older source — a rollback for the customer.
                 </p>
@@ -527,7 +481,7 @@ function DeploymentOperations() {
             const res = await retryOperatorDeployment(target.id, fromStage, reason, { idempotencyKey });
             query.reload();
             // The retry is a new deployment row; follow it in the drawer.
-            void loadDetail(res.deployment.id);
+            openDetail(res.deployment.id);
             return `Retry of ${target.app_slug} enqueued as deployment ${short(res.deployment.id)} (${res.deployment.status}).`;
           }}
         >
@@ -574,21 +528,14 @@ function DeploymentDetail({
   return (
     <div className="space-y-5 text-xs">
       <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-4">
-        <Fact label="Deployment" value={<Mono>{d.id}</Mono>} wide />
-        <Fact
-          label="Account"
-          value={
-            <Link href={tenantHref(d.account_id)} className="font-mono hover:underline">
-              {d.account_id}
-            </Link>
-          }
-          wide
-        />
+        <Fact label="Deployment" value={<EntityId id={d.id} kind="deployment" full href={null} />} wide />
+        <Fact label="Account" value={<EntityId id={d.account_id} kind="account" full />} wide />
         <Fact
           label="App"
           value={
             <span>
-              {d.app_slug} <span className="font-normal text-[var(--color-ink-muted)]">({d.app_status})</span>
+              {d.app_slug} <span className="font-normal text-[var(--color-ink-muted)]">({d.app_status})</span>{' '}
+              <EntityId id={d.app_id} kind="app" href={null} />
             </span>
           }
         />
@@ -624,12 +571,10 @@ function DeploymentDetail({
             failed one.
           </span>
         )}
-        <Link
-          href={`/deployments?account=${encodeURIComponent(d.account_id)}&app=${encodeURIComponent(d.app_id)}&status=all`}
-          className="btn btn-ghost btn-sm"
-        >
+        <Link href={`${appDeploymentsHref(d.app_id)}&account=${encodeURIComponent(d.account_id)}`} className="btn btn-ghost btn-sm">
           All deployments of this app
         </Link>
+        <CopyLinkButton href={deploymentHref(d.id)} />
       </div>
 
       {hasError && (
@@ -668,7 +613,7 @@ function DeploymentDetail({
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 rounded-lg border border-[var(--color-line)] p-3 sm:grid-cols-4">
-            <Fact label="Build" value={<Mono>{short(build.id)}</Mono>} />
+            <Fact label="Build" value={<EntityId id={build.id} kind="build" />} />
             <Fact label="Status" value={build.status} />
             <Fact label="Failure class" value={build.failure_class || '—'} />
             <Fact label="Cache" value={build.cache_status || '—'} />

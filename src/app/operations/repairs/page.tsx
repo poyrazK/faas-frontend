@@ -1,7 +1,6 @@
 'use client';
 
 import React, { Suspense, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
   DATA_REPAIR_POLL_MS,
@@ -20,11 +19,11 @@ import { Mono, PageHeader, SearchInput } from '@/components/ui/bits';
 import { CursorFooter, SectionCard, StatTile } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
-import { tenantHref } from '@/lib/routes';
+import { appDeploymentsHref } from '@/lib/routes';
+import { EntityId } from '@/components/operator/EntityId';
 
 const PAGE_SIZE = 64;
 
-const short = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
 
 export default function DataRepairsPage() {
   return (
@@ -236,28 +235,19 @@ function RepairRow({ item }: { item: DataRepairHealthItem }) {
   return (
     <tr>
       <td>
-        <span className="font-mono" title={item.operation_id}>
-          {short(item.operation_id)}
-        </span>
+        <EntityId id={item.operation_id} />
         {item.task_id && (
-          <div className="font-mono text-[11px] text-[var(--color-ink-muted)]" title={item.task_id}>
-            task {short(item.task_id)}
+          <div className="text-[11px] text-[var(--color-ink-muted)]">
+            task <EntityId id={item.task_id} />
           </div>
         )}
         {item.needs_attention && <span className="badge badge-danger mt-1">Needs attention</span>}
       </td>
       <td>
-        <Link href={tenantHref(item.account_id)} className="font-mono hover:underline" title={item.account_id}>
-          {short(item.account_id)}
-        </Link>
-        <div>
-          <Link
-            href={`/deployments?account=${encodeURIComponent(item.account_id)}&app=${encodeURIComponent(item.app_id)}&status=all`}
-            className="font-mono text-[11px] text-[var(--color-ink-muted)] hover:underline"
-            title={`App ${item.app_id}: open its deployments`}
-          >
-            app {short(item.app_id)}
-          </Link>
+        <EntityId id={item.account_id} kind="account" />
+        <div className="text-[11px] text-[var(--color-ink-muted)]">
+          app{' '}
+          <EntityId id={item.app_id} kind="app" href={`${appDeploymentsHref(item.app_id)}&account=${encodeURIComponent(item.account_id)}`} />
         </div>
       </td>
       <td>
@@ -270,9 +260,7 @@ function RepairRow({ item }: { item: DataRepairHealthItem }) {
       </td>
       <td>
         {item.node_id ? (
-          <span className="font-mono" title={item.node_id}>
-            {short(item.node_id)}
-          </span>
+          <EntityId id={item.node_id} />
         ) : (
           '—'
         )}

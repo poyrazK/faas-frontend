@@ -53,6 +53,7 @@ import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { TenantLink } from '@/components/operator/TenantLink';
+import { EntityId } from '@/components/operator/EntityId';
 
 /** A draft remembers the version editing started from, so a concurrent change is a conflict, not an overwrite. */
 export interface FlagDraft {
@@ -820,7 +821,7 @@ function OptInsPanel({ flag, supportsOrg }: { flag: OperatorPlatformFlag; suppor
                 {(working[field] ?? []).length === 0 && <span className="text-[var(--color-ink-muted)]">none</span>}
                 {(working[field] ?? []).map((id) => (
                   <span key={id} className="inline-flex items-center gap-1">
-                    {field === 'accounts' ? <TenantLink accountId={id} short /> : <Mono>{id.slice(0, 13)}…</Mono>}
+                    {field === 'accounts' ? <TenantLink accountId={id} short /> : <EntityId id={id} chars={13} />}
                     <button
                       type="button"
                       aria-label={`Remove ${id}`}

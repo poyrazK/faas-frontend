@@ -10,6 +10,7 @@ import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bit
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { EntityId, shortId } from '@/components/operator/EntityId';
 
 const PAGE_SIZE = 100;
 
@@ -233,7 +234,7 @@ function TenantsDirectory() {
               {emailState.result.matches.map((row) => (
                 <Link key={row.account_id} href={tenantHref(row.account_id)} className="flex items-center gap-3 hover:underline">
                   <span className="cell-primary">{row.email}</span>
-                  <Mono>{row.account_id.slice(0, 13)}…</Mono>
+                  <Mono>{shortId(row.account_id)}</Mono>
                   <StatusBadge status={row.status} />
                 </Link>
               ))}
@@ -272,9 +273,7 @@ function TenantsDirectory() {
                 {visibleRows.map((tenant) => (
                   <tr key={tenant.account_id}>
                     <td className="font-mono">
-                      <Link href={tenantHref(tenant.account_id)} className="hover:underline">
-                        <Mono>{tenant.account_id.slice(0, 13)}…</Mono>
-                      </Link>
+                      <EntityId id={tenant.account_id} kind="account" />
                       {tenant.org_slug && (
                         <div className="text-[11px] text-[var(--color-ink-muted)]">org: {tenant.org_slug}</div>
                       )}

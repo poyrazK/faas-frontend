@@ -24,6 +24,8 @@ import { badgeClass, humanize } from '@/lib/ops/telemetry';
 import { Mono } from '@/components/ui/bits';
 import { Icon } from '@/components/ui/Icons';
 import { Fact, Notice, StateBadge, When } from './parts';
+import { CopyLinkButton, EntityId, type EntityKind } from '@/components/operator/EntityId';
+import { incidentHref } from '@/lib/routes';
 
 export type MoreState = 'loading' | { error: string } | undefined;
 
@@ -146,7 +148,7 @@ export function IncidentDetail({
                       <td className="cell-primary font-mono">{entry.kind}</td>
                       <td>{humanize(entry.source)}</td>
                       <td>{entry.status ? <span className={badgeClass(incidentStatusTone(entry.status))}>{entry.status}</span> : '—'}</td>
-                      <td className="font-mono">{entry.trace_id ? <Mono>{entry.trace_id.slice(0, 12)}…</Mono> : '—'}</td>
+                      <td>{entry.trace_id ? <EntityId id={entry.trace_id} kind="trace" chars={12} /> : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -168,41 +170,57 @@ export function IncidentDetail({
   );
 }
 
+/** How a related resource's ID is shown; the row's own button carries the page link. */
+const RESOURCE_KINDS: Record<string, EntityKind> = {
+  tenant: 'account',
+  app: 'app',
+  deployment: 'deployment',
+  job_run: 'job_run',
+};
+
 function IncidentFacts({ incident, errorCode }: { incident: ObsIncident; errorCode?: string }) {
   const links = incidentConsoleLinks(incident);
   const runbook = runbookHref(incident.runbook_url);
+  const resourceId = <EntityId id={incident.resource_id} kind={RESOURCE_KINDS[incident.type] ?? 'id'} full href={null} />;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-4">
         <Fact
           label="Resource"
-          value={incident.resource_name || <Mono>{incident.resource_id}</Mono>}
-          sub={incident.resource_name ? <Mono>{incident.resource_id}</Mono> : undefined}
+          value={incident.resource_name || resourceId}
+          sub={incident.resource_name ? resourceId : undefined}
         />
         <Fact label="Observed" value={<When at={incident.observed_at} />} sub={new Date(incident.observed_at).toLocaleString()} />
-        <Fact label="Account" value={incident.account_id ? <Mono>{incident.account_id.slice(0, 13)}…</Mono> : '—'} />
+        <Fact label="Account" value={incident.account_id ? <EntityId id={incident.account_id} kind="account" /> : '—'} />
         <Fact
           label={incident.app_id ? 'App' : 'Node'}
-          value={incident.app_id ? <Mono>{incident.app_id.slice(0, 13)}…</Mono> : incident.node_id ? <Mono>{incident.node_id.slice(0, 13)}…</Mono> : '—'}
+          value={
+            incident.app_id ? (
+              <EntityId id={incident.app_id} kind="app" />
+            ) : incident.node_id ? (
+              <EntityId id={incident.node_id} />
+            ) : (
+              '—'
+            )
+          }
         />
         {errorCode && <Fact label="Error code" value={<Mono>{errorCode}</Mono>} />}
       </div>
-      {(links.length > 0 || runbook) && (
-        <div className="flex flex-wrap gap-2">
-          {links.map((link) => (
-            <Link key={link.href} href={link.href} className="btn btn-secondary btn-xs">
-              {link.label}
-              <Icon name="arrowRight" size={12} />
-            </Link>
-          ))}
-          {runbook && (
-            <a href={runbook} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-xs">
-              Runbook
-              <Icon name="external" size={12} />
-            </a>
-          )}
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {links.map((link) => (
+          <Link key={link.href} href={link.href} className="btn btn-secondary btn-xs">
+            {link.label}
+            <Icon name="arrowRight" size={12} />
+          </Link>
+        ))}
+        {runbook && (
+          <a href={runbook} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-xs">
+            Runbook
+            <Icon name="external" size={12} />
+          </a>
+        )}
+        <CopyLinkButton href={incidentHref(incident.id)} />
+      </div>
     </div>
   );
 }
@@ -369,7 +387,7 @@ function ContextSection({ detail, onLoadMore }: { detail: IncidentDetailState; o
                   <tr key={`${resource.kind}/${resource.id}`}>
                     <td>
                       <span className="text-[var(--color-ink-muted)]">{humanize(resource.kind)}</span>{' '}
-                      <Mono>{resource.id.slice(0, 13)}…</Mono>
+                      <EntityId id={resource.id} kind={RESOURCE_KINDS[resource.kind] ?? 'id'} href={null} />
                     </td>
                     <td>{humanize(resource.relationship)}</td>
                     <td>

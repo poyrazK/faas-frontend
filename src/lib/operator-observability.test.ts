@@ -9,6 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const scenario = vi.hoisted(() => ({
+  /** The page's query string (filters, open incident). */
+  search: '',
   inbox: null as unknown,
   /** Overrides the key the inbox snapshot claims to answer. */
   inboxKey: null as string | null,
@@ -28,6 +30,10 @@ vi.mock('@/lib/api', () => ({
   getObsHealth: () => scenario.health,
   searchObsAuditLog: () => ({ generated_at: '2026-10-30T12:00:00Z', items: [], limit: 8, include_anonymous: false, window_hours: 24 }),
   obsNodeEventsUrl: '/v1/admin/obs/nodes/events',
+}));
+
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(scenario.search),
 }));
 
 vi.mock('@/lib/useAsync', () => ({
@@ -192,6 +198,7 @@ const listPage = (items: unknown[], unavailable: string[]) => ({
 });
 
 beforeEach(() => {
+  scenario.search = '';
   scenario.inboxKey = null;
   scenario.inbox = listPage([], ['prometheus']);
   scenario.summary = { as_of: '2026-10-30T12:00:00Z', scope: 'retained_platform_alert_episodes', age_basis: 'episode_started_at', collection, retention, counts: null, groups: [], oldest_unacknowledged: null, oldest_unowned: null };
@@ -270,6 +277,20 @@ describe('incidents page', () => {
     const html = render(IncidentsPage);
     expect(html).not.toContain('job run failed');
     expect(html).toContain('Loading incidents');
+  });
+
+  it('queries with the filters in the URL, so a shared link shows the same inbox', () => {
+    scenario.search = 'type=deployment&severity=critical';
+    // The snapshot answers exactly the URL's filters (type|severity|window|…|limit|cursor).
+    scenario.inboxKey = 'deployment|critical|0|||||50|';
+    scenario.inbox = listPage(
+      [{ id: `deployment/${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`, type: 'deployment', severity: 'critical', status: 'failed', summary: 'deploy failed', resource_id: `${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`, observed_at: '2026-10-30T11:00:00Z', dedupe_key: 'k' }],
+      [],
+    );
+    const html = render(IncidentsPage);
+    expect(html).toContain('deploy failed');
+    expect(html).toContain('<option value="deployment" selected="">');
+    expect(html).toContain(`href="/deployments?deployment=${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}"`);
   });
 });
 
