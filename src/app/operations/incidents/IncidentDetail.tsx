@@ -7,6 +7,7 @@ import {
   INCIDENT_TYPE_LABELS,
   describeSource,
   incidentConsoleLinks,
+  parseIncidentId,
   incidentStatusTone,
   relatedResourceLink,
   runbookHref,
@@ -25,6 +26,7 @@ import { Mono } from '@/components/ui/bits';
 import { Icon } from '@/components/ui/Icons';
 import { Fact, Notice, StateBadge, When } from './parts';
 import { CopyLinkButton, EntityId, type EntityKind } from '@/components/operator/EntityId';
+import { IncidentBundleButton } from '@/components/operator/IncidentBundleButton';
 import { incidentHref } from '@/lib/routes';
 
 export type MoreState = 'loading' | { error: string } | undefined;
@@ -182,6 +184,7 @@ function IncidentFacts({ incident, errorCode }: { incident: ObsIncident; errorCo
   const links = incidentConsoleLinks(incident);
   const runbook = runbookHref(incident.runbook_url);
   const resourceId = <EntityId id={incident.resource_id} kind={RESOURCE_KINDS[incident.type] ?? 'id'} full href={null} />;
+  const bundleRef = parseIncidentId(incident.id);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-4">
@@ -220,6 +223,7 @@ function IncidentFacts({ incident, errorCode }: { incident: ObsIncident; errorCo
           </a>
         )}
         <CopyLinkButton href={incidentHref(incident.id)} />
+        {bundleRef && <IncidentBundleButton incident={bundleRef} />}
       </div>
     </div>
   );

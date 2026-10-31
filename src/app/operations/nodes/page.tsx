@@ -22,6 +22,7 @@ import {
   type ComputeNode,
 } from '@/lib/ops/nodes';
 import { EnrollNodeDialog } from './EnrollNodeDialog';
+import { ReleaseConvergence } from './ReleaseConvergence';
 import { formatMegabytes, isRealTimestamp, REASON_SUGGESTIONS, WAKE_SLO_P50_MS } from '@/lib/operator';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { PageHeader } from '@/components/ui/bits';
@@ -258,6 +259,10 @@ function ComputeNodes() {
           )}
         </div>
       )}
+
+      <div className="mt-6">
+        <ReleaseConvergence />
+      </div>
 
       <div className="mt-6">
         <SectionCard
