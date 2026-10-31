@@ -1,7 +1,6 @@
 'use client';
 
 import React, { Suspense, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
   getGithubRecovery,
@@ -23,6 +22,7 @@ import { SectionCard, StatTile } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
+import { EntityId } from '@/components/operator/EntityId';
 
 const POLL_MS = 30000;
 const LIMITS = ['100', '250', '500'];
@@ -169,8 +169,8 @@ function GithubRecovery() {
                   <tbody>
                     {data.deliveries.map((d) => (
                       <tr key={d.delivery_id}>
-                        <td className="font-mono" title={d.delivery_id}>
-                          {short(d.delivery_id)}
+                        <td>
+                          <EntityId id={d.delivery_id} />
                         </td>
                         <td className="cell-primary">{d.event_type}</td>
                         <td>
@@ -241,13 +241,7 @@ function GithubRecovery() {
                     {data.check_updates.map((c) => (
                       <tr key={c.deployment_id}>
                         <td>
-                          <Link
-                            href={`/deployments?deployment=${encodeURIComponent(c.deployment_id)}`}
-                            className="font-mono hover:underline"
-                            title="Open the deployment with its app and account"
-                          >
-                            {short(c.deployment_id)}
-                          </Link>
+                          <EntityId id={c.deployment_id} kind="deployment" />
                         </td>
                         <td className="font-mono">{c.generation}</td>
                         <td>

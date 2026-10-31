@@ -2,7 +2,6 @@
 
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import {
   cancelOperatorJobRun,
   getOperatorJobRun,
@@ -15,7 +14,8 @@ import {
   type OperatorJobRunDetailResponse,
 } from '@/lib/ops/workloads';
 import { useAsync } from '@/lib/useAsync';
-import { useDebounced } from '@/lib/useDebounced';
+import { useUrlParams, useUrlText } from '@/lib/useUrlState';
+import { intParam } from '@/lib/urlState';
 import { formatMegabytes, isRealTimestamp } from '@/lib/operator';
 import { relativeTime } from '@/lib/format';
 import { Mono, PageHeader, SearchInput } from '@/components/ui/bits';
@@ -24,13 +24,12 @@ import { Modal } from '@/components/ui/Modal';
 import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
-import { tenantHref } from '@/lib/routes';
+import { jobRunHref, tenantHref } from '@/lib/routes';
+import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
 
 const PAGE_SIZE = 50;
 const TASK_PAGE_SIZE = 50;
 const POLL_MS = 15000;
-
-const short = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
 
 interface RunDetail {
   runId: string;
@@ -48,22 +47,13 @@ export default function JobRunsPage() {
 }
 
 function JobRunOperations() {
-  const params = useSearchParams();
-  const accountParam = params.get('account');
+  // The account filter, the page and the open run live in the URL.
+  const [params, setParams] = useUrlParams();
+  const accountFilter = useUrlText('account', { resets: { offset: null } });
+  const account = accountFilter.value;
+  const offset = intParam(params.get('offset'));
   const runParam = params.get('run');
 
-  const [accountInput, setAccountInput] = useState(accountParam ?? '');
-  const [offset, setOffset] = useState(0);
-
-  useEffect(() => {
-    if (accountParam !== null)
-      queueMicrotask(() => {
-        setAccountInput(accountParam);
-        setOffset(0);
-      });
-  }, [accountParam]);
-
-  const account = useDebounced(accountInput.trim(), 400);
   const filterProblem = account && !isUuid(account) ? 'The account filter needs a full account UUID.' : null;
 
   const key = `${account}|${offset}`;
@@ -96,14 +86,19 @@ function JobRunOperations() {
     }
   };
 
-  const closeDetail = () => {
+  const resetDetail = () => {
     detailSeq.current++;
     setDetailRun(null);
     setDetail(null);
   };
 
+  // The URL decides which run is open: Inspect writes it, and so do links from incidents and tenants.
+  const openDetail = (runId: string) => setParams({ run: runId });
+  const closeDetail = () => setParams({ run: null });
+
   useEffect(() => {
-    if (runParam && isUuid(runParam)) queueMicrotask(() => void loadDetail(runParam.trim()));
+    const id = runParam?.trim();
+    queueMicrotask(() => (id && isUuid(id) ? void loadDetail(id) : resetDetail()));
   }, [runParam]);
 
   const view = detail && detail.runId === detailRun ? detail : null;
@@ -129,17 +124,14 @@ function JobRunOperations() {
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3 text-xs">
           <Icon name="user" size={14} />
           <span>Scoped to account</span>
-          <Mono>{scopeAccount}</Mono>
+          <EntityId id={scopeAccount} kind="account" full href={null} />
           <Link href={tenantHref(scopeAccount)} className="btn btn-ghost btn-xs">
             Open tenant
             <Icon name="arrowRight" size={12} />
           </Link>
           <button
             className="btn btn-ghost btn-xs"
-            onClick={() => {
-              setAccountInput('');
-              setOffset(0);
-            }}
+            onClick={() => setParams({ account: null, offset: null })}
           >
             <Icon name="x" size={12} />
             Clear scope
@@ -149,11 +141,8 @@ function JobRunOperations() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <SearchInput
-          value={accountInput}
-          onChange={(value) => {
-            setAccountInput(value);
-            setOffset(0);
-          }}
+          value={accountFilter.draft}
+          onChange={accountFilter.setDraft}
           placeholder="Account ID (UUID)"
           className="w-full sm:w-80"
         />
@@ -203,22 +192,17 @@ function JobRunOperations() {
                   <tr key={run.run_id}>
                     <td>
                       <span className="cell-primary">{run.job_name}</span>
-                      <div className="font-mono text-[11px] text-[var(--color-ink-muted)]" title={run.run_id}>
-                        run {short(run.run_id)}
+                      <div className="text-[11px] text-[var(--color-ink-muted)]">
+                        run <EntityId id={run.run_id} kind="job_run" href={null} />
                       </div>
                     </td>
                     <td>
-                      <Link href={tenantHref(run.account_id)} className="font-mono hover:underline" title={run.account_id}>
-                        {short(run.account_id)}
-                      </Link>
+                      <EntityId id={run.account_id} kind="account" />
                       {account !== run.account_id && (
                         <div>
                           <button
                             className="text-[11px] text-[var(--color-ink-muted)] hover:underline"
-                            onClick={() => {
-                              setAccountInput(run.account_id);
-                              setOffset(0);
-                            }}
+                            onClick={() => setParams({ account: run.account_id, offset: null })}
                           >
                             Only this account
                           </button>
@@ -235,7 +219,7 @@ function JobRunOperations() {
                     <td title={run.created_at}>{relativeTime(run.created_at)}</td>
                     <td>{isRealTimestamp(run.started_at) ? relativeTime(run.started_at) : 'Not started'}</td>
                     <td className="text-right">
-                      <button onClick={() => loadDetail(run.run_id)} className="btn btn-secondary btn-xs">
+                      <button onClick={() => openDetail(run.run_id)} className="btn btn-secondary btn-xs">
                         Inspect
                       </button>
                     </td>
@@ -257,8 +241,8 @@ function JobRunOperations() {
             page={Math.floor(offset / PAGE_SIZE) + 1}
             hasPrev={offset > 0}
             hasNext={page.next_offset > 0}
-            onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-            onNext={() => setOffset(page.next_offset)}
+            onPrev={() => setParams({ offset: Math.max(0, offset - PAGE_SIZE) || null })}
+            onNext={() => setParams({ offset: page.next_offset })}
           />
         )}
       </SectionCard>
@@ -299,7 +283,7 @@ function JobRunOperations() {
             <div className="space-y-1.5">
               <p>
                 Cancels run <Mono>{short(cancelTarget.run_id)}</Mono> ({cancelTarget.aggregate_status}) of job{' '}
-                <strong>{cancelTarget.job_name}</strong> owned by account <Mono>{cancelTarget.account_id}</Mono>.
+                <strong>{cancelTarget.job_name}</strong> owned by account <EntityId id={cancelTarget.account_id} kind="account" full />.
               </p>
               <p className="text-xs text-[var(--color-ink-soft)]">
                 {cancelTarget.tasks_running} running and{' '}
@@ -366,16 +350,8 @@ function RunDetailView({
   return (
     <div className="space-y-5 text-xs">
       <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-4">
-        <Fact label="Run" value={<Mono>{run.run_id}</Mono>} wide />
-        <Fact
-          label="Account"
-          value={
-            <Link href={tenantHref(run.account_id)} className="font-mono hover:underline">
-              {run.account_id}
-            </Link>
-          }
-          wide
-        />
+        <Fact label="Run" value={<EntityId id={run.run_id} kind="job_run" full href={null} />} wide />
+        <Fact label="Account" value={<EntityId id={run.account_id} kind="account" full />} wide />
         <Fact label="Job" value={run.job_name} />
         <Fact label="Status" value={<span className={`badge ${jobStatusTone(run.aggregate_status)}`}>{run.aggregate_status}</span>} />
         <Fact label="RAM per task" value={formatMegabytes(run.ram_mb)} />
@@ -392,6 +368,7 @@ function RunDetailView({
         ) : (
           <span className="text-[var(--color-ink-muted)]">This run is {run.aggregate_status}; only queued or running runs can be cancelled.</span>
         )}
+        <CopyLinkButton href={jobRunHref(run.run_id)} />
       </div>
 
       <section>
@@ -435,9 +412,7 @@ function RunDetailView({
                       )}
                     </td>
                     <td className="font-mono">{task.attempt}</td>
-                    <td className="font-mono" title={task.instance_id}>
-                      {task.instance_id ? short(task.instance_id) : '—'}
-                    </td>
+                    <td>{task.instance_id ? <EntityId id={task.instance_id} kind="instance" /> : '—'}</td>
                     <td className="max-w-[280px]">
                       {task.error_class || task.error_message ? (
                         <>

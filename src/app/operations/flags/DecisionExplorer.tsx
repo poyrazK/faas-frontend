@@ -8,6 +8,7 @@ import { useDebounced } from '@/lib/useDebounced';
 import { Mono } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { TenantLink } from '@/components/operator/TenantLink';
+import { EntityId } from '@/components/operator/EntityId';
 
 /**
  * "Would account X get flag Y, and why?" — evaluates apid's live snapshot
@@ -125,7 +126,7 @@ export function DecisionExplorer({
             <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
               <Fact label="Account" value={<TenantLink accountId={result.account_id} short />} />
               <Fact label="Plan" value={result.plan || '—'} />
-              <Fact label="Org" value={result.org_id ? <Mono>{result.org_id.slice(0, 13)}…</Mono> : '—'} />
+              <Fact label="Org" value={result.org_id ? <EntityId id={result.org_id} chars={13} /> : '—'} />
               <Fact label="Rule" value={result.rule_id ? <Mono>{result.rule_id}</Mono> : result.opt_in ? `opt-in (${result.opt_in})` : '—'} />
               <Fact label="Bucket" value={result.bucket !== undefined ? `${result.bucket} (${formatBasisPoints(result.bucket)})` : '—'} />
               <Fact label="Snapshot" value={`v${result.version}${result.at ? ` · at ${result.at}` : ''}`} />

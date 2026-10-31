@@ -5,10 +5,11 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { listObsTenants, type ObsTenantRow } from '@/lib/api';
 import { isAccountId, tenantHref } from '@/lib/routes';
-import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
+import { PageHeader, SearchInput, FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { EntityId } from '@/components/operator/EntityId';
 
 const PAGE_SIZE = 100;
 
@@ -177,9 +178,7 @@ function TenantsDirectory() {
                 {visibleRows.map((tenant) => (
                   <tr key={tenant.account_id}>
                     <td className="font-mono">
-                      <Link href={tenantHref(tenant.account_id)} className="hover:underline">
-                        <Mono>{tenant.account_id.slice(0, 13)}…</Mono>
-                      </Link>
+                      <EntityId id={tenant.account_id} kind="account" />
                       {tenant.org_slug && (
                         <div className="text-[11px] text-[var(--color-ink-muted)]">org: {tenant.org_slug}</div>
                       )}

@@ -4,11 +4,12 @@ import React, { useState } from 'react';
 import { getObsAnomalies, type ObsAnomalyRow } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
 import { SEVERE_ANOMALY_Z } from '@/lib/operator';
-import { PageHeader, Mono, FilterSelect } from '@/components/ui/bits';
+import { PageHeader, FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
 import { TenantLink } from '@/components/operator/TenantLink';
+import { EntityId } from '@/components/operator/EntityId';
 
 export default function AnomaliesPage() {
   const [windowHours, setWindowHours] = useState('24');
@@ -81,7 +82,7 @@ export default function AnomaliesPage() {
                           <TenantLink accountId={row.account_id} short />
                         </div>
                         <div className="text-[11px] text-[var(--color-ink-muted)]">
-                          app: <Mono>{row.app_id.slice(0, 13)}…</Mono>
+                          app: <EntityId id={row.app_id} kind="app" />
                         </div>
                       </td>
                       <td className="px-4 py-3 font-mono">

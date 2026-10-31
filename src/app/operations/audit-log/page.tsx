@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import {
   searchObsAuditLog,
   listObsEvents,
@@ -9,21 +9,40 @@ import {
   type ObsEventRow,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { useDebounced } from '@/lib/useDebounced';
-import { PageHeader, Mono, SearchInput } from '@/components/ui/bits';
+import { useUrlParams, useUrlText } from '@/lib/useUrlState';
+import { pickParam } from '@/lib/urlState';
+import { EntityId } from '@/components/operator/EntityId';
+import { PageHeader, SearchInput } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
 
-type LogView = 'audit' | 'events' | 'global';
+const LOG_VIEWS = ['audit', 'events', 'global'] as const;
+type LogView = (typeof LOG_VIEWS)[number];
 
 export default function GlobalAuditLogPage() {
-  const [view, setView] = useState<LogView>('audit');
-  const [search, setSearch] = useState('');
-  const [actorEmail, setActorEmail] = useState('');
-  const [targetAccountId, setTargetAccountId] = useState('');
-  const [operatorOnly, setOperatorOnly] = useState(false);
-  const [kindPrefix, setKindPrefix] = useState('');
+  return (
+    <Suspense>
+      <GlobalAuditLog />
+    </Suspense>
+  );
+}
+
+function GlobalAuditLog() {
+  // The view and every filter live in the URL, so a filtered trail can be shared as a link.
+  const [params, setParams] = useUrlParams();
+  const view = pickParam<LogView>(params.get('view'), LOG_VIEWS, 'audit');
+  const setView = (next: LogView) => setParams({ view: next === 'audit' ? null : next });
+  const searchText = useUrlText('q', { delayMs: 250 });
+  const actorText = useUrlText('actor');
+  const accountText = useUrlText('account');
+  const kindText = useUrlText('kind');
+  const { draft: search, setDraft: setSearch } = searchText;
+  const { draft: actorEmail, setDraft: setActorEmail } = actorText;
+  const { draft: targetAccountId, setDraft: setTargetAccountId } = accountText;
+  const { draft: kindPrefix, setDraft: setKindPrefix } = kindText;
+  const operatorOnly = params.get('operator') === '1';
+  const setOperatorOnly = (on: boolean) => setParams({ operator: on });
   const [olderAudit, setOlderAudit] = useState<GlobalAuditLogEntry[]>([]);
   const [olderAuditFilterKey, setOlderAuditFilterKey] = useState<string | null>(null);
   const [nextBefore, setNextBefore] = useState<string | null>(null);
@@ -36,9 +55,9 @@ export default function GlobalAuditLogPage() {
   const [globalLoading, setGlobalLoading] = useState(false);
   const [globalError, setGlobalError] = useState<Error | null>(null);
   // Server-side filters settle before they hit the API; only the visible tab polls.
-  const actorFilter = useDebounced(actorEmail.trim());
-  const accountFilter = useDebounced(targetAccountId.trim());
-  const kindFilter = useDebounced(kindPrefix.trim());
+  const actorFilter = actorText.value;
+  const accountFilter = accountText.value;
+  const kindFilter = kindText.value;
   const auditFilterKey = [actorFilter, accountFilter, operatorOnly ? 'true' : 'false', kindFilter].join('\u0000');
   const auditFilterKeyRef = useRef(auditFilterKey);
 
@@ -346,7 +365,7 @@ export default function GlobalAuditLogPage() {
                       </td>
                       <td className="px-4 py-3 font-mono">{entry.actor || '—'}</td>
                       <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">
-                        {entry.account_id ? <Mono>{entry.account_id.slice(0, 13)}…</Mono> : 'Anonymous'}
+                        {entry.account_id ? <EntityId id={entry.account_id} kind="account" /> : 'Anonymous'}
                       </td>
                       <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">
                         {entry.account_email || '—'}
@@ -426,7 +445,7 @@ export default function GlobalAuditLogPage() {
                       </td>
                       <td className="px-4 py-3 font-mono">{evt.actor}</td>
                       <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">
-                        {evt.subject ? <Mono>{evt.subject.slice(0, 13)}…</Mono> : '—'}
+                        {evt.subject ? <EntityId id={evt.subject} chars={13} /> : '—'}
                       </td>
                       <td className="px-4 py-3 font-mono text-[11px]">
                         {evt.data && Object.keys(evt.data).length > 0 ? (
@@ -467,7 +486,7 @@ export default function GlobalAuditLogPage() {
                       <td className="px-4 py-3 font-mono"><div>{new Date(entry.received_at).toLocaleTimeString()}</div><div className="text-[11px] text-[var(--color-ink-muted)]">{relativeTime(entry.received_at)}</div></td>
                       <td className="px-4 py-3 font-mono font-semibold text-[var(--color-brand-bright)]">{entry.kind}</td>
                       <td className="px-4 py-3 font-mono">{entry.actor || '—'}</td>
-                      <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.account_id ? <Mono>{entry.account_id.slice(0, 13)}…</Mono> : 'Anonymous'}</td>
+                      <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.account_id ? <EntityId id={entry.account_id} kind="account" /> : 'Anonymous'}</td>
                       <td className="px-4 py-3 font-mono text-[var(--color-ink-muted)]">{entry.account_email || '—'}</td>
                       <td className="px-4 py-3 font-mono text-[11px]"><span className="block max-w-xs truncate text-[var(--color-ink-muted)]">{entry.data && Object.keys(entry.data).length > 0 ? JSON.stringify(entry.data) : '—'}</span></td>
                     </tr>

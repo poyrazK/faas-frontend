@@ -35,6 +35,7 @@ import {
 } from '@/components/operator/tenant';
 import { useKeyed } from '@/components/operator/tenant/shared';
 import { useTenant, type TenantData } from '@/components/operator/tenant/useTenant';
+import { EntityId } from '@/components/operator/EntityId';
 
 const TAB_LABELS: Record<TenantTab, { label: string; icon: IconName }> = {
   overview: { label: 'Overview', icon: 'overview' },
@@ -685,7 +686,7 @@ function BillingTab({ accountId, data, currency, startAction }: TabContext) {
                 <tbody>
                   {t360.usage.apps.map((app) => (
                     <tr key={app.app_id}>
-                      <td className="cell-primary">{app.app_slug || app.app_id.slice(0, 12)}</td>
+                      <td className="cell-primary">{app.app_slug || <EntityId id={app.app_id} kind="app" />}</td>
                       <td>{gbHours(app.mb_seconds).toFixed(2)}</td>
                       <td>{app.requests.toLocaleString()}</td>
                       <td>{((app.tx_bytes + app.net_tx_bytes) / 1024 ** 3).toFixed(3)} GB</td>

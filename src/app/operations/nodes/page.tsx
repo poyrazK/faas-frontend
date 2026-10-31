@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import {
   listObsNodes,
   getObsNodeHeartbeats,
@@ -31,6 +31,9 @@ import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { useOperatorIntents } from '@/components/operator/OperatorIntents';
+import { CopyLinkButton, EntityId } from '@/components/operator/EntityId';
+import { useUrlParams } from '@/lib/useUrlState';
+import { nodeHref } from '@/lib/routes';
 
 const NODE_ACTIONS: Record<ObsNodeAction, { label: string; tone: 'danger' | 'warning' | 'default'; impact: string }> = {
   drain: {
@@ -56,6 +59,19 @@ const NODE_ACTIONS: Record<ObsNodeAction, { label: string; tone: 'danger' | 'war
 };
 
 export default function ComputeNodesPage() {
+  return (
+    <Suspense>
+      <ComputeNodes />
+    </Suspense>
+  );
+}
+
+function ComputeNodes() {
+  // The open node (?node=) and heartbeat view (?heartbeats=) live in the URL,
+  // so incidents and channels can link straight to a host.
+  const [params, setParams] = useUrlParams();
+  const nodeParam = params.get('node')?.trim() || null;
+  const heartbeatParam = params.get('heartbeats')?.trim() || null;
   const [cursor, setCursor] = useState('');
   const nodeQuery = useAsync(() => listObsNodes(cursor), [cursor], 30000);
   const { data, loading, error, reload } = nodeQuery;
@@ -78,7 +94,7 @@ export default function ComputeNodesPage() {
   const [enrollment, setEnrollment] = useState<{ node: string; data?: ComputeNode; error?: string } | null>(null);
   const [pendingAction, setPendingAction] = useState<ObsNodeAction | null>(null);
 
-  const openHeartbeats = async (nodeName: string) => {
+  const loadHeartbeats = async (nodeName: string) => {
     const seq = ++requestSeq.current;
     setHeartbeatNode(nodeName);
     setHeartbeats(null);
@@ -90,7 +106,7 @@ export default function ComputeNodesPage() {
     }
   };
 
-  const openDetail = async (nodeName: string) => {
+  const loadDetail = async (nodeName: string) => {
     const seq = ++requestSeq.current;
     setDetailNode(nodeName);
     setDetail(null);
@@ -108,6 +124,18 @@ export default function ComputeNodesPage() {
         : { node: nodeName, error: (enrolled.reason as Error).message },
     );
   };
+
+  const openDetail = (nodeName: string) => setParams({ node: nodeName, heartbeats: null });
+  const closeDetail = () => setParams({ node: null });
+  const openHeartbeats = (nodeName: string) => setParams({ heartbeats: nodeName, node: null });
+  const closeHeartbeats = () => setParams({ heartbeats: null });
+
+  useEffect(() => {
+    queueMicrotask(() => (nodeParam ? void loadDetail(nodeParam) : setDetailNode(null)));
+  }, [nodeParam]);
+  useEffect(() => {
+    queueMicrotask(() => (heartbeatParam ? void loadHeartbeats(heartbeatParam) : setHeartbeatNode(null)));
+  }, [heartbeatParam]);
 
   const refreshAll = () => {
     reload();
@@ -288,7 +316,7 @@ export default function ComputeNodesPage() {
         </SectionCard>
       </div>
 
-      <Modal open={detailNode !== null} onClose={() => setDetailNode(null)} title={`Node ${detailNode ?? ''}`} width={960}>
+      <Modal open={detailNode !== null} onClose={closeDetail} title={`Node ${detailNode ?? ''}`} width={960}>
         {nodeDetailError ? (
           <div role="alert" className="text-sm text-[var(--color-danger)]">
             Could not load node detail: {nodeDetailError}
@@ -346,6 +374,7 @@ export default function ComputeNodesPage() {
                   Edit enrollment…
                 </button>
               )}
+              {detailNode && <CopyLinkButton href={nodeHref(detailNode)} />}
             </div>
 
             <EnrollmentSection enrollment={nodeEnrollment} />
@@ -370,8 +399,8 @@ export default function ComputeNodesPage() {
                       {nodeDetail.apps.map((app) => (
                         <tr key={app.id}>
                           <td className="cell-primary">{app.slug}</td>
-                          <td className="font-mono" title={app.account_id}>
-                            {app.account_id.slice(0, 8)}…
+                          <td>
+                            <EntityId id={app.account_id} kind="account" />
                           </td>
                           <td>
                             {app.instances_live} live · {app.instances_running} running · {app.instances_cold_booting} cold
@@ -407,10 +436,10 @@ export default function ComputeNodesPage() {
                     <tbody>
                       {nodeDetail.instances.map((instance) => (
                         <tr key={instance.id}>
-                          <td className="font-mono" title={instance.id}>
-                            {instance.id.slice(0, 8)}…
+                          <td>
+                            <EntityId id={instance.id} kind="instance" />
                           </td>
-                          <td>{instance.app_slug || `${instance.app_id.slice(0, 8)}…`}</td>
+                          <td>{instance.app_slug || <EntityId id={instance.app_id} kind="app" />}</td>
                           <td>
                             <span className="badge badge-neutral">{instance.state}</span>
                           </td>
@@ -429,7 +458,7 @@ export default function ComputeNodesPage() {
 
       <Modal
         open={heartbeatNode !== null}
-        onClose={() => setHeartbeatNode(null)}
+        onClose={closeHeartbeats}
         title={`Heartbeats · ${heartbeatNode ?? ''} · last 30 minutes`}
         width={760}
       >
@@ -504,7 +533,7 @@ export default function ComputeNodesPage() {
             const res = await mutateObsNode(detailNode, pendingAction, reason, { idempotencyKey });
             track({ intentId: res.intent_id, kind: `node_${pendingAction.replace('-', '_')}`, target: detailNode });
             refreshAll();
-            void openDetail(detailNode);
+            void loadDetail(detailNode);
             const p = res.preflight;
             return `${action.label} queued (${res.previous_lifecycle} → ${res.requested_lifecycle}); ${p.affected_apps} app(s), ${p.affected_tenants} tenant(s) affected.`;
           }}
@@ -517,7 +546,7 @@ export default function ComputeNodesPage() {
           onClose={() => setEnrollTarget(null)}
           onDone={(node) => {
             refreshAll();
-            if (detailNode === node.name) void openDetail(node.name);
+            if (detailNode === node.name) void loadDetail(node.name);
           }}
         />
       )}
@@ -536,7 +565,7 @@ export default function ComputeNodesPage() {
           onClose={() => setDeletingRecord(false)}
           onSubmit={async ({ reason, idempotencyKey }) => {
             await deleteRetiredComputeNode(detailNode, reason, { idempotencyKey });
-            setDetailNode(null);
+            closeDetail();
             refreshAll();
             return `Node record ${detailNode} deleted.`;
           }}
@@ -565,7 +594,7 @@ function EnrollmentSection({ enrollment }: { enrollment: { data?: ComputeNode; e
     );
   }
   const node = enrollment.data!;
-  const short = (value?: string | null) => (value ? `${value.slice(0, 12)}…` : '—');
+  const digest = (value?: string | null) => (value ? <EntityId id={value} chars={12} /> : '—');
   return (
     <section>
       <h4 className="mb-2 font-semibold text-[var(--color-ink-soft)]">Enrollment</h4>
@@ -574,9 +603,9 @@ function EnrollmentSection({ enrollment }: { enrollment: { data?: ComputeNode; e
         <Fact label="Scrape target" value={<span className="font-mono">{node.gateway_target_url || '—'}</span>} />
         <Fact label="Role · region · zone" value={[node.role, node.region, node.zone].map((v) => v || '—').join(' · ')} />
         <Fact label="Generation" value={node.generation ?? '—'} />
-        <Fact label="Release" value={<span className="font-mono" title={node.release_id ?? undefined}>{short(node.release_id)}</span>} />
-        <Fact label="Manifest" value={<span className="font-mono" title={node.manifest_hash ?? undefined}>{short(node.manifest_hash)}</span>} />
-        <Fact label="Host certificate" value={<span className="font-mono" title={node.cert_fingerprint ?? undefined}>{short(node.cert_fingerprint)}</span>} />
+        <Fact label="Release" value={digest(node.release_id)} />
+        <Fact label="Manifest" value={digest(node.manifest_hash)} />
+        <Fact label="Host certificate" value={digest(node.cert_fingerprint)} />
         <Fact label="Enrolled" value={new Date(node.created_at).toLocaleDateString()} />
       </div>
     </section>

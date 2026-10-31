@@ -20,7 +20,8 @@ import type {
   ObsAlertRetentionHealth,
   Tone,
 } from './telemetry';
-import { tenantHref } from '@/lib/routes';
+import { deploymentHref, jobRunHref, nodeHref, tenantHref } from '@/lib/routes';
+import { pickParam } from '@/lib/urlState';
 
 /* ─────────────────────────────── Vocabulary ────────────────────────────── */
 
@@ -525,6 +526,37 @@ export function incidentFiltersKey(filters: IncidentFilters): string {
   return [f.type, f.severity, f.windowHours, f.alertStatus, f.acknowledgment, f.ownership, f.snooze, f.limit, f.cursor].join('|');
 }
 
+/* ── Inbox filters in the page URL (paging cursors stay out: they expire) ── */
+
+/** Inbox filters from the page's query string; unknown values fall back to the defaults. */
+export function incidentFiltersFromSearch(params: Pick<URLSearchParams, 'get'>): IncidentFilters {
+  const hours = Number(params.get('window'));
+  return normalizeIncidentFilters({
+    ...DEFAULT_INCIDENT_FILTERS,
+    type: pickParam<IncidentType | ''>(params.get('type'), INCIDENT_TYPES, ''),
+    severity: pickParam<IncidentSeverity | ''>(params.get('severity'), INCIDENT_SEVERITIES, ''),
+    windowHours: INCIDENT_WINDOWS.some((option) => option.hours === hours) ? hours : 0,
+    alertStatus: pickParam<AlertStatus | ''>(params.get('alert_status'), ALERT_STATUSES, ''),
+    acknowledgment: pickParam<AcknowledgmentFilter | ''>(params.get('ack'), ['acknowledged', 'unacknowledged'], ''),
+    ownership: pickParam<OwnershipFilter | ''>(params.get('owner'), ['owned', 'unowned', 'mine'], ''),
+    snooze: pickParam<SnoozeFilter | ''>(params.get('snooze'), ['active', 'inactive'], ''),
+  });
+}
+
+/** Query-string updates that represent `filters`; defaults remove their key. */
+export function incidentFiltersToSearch(filters: IncidentFilters): Record<string, string | null> {
+  const f = normalizeIncidentFilters(filters);
+  return {
+    type: f.type || null,
+    severity: f.severity || null,
+    window: f.windowHours ? String(f.windowHours) : null,
+    alert_status: f.alertStatus || null,
+    ack: f.acknowledgment || null,
+    owner: f.ownership || null,
+    snooze: f.snooze || null,
+  };
+}
+
 /** Query string for GET /v1/admin/obs/incidents; only nonempty, valid parameters are sent. */
 export function incidentQueryString(filters: IncidentFilters, now = Date.now()): string {
   const f = normalizeIncidentFilters(filters);
@@ -745,18 +777,25 @@ export interface ConsoleLink {
 
 /**
  * Maps an incident's API paths onto console pages. action_path points at a
- * gated API read, so only paths with a console equivalent become links:
- * node detail → /nodes, pipeline health → /telemetry, any account → the
- * tenant page, audit searches → the audit trail.
+ * gated API read, so only paths with a console equivalent become links: the
+ * deployment or job run itself, the node (by name) or the node list, pipeline
+ * health → /telemetry, any account → the tenant page, audit searches → the
+ * audit trail with the same filters.
  */
-export function incidentConsoleLinks(incident: Pick<ObsIncident, 'type' | 'account_id' | 'action_path' | 'audit_path' | 'node_id'>): ConsoleLink[] {
+export function incidentConsoleLinks(
+  incident: Pick<ObsIncident, 'type' | 'account_id' | 'action_path' | 'audit_path' | 'node_id'> &
+    Partial<Pick<ObsIncident, 'resource_id' | 'resource_name'>>,
+): ConsoleLink[] {
   const links: ConsoleLink[] = [];
   const action = incident.action_path ?? '';
-  if (
-    incident.type === 'compute_node' ||
-    action.startsWith('/v1/admin/obs/nodes/') ||
-    action.startsWith('/v1/admin/obs/incidents/compute_node/')
-  ) {
+  const nodeName = (incident.type === 'compute_node' && incident.resource_name) || nodeNameFromPath(action);
+  if (incident.type === 'deployment' && incident.resource_id) {
+    links.push({ href: deploymentHref(incident.resource_id), label: 'Deployment' });
+  } else if (incident.type === 'job_run' && incident.resource_id) {
+    links.push({ href: jobRunHref(incident.resource_id), label: 'Job run' });
+  } else if (nodeName) {
+    links.push({ href: nodeHref(nodeName), label: 'Compute node' });
+  } else if (incident.type === 'compute_node' || action.startsWith('/v1/admin/obs/incidents/compute_node/')) {
     links.push({ href: '/nodes', label: 'Compute nodes' });
   } else if (action === '/v1/admin/obs/health') {
     links.push({ href: '/telemetry', label: 'Telemetry health' });
@@ -764,15 +803,50 @@ export function incidentConsoleLinks(incident: Pick<ObsIncident, 'type' | 'accou
   if (incident.account_id) {
     links.push({ href: tenantHref(incident.account_id), label: 'Tenant' });
   }
-  if (incident.audit_path?.startsWith('/v1/admin/obs/audit-log/search')) {
-    links.push({ href: '/audit-log', label: 'Audit trail' });
-  }
+  const audit = auditTrailHref(incident.audit_path);
+  if (audit) links.push({ href: audit, label: 'Audit trail' });
   return links;
+}
+
+/** The node name in /v1/admin/obs/nodes/{name}/…, if `path` is one. */
+function nodeNameFromPath(path: string): string | null {
+  const match = /^\/v1\/admin\/obs\/nodes\/([^/?]+)/.exec(path);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+const AUDIT_FILTER_PARAMS: Record<string, string> = {
+  kind_prefix: 'kind',
+  actor_email: 'actor',
+  target_account_id: 'account',
+  operator_only: 'operator',
+};
+
+/** An audit-log search API path as the audit trail page with the same filters, or null. */
+export function auditTrailHref(apiPath?: string): string | null {
+  if (!apiPath?.startsWith('/v1/admin/obs/audit-log/search')) return null;
+  const source = new URLSearchParams(apiPath.split('?')[1] ?? '');
+  const target = new URLSearchParams();
+  for (const [from, to] of Object.entries(AUDIT_FILTER_PARAMS)) {
+    const value = source.get(from);
+    if (!value) continue;
+    if (to === 'operator') {
+      if (value === 'true' || value === '1') target.set(to, '1');
+    } else target.set(to, value);
+  }
+  const query = target.toString();
+  return query ? `/audit-log?${query}` : '/audit-log';
 }
 
 /** Console page for a related resource in the incident context, if one exists. */
 export function relatedResourceLink(resource: Pick<ObsIncidentRelatedResource, 'kind' | 'id' | 'account_id'>): ConsoleLink | null {
   if (resource.kind === 'tenant') return { href: tenantHref(resource.id), label: 'Tenant' };
+  if (resource.kind === 'deployment') return { href: deploymentHref(resource.id), label: 'Deployment' };
+  if (resource.kind === 'job_run') return { href: jobRunHref(resource.id), label: 'Job run' };
   if (resource.kind === 'compute_node') return { href: '/nodes', label: 'Nodes' };
   if (resource.account_id) return { href: tenantHref(resource.account_id), label: 'Tenant' };
   return null;

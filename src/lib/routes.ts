@@ -63,3 +63,26 @@ export function tenantHref(accountId: string, tab?: TenantTab): string {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isAccountId = (value: string) => UUID_PATTERN.test(value.trim());
+
+/* ── Deep links: one URL per thing an operator might paste into a channel ── */
+
+const withQuery = (path: string, query: Record<string, string>) => `${path}?${new URLSearchParams(query)}`;
+
+/** A deployment's detail panel on Customer deployments. */
+export const deploymentHref = (deploymentId: string) => withQuery('/deployments', { deployment: deploymentId.trim() });
+
+/** A job run's detail panel on Job runs. */
+export const jobRunHref = (runId: string) => withQuery('/jobs', { run: runId.trim() });
+
+/** A compute node's detail panel on Compute nodes. */
+export const nodeHref = (nodeName: string) => withQuery('/nodes', { node: nodeName.trim() });
+
+/** An incident ("<type>/<id>") opened on Incidents. */
+export const incidentHref = (incidentId: string) => withQuery('/incidents', { incident: incidentId.trim() });
+
+/** Support lookup for one OTel trace or one wake. */
+export const traceHref = (traceId: string) => withQuery('/lookup', { trace: traceId.trim() });
+export const wakeHref = (wakeId: string) => withQuery('/lookup', { wake: wakeId.trim() });
+
+/** Customer deployments filtered to one app (every status). */
+export const appDeploymentsHref = (appId: string) => withQuery('/deployments', { app: appId.trim(), status: 'all' });

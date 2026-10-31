@@ -8,7 +8,10 @@ import {
   getAlertWorkloadSummary,
   getIncidentContext,
   getIncidentEvidence,
+  auditTrailHref,
   incidentConsoleLinks,
+  incidentFiltersFromSearch,
+  incidentFiltersToSearch,
   incidentFiltersKey,
   incidentQueryString,
   listIncidents,
@@ -214,8 +217,8 @@ describe('linking', () => {
     expect(
       incidentConsoleLinks({ type: 'compute_node', action_path: '/v1/admin/obs/nodes/n1/detail', audit_path: '/v1/admin/obs/audit-log/search?kind_prefix=operator.action.' }),
     ).toEqual([
-      { href: '/nodes', label: 'Compute nodes' },
-      { href: '/audit-log', label: 'Audit trail' },
+      { href: '/nodes?node=n1', label: 'Compute node' },
+      { href: '/audit-log?kind=operator.action.', label: 'Audit trail' },
     ]);
     expect(incidentConsoleLinks({ type: 'platform_alert', action_path: '/v1/admin/obs/health' })).toEqual([
       { href: '/telemetry', label: 'Telemetry health' },
@@ -223,6 +226,12 @@ describe('linking', () => {
     expect(incidentConsoleLinks({ type: 'deployment', action_path: `/v1/admin/ops/deployments/${UUID}`, account_id: UUID })).toEqual([
       { href: `/tenants/${UUID}`, label: 'Tenant' },
     ]);
+    expect(incidentConsoleLinks({ type: 'deployment', resource_id: UUID, account_id: UUID })[0]).toEqual({
+      href: `/deployments?deployment=${UUID}`,
+      label: 'Deployment',
+    });
+    expect(incidentConsoleLinks({ type: 'job_run', resource_id: UUID })[0].href).toBe(`/jobs?run=${UUID}`);
+    expect(incidentConsoleLinks({ type: 'compute_node', resource_id: UUID, resource_name: 'node-a' })[0].href).toBe('/nodes?node=node-a');
     expect(incidentConsoleLinks({ type: 'platform_alert', action_path: `/v1/admin/obs/incidents/compute_node/${UUID}/evidence` })[0].href).toBe('/nodes');
   });
 
@@ -286,5 +295,36 @@ describe('paging merges', () => {
     const merged = mergeTriageHistory(page([5, 4], 'n'), page([4, 3]));
     expect(merged.items.map((i) => i.revision)).toEqual([5, 4, 3]);
     expect(merged.next_cursor).toBe('');
+  });
+});
+
+describe('inbox filters in the page URL', () => {
+  it('round-trips through the query string, keeping defaults out of it', () => {
+    const filters = incidentFiltersFromSearch(new URLSearchParams('type=platform_alert&severity=critical&window=720&ack=unacknowledged&owner=mine'));
+    expect(filters).toMatchObject({ type: 'platform_alert', severity: 'critical', windowHours: 720, acknowledgment: 'unacknowledged', ownership: 'mine', cursor: '' });
+    expect(incidentFiltersToSearch(filters)).toEqual({
+      type: 'platform_alert',
+      severity: 'critical',
+      window: '720',
+      alert_status: null,
+      ack: 'unacknowledged',
+      owner: 'mine',
+      snooze: null,
+    });
+    expect(Object.values(incidentFiltersToSearch(incidentFiltersFromSearch(new URLSearchParams())))).toEqual(Array(7).fill(null));
+  });
+
+  it('drops unknown values and alert-only filters on other sources', () => {
+    const filters = incidentFiltersFromSearch(new URLSearchParams('type=bogus&severity=meh&window=5&ack=acknowledged'));
+    expect(filters).toMatchObject({ type: '', severity: '', windowHours: 0, acknowledgment: '' });
+    expect(incidentFiltersFromSearch(new URLSearchParams('type=deployment&window=720')).windowHours).toBe(0);
+  });
+
+  it('opens audit searches as the audit trail with the same filters', () => {
+    expect(auditTrailHref(`/v1/admin/obs/audit-log/search?kind_prefix=operator.&target_account_id=${UUID}&operator_only=true&limit=50`)).toBe(
+      `/audit-log?kind=operator.&account=${UUID}&operator=1`,
+    );
+    expect(auditTrailHref('/v1/admin/obs/audit-log/search')).toBe('/audit-log');
+    expect(auditTrailHref('/v1/admin/obs/health')).toBeNull();
   });
 });
