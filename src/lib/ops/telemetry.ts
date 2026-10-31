@@ -22,6 +22,7 @@ import { request, getObsHealth, type ObsHealthResponse } from '@/lib/api';
  * Alert collection health. `state` is the original current/unknown evidence
  * contract; `collection_state` distinguishes disabled, never_collected,
  * failed, stale and current.
+ * @go api.ObsAlertCollectionHealth
  */
 export interface ObsAlertCollectionHealth {
   diagnostics_path?: string;
@@ -32,7 +33,10 @@ export interface ObsAlertCollectionHealth {
   last_success_at?: string;
 }
 
-/** Alert-history cleanup, observed independently of Prometheus. */
+/**
+ * Alert-history cleanup, observed independently of Prometheus.
+ * @go api.ObsAlertRetentionHealth
+ */
 export interface ObsAlertRetentionHealth {
   state: string;
   reason?: string;
@@ -46,7 +50,10 @@ export interface ObsAlertRetentionHealth {
   oldest_expired_at?: string;
 }
 
-/** Retained collection cadence evidence over a window; not uptime. */
+/**
+ * Retained collection cadence evidence over a window; not uptime.
+ * @go api.ObsAlertCollectionCoverage
+ */
 export interface ObsAlertCollectionCoverage {
   since: string;
   as_of: string;
@@ -65,7 +72,10 @@ export interface ObsAlertCollectionCoverage {
 
 /* ─────────────────────────── /v1/admin/obs/health ──────────────────────── */
 
-/** Evidence behind one Prometheus-derived field of /v1/admin/obs/health. */
+/**
+ * Evidence behind one Prometheus-derived field of /v1/admin/obs/health.
+ * @go api.ObsHealthSignal
+ */
 export interface ObsHealthSignal {
   state: string;
   observed_at?: string;
@@ -78,6 +88,7 @@ export interface ObsHealthSignal {
  * The backend's ObsHealthResponse carries three fields that the shared
  * ObsHealthResponse in api.ts does not declare yet (signals, alert_history,
  * alert_retention). They are optional on the wire too (omitempty / legacy).
+ * @go api.ObsHealthResponse
  */
 export interface ObsHealthDetail extends ObsHealthResponse {
   signals?: Record<string, ObsHealthSignal>;
@@ -110,7 +121,10 @@ export function healthMetric(
 
 /* ─────────────────────── /v1/admin/obs/notification-health ─────────────── */
 
-/** Separates fresh zero values from missing evidence; value is null unless healthy. */
+/**
+ * Separates fresh zero values from missing evidence; value is null unless healthy.
+ * @go api.ObsNotificationSignal
+ */
 export interface ObsNotificationSignal {
   state: string;
   reason?: string;
@@ -120,19 +134,24 @@ export interface ObsNotificationSignal {
   max_age_seconds: number;
 }
 
+/** @go api.ObsNotificationAPIStatus */
 export interface ObsNotificationAPIStatus {
   state: string;
   reason?: string;
   observed_at?: string;
 }
 
-/** A closed integration type (never a receiver name or address). */
+/**
+ * A closed integration type (never a receiver name or address).
+ * @go api.ObsNotificationIntegration
+ */
 export interface ObsNotificationIntegration {
   integration: string;
   attempts: ObsNotificationSignal;
   failures: ObsNotificationSignal;
 }
 
+/** @go api.ObsNotificationHealth */
 export interface ObsNotificationHealth {
   generated_at: string;
   state: string;
@@ -149,7 +168,10 @@ export const getNotificationHealth = () =>
 
 /* ─────────────────────────── /v1/admin/obs/rule-health ─────────────────── */
 
-/** Rule state categories partition `rules`. */
+/**
+ * Rule state categories partition `rules`.
+ * @go api.ObsRuleHealthTotals
+ */
 export interface ObsRuleHealthTotals {
   groups: number;
   rules: number;
@@ -162,7 +184,10 @@ export interface ObsRuleHealthTotals {
   invalid_groups: number;
 }
 
-/** Counts (pending/firing) are usable only for healthy items; null never means quiet. */
+/**
+ * Counts (pending/firing) are usable only for healthy items; null never means quiet.
+ * @go api.ObsRuleHealthItem
+ */
 export interface ObsRuleHealthItem {
   kind: string;
   id: string;
@@ -181,6 +206,7 @@ export interface ObsRuleHealthItem {
   runbook_url?: string;
 }
 
+/** @go api.ObsRuleHealthResponse */
 export interface ObsRuleHealthResponse {
   generated_at: string;
   scope: string;
@@ -203,6 +229,7 @@ export const getRuleHealth = () =>
 
 /* ─────────────────── rule-coverage / recording-coverage ────────────────── */
 
+/** @go api.ObsRuleCoverageSet */
 export interface ObsRuleCoverageSet {
   id: string;
   revision: string;
@@ -210,7 +237,10 @@ export interface ObsRuleCoverageSet {
   expected_rules: number;
 }
 
-/** Expected categories partition expected_rules. */
+/**
+ * Expected categories partition expected_rules.
+ * @go api.ObsRuleCoverageTotals
+ */
 export interface ObsRuleCoverageTotals {
   expected_rules: number;
   observed_rules: number;
@@ -224,6 +254,7 @@ export interface ObsRuleCoverageTotals {
   unknown: number;
 }
 
+/** @go api.ObsRuleCoverageItem */
 export interface ObsRuleCoverageItem {
   id: string;
   file_name: string;
@@ -241,6 +272,7 @@ export interface ObsRuleCoverageItem {
  * Compares an explicitly selected expected set with one loaded alert-rule
  * read. Without a selection the server answers state=unknown,
  * reason=expected_set_not_selected and lists `available_sets`.
+ * @go api.ObsRuleCoverage
  */
 export interface ObsRuleCoverage {
   generated_at: string;
@@ -260,6 +292,7 @@ export interface ObsRuleCoverage {
   limitations: string[];
 }
 
+/** @go api.ObsRecordingAlertReference */
 export interface ObsRecordingAlertReference {
   id: string;
   file_name: string;
@@ -267,6 +300,7 @@ export interface ObsRecordingAlertReference {
   rule_name: string;
 }
 
+/** @go api.ObsRecordingAlertReferences */
 export interface ObsRecordingAlertReferences {
   items: ObsRecordingAlertReference[];
   total_items: number;
@@ -274,11 +308,13 @@ export interface ObsRecordingAlertReferences {
   truncated: boolean;
 }
 
+/** @go api.ObsRecordingCoverageItem */
 export interface ObsRecordingCoverageItem {
   comparison: ObsRuleCoverageItem;
   dependent_alerts: ObsRecordingAlertReferences;
 }
 
+/** @go api.ObsRecordingDependencyMapping */
 export interface ObsRecordingDependencyMapping {
   scope: string;
   state: string;
@@ -287,6 +323,7 @@ export interface ObsRecordingDependencyMapping {
   uncertain_alerts: ObsRecordingAlertReferences;
 }
 
+/** @go api.ObsRecordingCoverage */
 export interface ObsRecordingCoverage {
   generated_at: string;
   scope: string;
@@ -333,6 +370,7 @@ export const getRecordingCoverage = (expectedSet?: string) =>
 
 /* ─────────────────────────── /v1/admin/obs/input-health ────────────────── */
 
+/** @go api.ObsInputExpectation */
 export interface ObsInputExpectation {
   source: string;
   state: string;
@@ -342,6 +380,7 @@ export interface ObsInputExpectation {
   observed_at: string | null;
 }
 
+/** @go api.ObsInputTargetCounts */
 export interface ObsInputTargetCounts {
   observed: number;
   fresh_up: number;
@@ -351,12 +390,14 @@ export interface ObsInputTargetCounts {
   extra: number | null;
 }
 
+/** @go api.ObsInputTargets */
 export interface ObsInputTargets {
   state: string;
   reason?: string;
   counts: ObsInputTargetCounts | null;
 }
 
+/** @go api.ObsInputMetricCounts */
 export interface ObsInputMetricCounts {
   expected: number;
   fresh: number;
@@ -364,6 +405,7 @@ export interface ObsInputMetricCounts {
   stale: number;
 }
 
+/** @go api.ObsInputMetric */
 export interface ObsInputMetric {
   metric: string;
   state: string;
@@ -371,6 +413,7 @@ export interface ObsInputMetric {
   counts: ObsInputMetricCounts | null;
 }
 
+/** @go api.ObsInputJob */
 export interface ObsInputJob {
   job: string;
   state: string;
@@ -382,6 +425,7 @@ export interface ObsInputJob {
 /**
  * Without `expected_role` the server answers state=unknown,
  * reason=expected_role_not_selected and lists `available_roles`.
+ * @go api.ObsInputHealth
  */
 export interface ObsInputHealth {
   generated_at: string;
@@ -410,6 +454,7 @@ export const getInputHealth = (expectedRole?: string) =>
 
 /* ──────────────────────── /v1/admin/obs/collection-history ─────────────── */
 
+/** @go api.ObsAlertCollectionHistoryInterval */
 export interface ObsAlertCollectionHistoryInterval {
   from: string;
   until: string;
@@ -417,7 +462,10 @@ export interface ObsAlertCollectionHistoryInterval {
   reason: string;
 }
 
-/** Observations from the exact rejected source snapshot. */
+/**
+ * Observations from the exact rejected source snapshot.
+ * @go api.ObsAlertCollectionRejection
+ */
 export interface ObsAlertCollectionRejection {
   scope: string;
   reason: string;
@@ -428,6 +476,7 @@ export interface ObsAlertCollectionRejection {
   truncated: boolean;
 }
 
+/** @go api.ObsAlertCollectionFailure */
 export interface ObsAlertCollectionFailure {
   attempted_at: string;
   reason: string;
@@ -435,7 +484,10 @@ export interface ObsAlertCollectionFailure {
   diagnostics: ObsAlertCollectionRejection | null;
 }
 
-/** Opt-in (details=true); missing historical diagnostics never mean healthy rules. */
+/**
+ * Opt-in (details=true); missing historical diagnostics never mean healthy rules.
+ * @go api.ObsAlertCollectionFailureDetails
+ */
 export interface ObsAlertCollectionFailureDetails {
   items: ObsAlertCollectionFailure[];
   total_failures: number;
@@ -444,6 +496,7 @@ export interface ObsAlertCollectionFailureDetails {
   limitations: string[];
 }
 
+/** @go api.ObsAlertCollectionHistory */
 export interface ObsAlertCollectionHistory {
   failure_details?: ObsAlertCollectionFailureDetails;
   coverage: ObsAlertCollectionCoverage;

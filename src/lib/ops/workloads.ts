@@ -121,7 +121,10 @@ export function deploymentStatusTone(status: string): BadgeTone {
   }
 }
 
-/** api.OperatorDeployment — the safe projection (no source paths, images, env). */
+/**
+ * api.OperatorDeployment — the safe projection (no source paths, images, env).
+ * @go api.OperatorDeployment
+ */
 export interface OperatorDeployment {
   id: string;
   app_id: string;
@@ -144,6 +147,7 @@ export interface OperatorDeployment {
   cancel_reason?: string;
 }
 
+/** @go api.OperatorDeploymentStageItem */
 export interface OperatorDeploymentStageItem {
   name: string;
   started_at?: string;
@@ -153,6 +157,7 @@ export interface OperatorDeploymentStageItem {
   reason?: string;
 }
 
+/** @go api.OperatorDeploymentStage */
 export interface OperatorDeploymentStage {
   current?: string;
   current_started_at?: string;
@@ -162,6 +167,7 @@ export interface OperatorDeploymentStage {
   history?: OperatorDeploymentStageItem[];
 }
 
+/** @go api.OperatorDeploymentBuild */
 export interface OperatorDeploymentBuild {
   id: string;
   status: string;
@@ -172,6 +178,7 @@ export interface OperatorDeploymentBuild {
   finished_at?: string;
 }
 
+/** @go api.OperatorDeploymentListResponse */
 export interface OperatorDeploymentListResponse {
   deployments: OperatorDeployment[];
   account_id?: string;
@@ -184,12 +191,14 @@ export interface OperatorDeploymentListResponse {
   next_offset: number;
 }
 
+/** @go api.OperatorDeploymentDetailResponse */
 export interface OperatorDeploymentDetailResponse {
   deployment: OperatorDeployment;
   build?: OperatorDeploymentBuild;
   stage?: OperatorDeploymentStage;
 }
 
+/** @go api.OperatorDeploymentMutationResponse */
 export interface OperatorDeploymentMutationResponse {
   /** For retry this is the newly enqueued deployment, not the failed one. */
   deployment: OperatorDeployment;
@@ -298,7 +307,10 @@ export function jobStatusTone(status: string): BadgeTone {
   }
 }
 
-/** api.OperatorJobRun — no env overrides, commands or lease tokens. */
+/**
+ * api.OperatorJobRun — no env overrides, commands or lease tokens.
+ * @go api.OperatorJobRun
+ */
 export interface OperatorJobRun {
   job_id: string;
   job_name: string;
@@ -315,6 +327,7 @@ export interface OperatorJobRun {
   started_at?: string;
 }
 
+/** @go api.OperatorJobRunListResponse */
 export interface OperatorJobRunListResponse {
   account_id?: string;
   runs: OperatorJobRun[];
@@ -324,7 +337,10 @@ export interface OperatorJobRunListResponse {
   next_offset: number;
 }
 
-/** api.JobTaskResponse (lease token omitted server-side). */
+/**
+ * api.JobTaskResponse (lease token omitted server-side).
+ * @go api.JobTaskResponse
+ */
 export interface OperatorJobTask {
   /** workpolicy.Decision; opaque to the console. */
   work_decision?: Record<string, unknown> | null;
@@ -347,6 +363,7 @@ export interface OperatorJobTask {
   created_at: string;
 }
 
+/** @go api.OperatorJobRunDetailResponse */
 export interface OperatorJobRunDetailResponse {
   run: OperatorJobRun;
   tasks: OperatorJobTask[];
@@ -355,6 +372,7 @@ export interface OperatorJobRunDetailResponse {
   next_task_offset: number;
 }
 
+/** @go api.OperatorJobRunCancelResponse */
 export interface OperatorJobRunCancelResponse {
   run: OperatorJobRun;
   cancelled_at: string;
@@ -399,7 +417,10 @@ export const cancelOperatorJobRun = (runId: string, reason: string, opts?: Opera
 
 /* ────────────────────────────── Data repairs ───────────────────────────── */
 
-/** api.DataRepairPhaseHealth — one row per phase, always all phases. */
+/**
+ * api.DataRepairPhaseHealth — one row per phase, always all phases.
+ * @go api.DataRepairPhaseHealth
+ */
 export interface DataRepairPhaseHealth {
   phase: string;
   count: number;
@@ -409,7 +430,10 @@ export interface DataRepairPhaseHealth {
   warn_after_seconds: number;
 }
 
-/** api.DataRepairHealthItem — metadata only; no SQL, values or snapshots. */
+/**
+ * api.DataRepairHealthItem — metadata only; no SQL, values or snapshots.
+ * @go api.DataRepairHealthItem
+ */
 export interface DataRepairHealthItem {
   cursor_key: string;
   operation_id: string;
@@ -431,6 +455,7 @@ export interface DataRepairHealthItem {
   runbook_url: string;
 }
 
+/** @go api.DataRepairHealth */
 export interface DataRepairHealth {
   observed_at: string;
   phases: DataRepairPhaseHealth[];

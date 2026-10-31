@@ -45,7 +45,10 @@ export const SNOOZE_MAX_MS = 24 * 3_600_000;
 
 /* ─────────────────────────────── Wire types ────────────────────────────── */
 
-/** Human workflow state for one retained alert episode, independent of alert status. */
+/**
+ * Human workflow state for one retained alert episode, independent of alert status.
+ * @go api.ObsAlertTriage
+ */
 export interface ObsAlertTriage {
   revision: number;
   acknowledged: boolean;
@@ -57,7 +60,10 @@ export interface ObsAlertTriage {
   as_of: string;
 }
 
-/** Recurrence and last-known state of a retained alert episode. */
+/**
+ * Recurrence and last-known state of a retained alert episode.
+ * @go api.ObsAlertEpisode
+ */
 export interface ObsAlertEpisode {
   series_id: string;
   started_at: string;
@@ -69,6 +75,7 @@ export interface ObsAlertEpisode {
   observation_state: string;
 }
 
+/** @go api.ObsIncident */
 export interface ObsIncident {
   /** "<type>/<resource or episode id>". */
   id: string;
@@ -94,6 +101,7 @@ export interface ObsIncident {
   triage?: ObsAlertTriage;
 }
 
+/** @go api.ObsIncidentListResponse */
 export interface ObsIncidentListResponse {
   unavailable_sources: string[];
   generated_at: string;
@@ -107,7 +115,10 @@ export interface ObsIncidentListResponse {
   next_cursor: string;
 }
 
-/** Exact-resource history entry. IDs are strings to preserve bigint precision. */
+/**
+ * Exact-resource history entry. IDs are strings to preserve bigint precision.
+ * @go api.ObsIncidentEvidenceEntry
+ */
 export interface ObsIncidentEvidenceEntry {
   id: string;
   source: string;
@@ -118,7 +129,10 @@ export interface ObsIncidentEvidenceEntry {
   trace_path?: string;
 }
 
-/** Current suppression evidence (platform_alert only); null booleans mean unknown. */
+/**
+ * Current suppression evidence (platform_alert only); null booleans mean unknown.
+ * @go api.ObsAlertSuppression
+ */
 export interface ObsAlertSuppression {
   state: string;
   reason?: string;
@@ -128,6 +142,7 @@ export interface ObsAlertSuppression {
   inhibited: boolean | null;
 }
 
+/** @go api.ObsAlertTriageHistoryEntry */
 export interface ObsAlertTriageHistoryEntry {
   id: string;
   revision: number;
@@ -140,6 +155,7 @@ export interface ObsAlertTriageHistoryEntry {
   trace_path?: string;
 }
 
+/** @go api.ObsAlertTriageHistoryCoverage */
 export interface ObsAlertTriageHistoryCoverage {
   state: string;
   reason?: string;
@@ -149,6 +165,7 @@ export interface ObsAlertTriageHistoryCoverage {
   newest_available_revision?: number;
 }
 
+/** @go api.ObsAlertTriageHistory */
 export interface ObsAlertTriageHistory {
   incident_id: string;
   generated_at: string;
@@ -163,7 +180,10 @@ export interface ObsAlertTriageHistory {
   coverage: ObsAlertTriageHistoryCoverage;
 }
 
-/** Read-only snapshot, not a persisted incident record. */
+/**
+ * Read-only snapshot, not a persisted incident record.
+ * @go api.ObsIncidentEvidenceResponse
+ */
 export interface ObsIncidentEvidenceResponse {
   suppression?: ObsAlertSuppression;
   triage_history?: ObsAlertTriageHistory;
@@ -177,6 +197,7 @@ export interface ObsIncidentEvidenceResponse {
   unavailable_sources: string[];
 }
 
+/** @go api.ObsIncidentContextScope */
 export interface ObsIncidentContextScope {
   state: string;
   reason?: string;
@@ -187,7 +208,10 @@ export interface ObsIncidentContextScope {
   job_id?: string;
 }
 
-/** Complete current relationship set; failed_resources does not imply causation. */
+/**
+ * Complete current relationship set; failed_resources does not imply causation.
+ * @go api.ObsIncidentContextCounts
+ */
 export interface ObsIncidentContextCounts {
   apps: number;
   tenants: number;
@@ -198,6 +222,7 @@ export interface ObsIncidentContextCounts {
   failed_resources: number;
 }
 
+/** @go api.ObsIncidentRelatedResource */
 export interface ObsIncidentRelatedResource {
   /** app | tenant | deployment | compute_node | job | job_run */
   kind: string;
@@ -209,6 +234,7 @@ export interface ObsIncidentRelatedResource {
   confirmed_failure: boolean;
 }
 
+/** @go api.ObsIncidentRelatedEntry */
 export interface ObsIncidentRelatedEntry {
   resource_kind: string;
   resource_id: string;
@@ -216,7 +242,10 @@ export interface ObsIncidentRelatedEntry {
   entry: ObsIncidentEvidenceEntry;
 }
 
-/** Current relationships, not historical blast radius or causation. */
+/**
+ * Current relationships, not historical blast radius or causation.
+ * @go api.ObsIncidentContextResponse
+ */
 export interface ObsIncidentContextResponse {
   as_of: string;
   incident_id: string;
@@ -237,6 +266,7 @@ export interface ObsIncidentContextResponse {
   unavailable_sources: string[];
 }
 
+/** @go api.ObsAlertTriageRequest */
 export interface ObsAlertTriageRequest {
   action: TriageAction;
   /** Required; the write is rejected with 409 when the triage changed meanwhile. */
@@ -245,6 +275,7 @@ export interface ObsAlertTriageRequest {
   snoozed_until?: string;
 }
 
+/** @go api.ObsAlertTriageResponse */
 export interface ObsAlertTriageResponse {
   incident_id: string;
   triage: ObsAlertTriage;
@@ -252,6 +283,7 @@ export interface ObsAlertTriageResponse {
 
 /* Alert workload summary (GET …/platform_alert/summary). */
 
+/** @go api.ObsAlertWorkloadCounts */
 export interface ObsAlertWorkloadCounts {
   total: number;
   firing: number;
@@ -261,6 +293,7 @@ export interface ObsAlertWorkloadCounts {
   needs_attention: number;
 }
 
+/** @go api.ObsAlertWorkloadGroup */
 export interface ObsAlertWorkloadGroup {
   status: string;
   severity: string;
@@ -270,6 +303,7 @@ export interface ObsAlertWorkloadGroup {
   count: number;
 }
 
+/** @go api.ObsAlertWorkloadOldest */
 export interface ObsAlertWorkloadOldest {
   incident_id: string;
   status: string;
@@ -279,6 +313,7 @@ export interface ObsAlertWorkloadOldest {
   evidence_path: string;
 }
 
+/** @go api.ObsAlertWorkloadSummary */
 export interface ObsAlertWorkloadSummary {
   as_of: string;
   scope: string;
@@ -294,6 +329,7 @@ export interface ObsAlertWorkloadSummary {
 
 /* Recurrence (GET …/platform_alert/recurrence). */
 
+/** @go api.ObsAlertRecurrenceDuration */
 export interface ObsAlertRecurrenceDuration {
   samples: number;
   not_observed: number;
@@ -302,6 +338,7 @@ export interface ObsAlertRecurrenceDuration {
   p50_seconds: number | null;
 }
 
+/** @go api.ObsAlertRecurrenceGap */
 export interface ObsAlertRecurrenceGap {
   samples: number;
   unconfirmed_recovery: number;
@@ -311,6 +348,7 @@ export interface ObsAlertRecurrenceGap {
   p50_seconds: number | null;
 }
 
+/** @go api.ObsAlertRecurrenceMetrics */
 export interface ObsAlertRecurrenceMetrics {
   episodes: number;
   repeat_activations: number;
@@ -320,12 +358,14 @@ export interface ObsAlertRecurrenceMetrics {
   recovery_gap: ObsAlertRecurrenceGap;
 }
 
+/** @go api.ObsAlertRecurrenceTotals */
 export interface ObsAlertRecurrenceTotals {
   series: number;
   repeated_series: number;
   metrics: ObsAlertRecurrenceMetrics;
 }
 
+/** @go api.ObsAlertRecurrenceEpisode */
 export interface ObsAlertRecurrenceEpisode {
   episode_id: string;
   status: string;
@@ -334,6 +374,7 @@ export interface ObsAlertRecurrenceEpisode {
   evidence_path: string;
 }
 
+/** @go api.ObsAlertRecurrenceSeries */
 export interface ObsAlertRecurrenceSeries {
   rule_key: string;
   series_id: string;
@@ -350,6 +391,7 @@ export interface ObsAlertRecurrenceSeries {
   recent_episodes_truncated: boolean;
 }
 
+/** @go api.ObsAlertRecurrence */
 export interface ObsAlertRecurrence {
   coverage?: ObsAlertCollectionCoverage;
   as_of: string;
@@ -367,6 +409,7 @@ export interface ObsAlertRecurrence {
 
 /* Response times (GET …/platform_alert/response-times). */
 
+/** @go api.ObsAlertResponseMetric */
 export interface ObsAlertResponseMetric {
   samples: number;
   not_observed: number;
@@ -376,6 +419,7 @@ export interface ObsAlertResponseMetric {
   p95_seconds: number | null;
 }
 
+/** @go api.ObsAlertResponseCoverage */
 export interface ObsAlertResponseCoverage {
   complete_episodes: number;
   gapped_episodes: number;
@@ -383,6 +427,7 @@ export interface ObsAlertResponseCoverage {
   missing_revisions: number;
 }
 
+/** @go api.ObsAlertResponseAggregate */
 export interface ObsAlertResponseAggregate {
   episodes: number;
   unresolved: number;
@@ -392,13 +437,17 @@ export interface ObsAlertResponseAggregate {
   receipt_coverage: ObsAlertResponseCoverage;
 }
 
+/** @go api.ObsAlertResponseGroup */
 export interface ObsAlertResponseGroup {
   severity: string;
   component: string;
   metrics: ObsAlertResponseAggregate;
 }
 
-/** Retained activation-cohort timing, not an SLA. */
+/**
+ * Retained activation-cohort timing, not an SLA.
+ * @go api.ObsAlertResponseTimes
+ */
 export interface ObsAlertResponseTimes {
   coverage?: ObsAlertCollectionCoverage;
   as_of: string;

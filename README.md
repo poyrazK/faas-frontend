@@ -31,6 +31,7 @@ backend trusts that origin; reads work.
 | `npm run typecheck` | `tsc --noEmit`                  |
 | `npm run lint`      | ESLint                          |
 | `npm test`          | Vitest (node environment)       |
+| `npm run contract -- --backend <faas checkout>` | Check API types against apid |
 
 CI runs typecheck, lint, tests and a production build on every PR.
 
@@ -42,9 +43,10 @@ CI runs typecheck, lint, tests and a production build on every PR.
   create the folder.
 - **API client** — `src/lib/api.ts` holds the shared transport and the core
   operator types; area clients live in `src/lib/ops/*`. Operator routes are
-  not in apid's OpenAPI spec, so types are written against the Go structs in
-  `faas` (`pkg/api`, `pkg/apid/apidserver`) and must be re-checked when the
-  backend changes them.
+  not in apid's OpenAPI spec, so types are written by hand against the Go
+  structs in `faas` and tagged `@go pkg.Type`. The contract guard
+  (`npm run contract`, run in CI on every PR and daily) fails when they drift;
+  see `scripts/contract/README.md`.
 - **Writes** — every write goes through `OperatorActionDialog`: it states the
   impact, requires an audited reason (apid's lifecycle endpoints accept only
   `[a-z0-9_]{1,64}` codes), can require typed confirmation, blocks double

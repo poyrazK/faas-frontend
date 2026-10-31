@@ -32,7 +32,10 @@ export type StatusLifecycle =
   | 'completed'
   | 'cancelled';
 
-/** One timeline entry. impact/components are set only when the update changed them. */
+/**
+ * One timeline entry. impact/components are set only when the update changed them.
+ * @go api.PublicStatusUpdate
+ */
 export interface PublicStatusUpdate {
   id: string;
   state: StatusLifecycle;
@@ -43,7 +46,10 @@ export interface PublicStatusUpdate {
   components?: StatusComponent[];
 }
 
-/** The event as customers read it. `id` is the public id ({public_id} in paths). */
+/**
+ * The event as customers read it. `id` is the public id ({public_id} in paths).
+ * @go api.PublicStatusEvent
+ */
 export interface PublicStatusEvent {
   id: string;
   kind: StatusEventKind;
@@ -64,6 +70,7 @@ export interface PublicStatusEvent {
  * POST body. apid fills an incident's starts_at with now and a maintenance
  * impact/state when omitted; an incident must not carry a schedule and
  * maintenance must not carry starts_at (publicstatus.ValidateEvent).
+ * @go api.AdminStatusEventCreateRequest
  */
 export interface AdminStatusEventCreateRequest {
   kind: StatusEventKind;
@@ -80,6 +87,7 @@ export interface AdminStatusEventCreateRequest {
 /**
  * POST …/updates body. impact and components are optional; an empty
  * components array is not "unchanged" — apid refuses it — so omit it.
+ * @go api.AdminStatusEventUpdateRequest
  */
 export interface AdminStatusEventUpdateRequest {
   state: StatusLifecycle;
@@ -88,7 +96,10 @@ export interface AdminStatusEventUpdateRequest {
   components?: StatusComponent[];
 }
 
-/** Subset of GET /v1/status (PublicStatusOverview) the console reads. */
+/**
+ * Subset of GET /v1/status (PublicStatusOverview) the console reads.
+ * @go api.PublicStatusOverview
+ */
 export interface PublicStatusOverviewSummary {
   overall_status: StatusImpact;
   data_status: string;
@@ -113,7 +124,10 @@ export const listAdminStatusEvents = (filter: StatusEventFilter = {}) => {
 
 export const STATUS_LIST_LIMIT = 200;
 
-/** Publishes an incident or schedules maintenance. Customer-visible at once. */
+/**
+ * Publishes an incident or schedules maintenance. Customer-visible at once.
+ * @goBody api.AdminStatusEventCreateRequest
+ */
 export const createAdminStatusEvent = (body: AdminStatusEventCreateRequest, opts?: OperatorWrite) =>
   request<PublicStatusEvent>('/v1/admin/status/incidents', {
     method: 'POST',
@@ -121,7 +135,10 @@ export const createAdminStatusEvent = (body: AdminStatusEventCreateRequest, opts
     body: JSON.stringify(body),
   });
 
-/** Appends a lifecycle update; a terminal state closes the event. */
+/**
+ * Appends a lifecycle update; a terminal state closes the event.
+ * @goBody api.AdminStatusEventUpdateRequest
+ */
 export const appendAdminStatusUpdate = (publicId: string, body: AdminStatusEventUpdateRequest, opts?: OperatorWrite) =>
   request<PublicStatusEvent>(`/v1/admin/status/incidents/${encodeURIComponent(publicId)}/updates`, {
     method: 'POST',
@@ -129,7 +146,10 @@ export const appendAdminStatusUpdate = (publicId: string, body: AdminStatusEvent
     body: JSON.stringify(body),
   });
 
-/** Corrects a published title (any state); the event is marked edited. */
+/**
+ * Corrects a published title (any state); the event is marked edited.
+ * @goBody api.AdminStatusEventEditRequest
+ */
 export const editAdminStatusEventTitle = (publicId: string, title: string, opts?: OperatorWrite) =>
   request<PublicStatusEvent>(`/v1/admin/status/incidents/${encodeURIComponent(publicId)}`, {
     method: 'PATCH',
@@ -137,7 +157,10 @@ export const editAdminStatusEventTitle = (publicId: string, title: string, opts?
     body: JSON.stringify({ title }),
   });
 
-/** Corrects one published timeline message; its posted_at ordering is kept. */
+/**
+ * Corrects one published timeline message; its posted_at ordering is kept.
+ * @goBody api.AdminStatusUpdateEditRequest
+ */
 export const editAdminStatusUpdateMessage = (publicId: string, updateId: string, message: string, opts?: OperatorWrite) =>
   request<PublicStatusEvent>(
     `/v1/admin/status/incidents/${encodeURIComponent(publicId)}/updates/${encodeURIComponent(updateId)}`,

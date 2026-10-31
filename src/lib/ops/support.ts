@@ -33,7 +33,10 @@ export const ABUSE_HOLD_REASON_LABELS: Record<string, string> = {
   operator: 'Placed by an operator',
 };
 
-/** api.AccountAbuseHold. `held_at` is a time.Time. */
+/**
+ * api.AccountAbuseHold. `held_at` is a time.Time.
+ * @go api.AccountAbuseHold
+ */
 export interface AccountAbuseHold {
   reason: AbuseHoldReason | string;
   held_at: string;
@@ -44,6 +47,7 @@ export interface AccountAbuseHold {
  * null (not absent) when the account is not held. `changed` is false when the
  * action was a no-op (already held / already released); an existing hold keeps
  * its first reason and time.
+ * @go api.AccountAbuseHoldActionResponse
  */
 export interface AccountAbuseHoldActionResponse {
   account_id: string;
@@ -63,6 +67,7 @@ export function abuseHoldNoteError(note: string): string | null {
   return null;
 }
 
+/** @goBody api.AccountAbuseHoldAction */
 const changeAbuseHold = (method: 'POST' | 'DELETE', accountId: string, note: string, opts?: OperatorWrite) =>
   request<AccountAbuseHoldActionResponse>(`/v1/admin/accounts/${encodeURIComponent(accountId)}/abuse-hold`, {
     method,
@@ -193,7 +198,10 @@ export const FLAG_SCHEDULE_LABELS: Record<string, string> = {
   rule_ended: 'matching rule has ended',
 };
 
-/** api.OperatorPlatformFlagDecision. */
+/**
+ * api.OperatorPlatformFlagDecision.
+ * @go api.OperatorPlatformFlagDecision
+ */
 export interface OperatorPlatformFlagDecision {
   flag: string;
   account_id: string;
@@ -215,7 +223,10 @@ export interface OperatorPlatformFlagDecision {
   opt_in?: 'account' | 'org' | string;
 }
 
-/** api.OperatorAccountPlatformFlags — GET /v1/admin/accounts/{id}/flags. */
+/**
+ * api.OperatorAccountPlatformFlags — GET /v1/admin/accounts/{id}/flags.
+ * @go api.OperatorAccountPlatformFlags
+ */
 export interface OperatorAccountPlatformFlags {
   account_id: string;
   plan: string;
@@ -254,7 +265,10 @@ export const WAKE_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 export const normalizeTraceId = (input: string) => input.trim().toLowerCase();
 export const normalizeWakeId = (input: string) => input.trim();
 
-/** api.ObsTraceLookupResponse — operator intents and live events sharing one trace id. */
+/**
+ * api.ObsTraceLookupResponse — operator intents and live events sharing one trace id.
+ * @go api.ObsTraceLookupResponse
+ */
 export interface ObsTraceLookupResponse {
   trace_id: string;
   generated_at: string;
@@ -275,7 +289,10 @@ export const getTraceLookup = (traceId: string, limit?: number) => {
   });
 };
 
-/** api.ObsWakeEvent. */
+/**
+ * api.ObsWakeEvent.
+ * @go api.ObsWakeEvent
+ */
 export interface ObsWakeEvent {
   at: string;
   kind: string;
@@ -285,7 +302,10 @@ export interface ObsWakeEvent {
   data?: unknown;
 }
 
-/** api.ObsWakeTimeline — oldest first, at most 1000 events (then `truncated`). */
+/**
+ * api.ObsWakeTimeline — oldest first, at most 1000 events (then `truncated`).
+ * @go api.ObsWakeTimeline
+ */
 export interface ObsWakeTimeline {
   wake_id: string;
   /** First subject the events name (the app), when any does. */
