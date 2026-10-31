@@ -13,6 +13,15 @@ import {
   type ObsHeartbeatListResponse,
 } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
+import {
+  deleteRetiredComputeNode,
+  enrollmentLifecycleEffect,
+  getComputeNode,
+  listComputeNodes,
+  LIFECYCLE_TONE,
+  type ComputeNode,
+} from '@/lib/ops/nodes';
+import { EnrollNodeDialog } from './EnrollNodeDialog';
 import { formatMegabytes, isRealTimestamp, REASON_SUGGESTIONS, WAKE_SLO_P50_MS } from '@/lib/operator';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { PageHeader } from '@/components/ui/bits';
@@ -51,7 +60,13 @@ export default function ComputeNodesPage() {
   const nodeQuery = useAsync(() => listObsNodes(cursor), [cursor], 30000);
   const { data, loading, error, reload } = nodeQuery;
   const wakeQuery = useAsync(() => getObsWakeLatencies(), [], 30000);
+  // Enrollment rows carry the real lifecycle (draining, maintenance, retired…)
+  // that the obs list collapses into active/inactive.
+  const enrolledQuery = useAsync(() => listComputeNodes(true), [], 30000);
+  const enrolledByName = new Map((enrolledQuery.data ?? []).map((node) => [node.name, node]));
   const { track } = useOperatorIntents();
+  const [enrollTarget, setEnrollTarget] = useState<ComputeNode | 'new' | null>(null);
+  const [deletingRecord, setDeletingRecord] = useState(false);
 
   // Each drawer remembers which node its in-flight request was for, so a slow
   // response for node A can never render (or be acted on) under node B.
@@ -60,6 +75,7 @@ export default function ComputeNodesPage() {
   const [heartbeats, setHeartbeats] = useState<{ node: string; data?: ObsHeartbeatListResponse; error?: string } | null>(null);
   const [detailNode, setDetailNode] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ node: string; data?: ObsNodeDetailResponse; error?: string } | null>(null);
+  const [enrollment, setEnrollment] = useState<{ node: string; data?: ComputeNode; error?: string } | null>(null);
   const [pendingAction, setPendingAction] = useState<ObsNodeAction | null>(null);
 
   const openHeartbeats = async (nodeName: string) => {
@@ -78,15 +94,31 @@ export default function ComputeNodesPage() {
     const seq = ++requestSeq.current;
     setDetailNode(nodeName);
     setDetail(null);
-    try {
-      const res = await getObsNodeDetail(nodeName);
-      if (seq === requestSeq.current) setDetail({ node: nodeName, data: res });
-    } catch (err) {
-      if (seq === requestSeq.current) setDetail({ node: nodeName, error: (err as Error).message });
-    }
+    setEnrollment(null);
+    const [workloads, enrolled] = await Promise.allSettled([getObsNodeDetail(nodeName), getComputeNode(nodeName)]);
+    if (seq !== requestSeq.current) return;
+    setDetail(
+      workloads.status === 'fulfilled'
+        ? { node: nodeName, data: workloads.value }
+        : { node: nodeName, error: (workloads.reason as Error).message },
+    );
+    setEnrollment(
+      enrolled.status === 'fulfilled'
+        ? { node: nodeName, data: enrolled.value }
+        : { node: nodeName, error: (enrolled.reason as Error).message },
+    );
+  };
+
+  const refreshAll = () => {
+    reload();
+    wakeQuery.reload();
+    enrolledQuery.reload();
   };
 
   const nodeDetail = detail && detail.node === detailNode ? detail.data : undefined;
+  const nodeEnrollment = enrollment && enrollment.node === detailNode ? enrollment : null;
+  const editBlock = nodeEnrollment?.data ? enrollmentLifecycleEffect(nodeEnrollment.data, true).blocked : null;
+  const retired = nodeEnrollment?.data?.lifecycle === 'retired';
   const nodeDetailError = detail && detail.node === detailNode ? detail.error : undefined;
   const hb = heartbeats && heartbeats.node === heartbeatNode ? heartbeats : null;
   const action = pendingAction ? NODE_ACTIONS[pendingAction] : null;
@@ -95,18 +127,18 @@ export default function ComputeNodesPage() {
     <div>
       <PageHeader
         title="Compute Nodes"
-        subtitle="Host inventory, placement capacity, wake latency and lifecycle controls. Drained nodes stay listed so they can be reactivated."
+        subtitle="Enroll hosts, watch placement capacity and wake latency, and move nodes through their lifecycle. Drained and retired nodes stay listed."
         actions={
-          <button
-            onClick={() => {
-              reload();
-              wakeQuery.reload();
-            }}
-            className="btn btn-secondary btn-sm"
-          >
-            <Icon name="refresh" size={14} />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setEnrollTarget('new')} className="btn btn-primary btn-sm">
+              <Icon name="plus" size={14} />
+              Enroll node…
+            </button>
+            <button onClick={refreshAll} className="btn btn-secondary btn-sm">
+              <Icon name="refresh" size={14} />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -126,7 +158,7 @@ export default function ComputeNodesPage() {
               <thead>
                 <tr>
                   <th>Node</th>
-                  <th>Placement</th>
+                  <th>Lifecycle</th>
                   <th>vCPUs</th>
                   <th>Memory</th>
                   <th>Admission ceiling</th>
@@ -141,9 +173,7 @@ export default function ComputeNodesPage() {
                   <tr key={node.id}>
                     <td className="cell-primary">{node.name}</td>
                     <td>
-                      <span className={`badge ${node.active ? 'badge-success' : 'badge-warning'}`}>
-                        {node.active ? 'Active' : 'Out of placement'}
-                      </span>
+                      <LifecycleBadge enrolled={enrolledByName.get(node.name)} active={node.active} />
                     </td>
                     <td className="font-mono">{node.vpcpus}</td>
                     <td className="font-mono">{formatMegabytes(node.mem_mb)}</td>
@@ -268,7 +298,7 @@ export default function ComputeNodesPage() {
         ) : (
           <div className="space-y-5 text-xs">
             <div className="grid grid-cols-2 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-4 sm:grid-cols-5">
-              <Fact label="Placement" value={nodeDetail.node.active ? 'Active' : 'Out of placement'} />
+              <Fact label="Lifecycle" value={<LifecycleBadge enrolled={nodeEnrollment?.data} active={nodeDetail.node.active} />} />
               <Fact label="Live instances" value={nodeDetail.node.instances_live} />
               <Fact label="RAM used" value={formatMegabytes(nodeDetail.node.ram_used_mb)} />
               <Fact
@@ -283,7 +313,11 @@ export default function ComputeNodesPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {nodeDetail.node.active ? (
+              {retired ? (
+                <button onClick={() => setDeletingRecord(true)} className="btn btn-danger btn-sm">
+                  Delete record…
+                </button>
+              ) : nodeDetail.node.active ? (
                 <>
                   <button onClick={() => setPendingAction('drain')} className="btn btn-secondary btn-sm">
                     Drain…
@@ -302,7 +336,19 @@ export default function ComputeNodesPage() {
                   </button>
                 </>
               )}
+              {nodeEnrollment?.data && !retired && (
+                <button
+                  onClick={() => setEnrollTarget(nodeEnrollment.data!)}
+                  className="btn btn-secondary btn-sm"
+                  disabled={!!editBlock}
+                  title={editBlock ?? undefined}
+                >
+                  Edit enrollment…
+                </button>
+              )}
             </div>
+
+            <EnrollmentSection enrollment={nodeEnrollment} />
 
             <section>
               <h4 className="mb-2 font-semibold text-[var(--color-ink-soft)]">Apps ({nodeDetail.apps.length})</h4>
@@ -457,14 +503,83 @@ export default function ComputeNodesPage() {
           onSubmit={async ({ reason, idempotencyKey }) => {
             const res = await mutateObsNode(detailNode, pendingAction, reason, { idempotencyKey });
             track({ intentId: res.intent_id, kind: `node_${pendingAction.replace('-', '_')}`, target: detailNode });
-            reload();
+            refreshAll();
             void openDetail(detailNode);
             const p = res.preflight;
             return `${action.label} queued (${res.previous_lifecycle} → ${res.requested_lifecycle}); ${p.affected_apps} app(s), ${p.affected_tenants} tenant(s) affected.`;
           }}
         />
       )}
+      {enrollTarget && (
+        <EnrollNodeDialog
+          editing={enrollTarget === 'new' ? null : enrollTarget}
+          enrolled={enrolledQuery.data ?? []}
+          onClose={() => setEnrollTarget(null)}
+          onDone={(node) => {
+            refreshAll();
+            if (detailNode === node.name) void openDetail(node.name);
+          }}
+        />
+      )}
+
+      {deletingRecord && detailNode && (
+        <OperatorActionDialog
+          open
+          title={`Delete record: ${detailNode}`}
+          tone="danger"
+          reason="code"
+          reasonSuggestions={['mistaken_enrollment', 'duplicate_enrollment']}
+          confirmText={detailNode}
+          submitLabel="Delete record"
+          fingerprint={`hard-delete|${detailNode}`}
+          impact="Permanently removes this retired node from the fleet registry. apid only allows it for a node that never ran a workload (a mistaken enrollment); otherwise the retired record is kept for history."
+          onClose={() => setDeletingRecord(false)}
+          onSubmit={async ({ reason, idempotencyKey }) => {
+            await deleteRetiredComputeNode(detailNode, reason, { idempotencyKey });
+            setDetailNode(null);
+            refreshAll();
+            return `Node record ${detailNode} deleted.`;
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function LifecycleBadge({ enrolled, active }: { enrolled?: ComputeNode; active: boolean }) {
+  if (!enrolled) {
+    return <span className={`badge ${active ? 'badge-success' : 'badge-warning'}`}>{active ? 'Active' : 'Out of placement'}</span>;
+  }
+  return (
+    <span className={`badge ${LIFECYCLE_TONE[enrolled.lifecycle] ?? 'badge-neutral'}`}>{enrolled.lifecycle.replace('_', ' ')}</span>
+  );
+}
+
+function EnrollmentSection({ enrollment }: { enrollment: { data?: ComputeNode; error?: string } | null }) {
+  if (!enrollment) return <div className="text-[var(--color-ink-muted)]">Loading enrollment…</div>;
+  if (enrollment.error) {
+    return (
+      <div role="alert" className="text-[var(--color-danger)]">
+        Could not load the enrollment record: {enrollment.error}
+      </div>
+    );
+  }
+  const node = enrollment.data!;
+  const short = (value?: string | null) => (value ? `${value.slice(0, 12)}…` : '—');
+  return (
+    <section>
+      <h4 className="mb-2 font-semibold text-[var(--color-ink-soft)]">Enrollment</h4>
+      <div className="grid grid-cols-2 gap-3 rounded-lg border border-[var(--color-line)] p-4 sm:grid-cols-4">
+        <Fact label="vmmd target" value={<span className="font-mono">{node.target_url}</span>} />
+        <Fact label="Scrape target" value={<span className="font-mono">{node.gateway_target_url || '—'}</span>} />
+        <Fact label="Role · region · zone" value={[node.role, node.region, node.zone].map((v) => v || '—').join(' · ')} />
+        <Fact label="Generation" value={node.generation ?? '—'} />
+        <Fact label="Release" value={<span className="font-mono" title={node.release_id ?? undefined}>{short(node.release_id)}</span>} />
+        <Fact label="Manifest" value={<span className="font-mono" title={node.manifest_hash ?? undefined}>{short(node.manifest_hash)}</span>} />
+        <Fact label="Host certificate" value={<span className="font-mono" title={node.cert_fingerprint ?? undefined}>{short(node.cert_fingerprint)}</span>} />
+        <Fact label="Enrolled" value={new Date(node.created_at).toLocaleDateString()} />
+      </div>
+    </section>
   );
 }
 
