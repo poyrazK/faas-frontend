@@ -31,9 +31,22 @@ backend trusts that origin; reads work.
 | `npm run typecheck` | `tsc --noEmit`                  |
 | `npm run lint`      | ESLint                          |
 | `npm test`          | Vitest (node environment)       |
+| `npm run e2e`       | Playwright end-to-end tests against a mock apid |
 | `npm run contract -- --backend <faas checkout>` | Check API types against apid |
 
-CI runs typecheck, lint, tests and a production build on every PR.
+CI runs typecheck, lint, tests and a production build on every PR, and the
+end-to-end suite in a separate job.
+
+### End-to-end tests
+
+`npm run e2e` starts `e2e/mock-apid.mjs` (a local stand-in for apid on
+:3199), builds the console against it and drives it in Chromium: step-up and
+enrollment, session expiry, deep links, the jump box, in-place instance
+actions, stale-deployment repair, the release check, the incident bundle and
+session sign-out. Run `npx playwright install chromium` once first.
+`E2E_DEV=1 npm run e2e` uses the dev server instead of a build, which starts
+faster while writing tests. Add fixtures for new endpoints to the mock; any
+route without one answers `503 mock_unavailable`.
 
 ## How it is put together
 
