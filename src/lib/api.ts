@@ -392,8 +392,55 @@ export async function requestPasswordReset(email: string): Promise<void> {
 }
 
 /** Mints a double-submit token bound to one browser action (GET /v1/auth/csrf). */
-export const issueCSRF = async (action: 'auth.logout' | 'mfa_recover' | 'mfa_confirm') =>
+export const issueCSRF = async (
+  action: 'auth.logout' | 'mfa_recover' | 'mfa_confirm' | 'auth.session.revoke' | 'auth.sessions.revoke_all',
+) =>
   (await request<{ csrf_token: string }>(`/v1/auth/csrf?action=${encodeURIComponent(action)}`, { cache: 'no-store' })).csrf_token;
+
+/* ── The operator's own sign-in sessions (operator sessions last 7 days) ── */
+
+/** @go api.SessionInfo */
+export interface SessionInfo {
+  id: string;
+  issued_ip: string;
+  issued_ua: string;
+  /** RFC 3339 */
+  issued_at: string;
+  /** RFC 3339, "" when the session was never used after sign-in. */
+  last_seen_at: string;
+  current_session: boolean;
+}
+
+/** @go api.SessionListResponse */
+export interface SessionListResponse {
+  sessions: SessionInfo[];
+}
+
+/** @go api.SessionsRevokeAllResponse */
+export interface SessionsRevokeAllResponse {
+  revoked: number;
+}
+
+export const listSessions = () => request<SessionListResponse>('/v1/auth/sessions', { cache: 'no-store' });
+
+/**
+ * Signs one session out (204). Revoking the current one also clears this
+ * browser's cookie, like signing out.
+ * @goBody - (apid reads csrf_token in middleware, no request struct)
+ */
+export async function revokeSession(id: string): Promise<void> {
+  const csrf_token = await issueCSRF('auth.session.revoke');
+  await request<void>(`/v1/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ csrf_token }) }, 'none');
+}
+
+/**
+ * Signs out every session except this one.
+ * @goBody - (apid reads csrf_token in middleware, no request struct)
+ */
+export async function revokeOtherSessions(): Promise<SessionsRevokeAllResponse> {
+  const csrf_token = await issueCSRF('auth.sessions.revoke_all');
+  return request<SessionsRevokeAllResponse>('/v1/auth/sessions/revoke_all', { method: 'POST', body: JSON.stringify({ csrf_token }) });
+}
 
 /**
  * Ends the server session. apid revokes it only when the JSON body carries a

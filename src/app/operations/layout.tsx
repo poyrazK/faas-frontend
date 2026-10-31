@@ -13,6 +13,7 @@ import { useToast } from '@/components/ui/Toast';
 import { StepUpProvider } from '@/components/operator/StepUpProvider';
 import { OperatorIntentsProvider, isTerminalIntent, useOperatorIntents } from '@/components/operator/OperatorIntents';
 import { JumpBox } from '@/components/operator/JumpBox';
+import { SessionsDialog } from '@/components/operator/SessionsDialog';
 
 const GROUPS: OpsRoute['group'][] = ['Monitor', 'Customers', 'Fleet', 'Platform'];
 
@@ -44,6 +45,7 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [access, setAccess] = useState<Access>('checking');
   const [accessError, setAccessError] = useState<string | null>(null);
   const [controlPlane, setControlPlane] = useState<'checking' | 'online' | 'degraded'>('checking');
@@ -275,6 +277,17 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
                     </a>
                     <button
                       role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setSessionsOpen(true);
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 hover:bg-[var(--color-surface-subtle)]"
+                    >
+                      <Icon name="keys" size={14} />
+                      Your sessions…
+                    </button>
+                    <button
+                      role="menuitem"
                       onClick={() => void signOut()}
                       className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-[var(--color-danger)] hover:bg-[var(--color-surface-subtle)]"
                     >
@@ -288,6 +301,8 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+
+      <SessionsDialog open={sessionsOpen} onClose={() => setSessionsOpen(false)} />
 
       <aside
         className="fixed bottom-0 left-0 top-14 z-40 hidden border-r border-[var(--color-line)] bg-[var(--color-surface)] transition-[width] duration-200 md:block"

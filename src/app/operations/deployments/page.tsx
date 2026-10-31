@@ -33,6 +33,7 @@ import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { appDeploymentsHref, deploymentHref, tenantHref } from '@/lib/routes';
 import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
+import { StaleRepairDialog } from './StaleRepairDialog';
 
 const PAGE_SIZE = 50;
 const POLL_MS = 30000;
@@ -120,6 +121,7 @@ function DeploymentOperations() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ id: string; data?: OperatorDeploymentDetailResponse; error?: string } | null>(null);
   const [action, setAction] = useState<DeploymentAction | null>(null);
+  const [repairOpen, setRepairOpen] = useState(false);
   const [fromStage, setFromStage] = useState<DeploymentStageName>('source_download');
   // A retry ships the failed deployment's source. If the customer has since
   // released something newer, a successful retry would roll them back, so the
@@ -185,12 +187,20 @@ function DeploymentOperations() {
         title="Customer deployments"
         subtitle="Find stuck or failed customer deployments, inspect their stage timeline and build, and cancel or retry them. Every view and action is audited."
         actions={
-          <button onClick={query.reload} className="btn btn-secondary btn-sm">
-            <Icon name="refresh" size={14} />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setRepairOpen(true)} className="btn btn-secondary btn-sm">
+              <Icon name="trash" size={14} />
+              Repair stale…
+            </button>
+            <button onClick={query.reload} className="btn btn-secondary btn-sm">
+              <Icon name="refresh" size={14} />
+              Refresh
+            </button>
+          </div>
         }
       />
+
+      <StaleRepairDialog open={repairOpen} onClose={() => setRepairOpen(false)} onRepaired={query.reload} />
 
       <SnapshotFreshness snapshots={[query]} />
 

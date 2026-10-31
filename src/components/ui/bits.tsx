@@ -334,3 +334,13 @@ export function RowMenuItem({
     </button>
   );
 }
+
+/** Saves `body` as a file through the browser's download prompt. */
+export function downloadFile(name: string, body: string, type = 'application/json') {
+  const url = URL.createObjectURL(new Blob([body], { type }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
