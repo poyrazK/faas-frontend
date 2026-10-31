@@ -192,16 +192,48 @@ export function newIdempotencyKey(): string {
  * re-issued the session cookie; the request is then replayed with the same
  * headers, including its Idempotency-Key, so the retry cannot double-apply.
  */
-type StepUpHandler = () => Promise<boolean>;
+type StepUpHandler = (reason: ApiError) => Promise<boolean>;
 let stepUpHandler: StepUpHandler | null = null;
 
 export function setStepUpHandler(handler: StepUpHandler | null): void {
   stepUpHandler = handler;
 }
 
-export function isStepUpError(err: unknown): boolean {
+/**
+ * Both need a second factor before the request can go through:
+ * step_up_required (enrolled, code older than five minutes) and mfa_required
+ * (an mfa_pending session, or an operator who has never enrolled — see
+ * needsEnrollment).
+ */
+export function isStepUpError(err: unknown): err is ApiError {
   return err instanceof ApiError && err.status === 403 && (err.code === 'step_up_required' || err.code === 'mfa_required');
 }
+
+/**
+ * apid's requireEnrolledOperatorSession answers mfa_required with "platform
+ * operators must enroll an authenticator" when the account has no TOTP at all;
+ * a code prompt cannot satisfy that, enrollment can.
+ */
+export function needsEnrollment(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'mfa_required' && /must enroll/i.test(err.problem?.detail ?? '');
+}
+
+/**
+ * Called when an authenticated request comes back 401 mid-session (expired or
+ * revoked cookie). The shell signs the operator out locally and sends them to
+ * the login page with a way back.
+ */
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+/** Paths whose 401 is an expected answer, not an expired session. */
+const SESSION_PROBES = new Set(['/v1/account', '/v1/auth/logout', '/v1/auth/csrf']);
+
+/** A request that has not answered by then is abandoned, so one hung call cannot freeze a page's polling. */
+export const REQUEST_TIMEOUT_MS = 20_000;
 
 async function readProblem(res: Response): Promise<Problem | null> {
   try {
@@ -237,9 +269,18 @@ export async function request<T>(
     requestHeaders['Idempotency-Key'] = newIdempotencyKey();
   }
   const send = async (): Promise<Response> => {
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+    // AbortSignal.any is recent; without it a caller's own signal wins over the timeout.
+    const signal = !init.signal
+      ? timeout.signal
+      : typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([init.signal, timeout.signal])
+        : init.signal;
     try {
       return await fetch(path, {
         ...init,
+        signal,
         credentials: 'include',
         // API calls must never silently follow an HTML navigation redirect.
         // A redirect usually means middleware or auth routing is misconfigured;
@@ -248,18 +289,26 @@ export async function request<T>(
         headers: requestHeaders,
       });
     } catch (err) {
+      if (timeout.signal.aborted && !init.signal?.aborted) {
+        throw new ApiError(null, 0, `The control plane did not answer within ${REQUEST_TIMEOUT_MS / 1000}s.`);
+      }
       throw new ApiError(null, 0, `Network error: could not reach the control plane (${(err as Error).message})`);
+    } finally {
+      clearTimeout(timer);
     }
   };
 
   let res = await send();
   if (!res.ok) {
     let error = new ApiError(await readProblem(res), res.status, `Request failed (HTTP ${res.status})`);
-    if (isStepUpError(error) && stepUpHandler && (await stepUpHandler())) {
+    if (isStepUpError(error) && stepUpHandler && (await stepUpHandler(error))) {
       res = await send();
       if (!res.ok) error = new ApiError(await readProblem(res), res.status, `Request failed (HTTP ${res.status})`);
     }
-    if (!res.ok) throw error;
+    if (!res.ok) {
+      if (error.status === 401 && !SESSION_PROBES.has(path.split('?')[0])) unauthorizedHandler?.();
+      throw error;
+    }
   }
 
   if (parse === 'none' || res.status === 204) return undefined as T;
@@ -343,7 +392,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
 }
 
 /** Mints a double-submit token bound to one browser action (GET /v1/auth/csrf). */
-export const issueCSRF = async (action: 'auth.logout' | 'mfa_recover') =>
+export const issueCSRF = async (action: 'auth.logout' | 'mfa_recover' | 'mfa_confirm') =>
   (await request<{ csrf_token: string }>(`/v1/auth/csrf?action=${encodeURIComponent(action)}`, { cache: 'no-store' })).csrf_token;
 
 /**
@@ -373,6 +422,40 @@ export const verifyMfa = (totp: string) =>
     headers: { 'Idempotency-Key': newIdempotencyKey() },
     body: JSON.stringify({ totp }),
   }, 'none');
+
+/**
+ * A new authenticator for the signed-in account: the QR code (PNG, base64),
+ * the secret for manual entry, and one-time recovery codes shown only now.
+ * @go api.MFAEnrollResponse
+ */
+export interface MfaEnrollment {
+  otpauth_url: string;
+  secret: string;
+  qr_code_png_base64: string;
+  recovery_codes: string[];
+}
+
+/**
+ * POST /v1/account/mfa/enroll — starts enrollment. 409 means an authenticator
+ * is already enrolled, so verify instead.
+ * @goBody api.MFAEnrollRequest
+ */
+export const enrollMfa = () =>
+  request<MfaEnrollment>('/v1/account/mfa/enroll', { method: 'POST', body: JSON.stringify({}) });
+
+/**
+ * POST /v1/account/mfa/confirm — proves the new authenticator works and
+ * re-issues the session cookie as MFA-complete with a fresh step-up.
+ * @goBody api.MFAConfirmRequest
+ */
+export async function confirmMfa(totp: string): Promise<void> {
+  const csrf_token = await issueCSRF('mfa_confirm');
+  await request<void>('/v1/account/mfa/confirm', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': newIdempotencyKey() },
+    body: JSON.stringify({ totp, csrf_token }),
+  }, 'none');
+}
 
 /**
  * POST /v1/account/mfa/recover — burns a recovery code; also refreshes step-up.

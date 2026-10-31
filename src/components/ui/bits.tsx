@@ -76,6 +76,7 @@ export function CopyButton({ value, label = 'Copy' }: { value: string; label?: s
   const [copied, setCopied] = useState(false);
   return (
     <button
+      type="button"
       className="btn btn-secondary btn-sm"
       onClick={async () => {
         try {

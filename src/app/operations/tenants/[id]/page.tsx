@@ -127,6 +127,11 @@ function Workspace({ accountId }: { accountId: string }) {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {data && (
+            <span className="text-[11px] text-[var(--color-ink-muted)]" title={new Date(data.loadedAt).toLocaleString()}>
+              Loaded {new Date(data.loadedAt).toLocaleTimeString()}
+            </span>
+          )}
           <button
             onClick={() => setIncludePii(!includePii)}
             className={`btn btn-sm ${includePii ? 'btn-warning' : 'btn-secondary'}`}

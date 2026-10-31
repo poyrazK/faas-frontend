@@ -32,6 +32,8 @@ interface OperatorIntentsApi {
   track: (intent: { intentId: string; kind: string; target: string }) => void;
   dismiss: (intentId: string) => void;
   clearFinished: () => void;
+  /** Forgets every tracked action, in memory and in sessionStorage (sign-out, expired session). */
+  clearAll: () => void;
 }
 
 const STORAGE_KEY = 'gregale.ops.intents.v1';
@@ -143,7 +145,19 @@ export function OperatorIntentsProvider({ children }: { children: React.ReactNod
     setIntents((current) => current.filter((intent) => !isTerminalIntent(intent.status)));
   }, []);
 
-  const api = useMemo(() => ({ intents, track, dismiss, clearFinished }), [intents, track, dismiss, clearFinished]);
+  const clearAll = useCallback(() => {
+    setIntents([]);
+    try {
+      window.sessionStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  const api = useMemo(
+    () => ({ intents, track, dismiss, clearFinished, clearAll }),
+    [intents, track, dismiss, clearFinished, clearAll],
+  );
   return <IntentsCtx.Provider value={api}>{children}</IntentsCtx.Provider>;
 }
 

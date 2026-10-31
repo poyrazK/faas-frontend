@@ -81,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // can distinguish MFA, authorization, and temporary control-plane
       // problems instead of reporting all of them as a missing cookie.
       if (err instanceof ApiError && err.status === 401) {
+        setAccount(null);
         setAuthFailure(null);
       } else {
         const failure = classifyAuthFailure(err);

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { listObsTenants, type ObsTenantRow } from '@/lib/api';
 import { isAccountId, tenantHref } from '@/lib/routes';
+import { findTenantsByEmail, looksLikeEmail, type EmailSearchResult } from '@/lib/ops/tenantSearch';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
@@ -76,6 +77,44 @@ function TenantsDirectory() {
     if (jumpQuery && isAccountId(jumpQuery)) router.replace(tenantHref(jumpQuery));
   }, [jumpQuery, router]);
 
+  // Email search: emails come back only with the audited PII opt-in, so the
+  // operator starts it explicitly; it pages the whole directory.
+  const [emailSearch, setEmailSearch] = useState<
+    { query: string; scanned: number; result?: EmailSearchResult; error?: string } | null
+  >(null);
+  const emailRun = useRef<{ cancelled: boolean } | null>(null);
+  const searchText = search.trim();
+  useEffect(() => {
+    // A new query cancels a running search and drops stale results.
+    if (emailRun.current) emailRun.current.cancelled = true;
+    emailRun.current = null;
+    queueMicrotask(() => setEmailSearch((current) => (current && current.query !== searchText ? null : current)));
+  }, [searchText]);
+
+  const runEmailSearch = async () => {
+    const run = { cancelled: false };
+    if (emailRun.current) emailRun.current.cancelled = true;
+    emailRun.current = run;
+    setEmailSearch({ query: searchText, scanned: 0 });
+    try {
+      const result = await findTenantsByEmail(
+        searchText,
+        (cursor) => listObsTenants(PAGE_SIZE, cursor, true, filters),
+        { signal: run, onProgress: (scanned) => !run.cancelled && setEmailSearch({ query: searchText, scanned }) },
+      );
+      if (run.cancelled) return;
+      const exact = result.matches.filter((row) => row.email?.toLowerCase() === searchText.toLowerCase());
+      if (exact.length === 1) {
+        router.push(tenantHref(exact[0].account_id));
+        return;
+      }
+      setEmailSearch({ query: searchText, scanned: result.scanned, result });
+    } catch (err) {
+      if (!run.cancelled) setEmailSearch({ query: searchText, scanned: 0, error: (err as Error).message });
+    }
+  };
+  const emailState = emailSearch && emailSearch.query === searchText ? emailSearch : null;
+
   const query = search.trim().toLowerCase();
   const visibleRows = query
     ? rows.filter(
@@ -146,6 +185,62 @@ function TenantsDirectory() {
           ]}
         />
       </div>
+
+      {looksLikeEmail(searchText) && (
+        <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3 text-xs">
+          {!emailState ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-[var(--color-ink-soft)]">
+                Emails are only returned with PII access, so the list below can&apos;t match <strong>{searchText}</strong>.
+              </span>
+              <button className="btn btn-secondary btn-xs" onClick={() => void runEmailSearch()}>
+                <Icon name="search" size={12} />
+                Search every tenant by email (records PII access)
+              </button>
+            </div>
+          ) : emailState.error ? (
+            <div role="alert" className="text-[var(--color-danger)]">
+              Email search failed: {emailState.error}{' '}
+              <button className="underline" onClick={() => void runEmailSearch()}>
+                Retry
+              </button>
+            </div>
+          ) : !emailState.result ? (
+            <div className="flex items-center justify-between gap-3 text-[var(--color-ink-muted)]">
+              <span>Searching… {emailState.scanned} tenants checked</span>
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => {
+                  if (emailRun.current) emailRun.current.cancelled = true;
+                  setEmailSearch(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : emailState.result.matches.length === 0 ? (
+            <div className="text-[var(--color-ink-soft)]">
+              {emailState.result.complete
+                ? `No tenant uses this address (checked all ${emailState.result.scanned}).`
+                : `No match in the first ${emailState.result.scanned} tenants; narrow the plan or status filter and search again.`}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <div className="text-[var(--color-ink-muted)]">
+                {emailState.result.matches.length} match{emailState.result.matches.length === 1 ? '' : 'es'} in{' '}
+                {emailState.result.scanned} tenants{emailState.result.complete ? '' : ' (search stopped early)'}:
+              </div>
+              {emailState.result.matches.map((row) => (
+                <Link key={row.account_id} href={tenantHref(row.account_id)} className="flex items-center gap-3 hover:underline">
+                  <span className="cell-primary">{row.email}</span>
+                  <Mono>{row.account_id.slice(0, 13)}…</Mono>
+                  <StatusBadge status={row.status} />
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <SectionCard>
         {listError && rows.length === 0 ? (
