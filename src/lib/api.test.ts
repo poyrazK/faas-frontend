@@ -1,11 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  confirmMfa,
+  enrollMfa,
   forceParkInstance,
+  getAccount,
+  getObsOverview,
   logout,
+  needsEnrollment,
   probeOperatorAccess,
+  REQUEST_TIMEOUT_MS,
   rollbackOperatorRuntimeConfig,
   setStepUpHandler,
+  setUnauthorizedHandler,
   updateOperatorRuntimeConfig,
 } from './api';
 
@@ -40,6 +47,8 @@ beforeEach(() => {
 
 afterEach(() => {
   setStepUpHandler(null);
+  setUnauthorizedHandler(null);
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -124,3 +133,56 @@ describe('operator access probe', () => {
     await expect(probeOperatorAccess()).rejects.toBeInstanceOf(ApiError);
   });
 });
+
+describe('on-call resilience', () => {
+  it('abandons a request the control plane never answers', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', (_url: string, init: RequestInit) =>
+      new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))),
+    );
+    const pending = getObsOverview();
+    const assertion = expect(pending).rejects.toMatchObject({ status: 0, message: expect.stringMatching(/did not answer within/) });
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    await assertion;
+  });
+
+  it('reports a mid-session 401, but not the session probes that expect one', async () => {
+    const expired = vi.fn();
+    setUnauthorizedHandler(expired);
+    responses.push(json(401, { title: 'Unauthorized', status: 401, code: 'session_expired' }));
+    await expect(getObsOverview()).rejects.toMatchObject({ status: 401 });
+    expect(expired).toHaveBeenCalledTimes(1);
+
+    responses.push(json(401, { title: 'Unauthorized', status: 401, code: 'unauthorized' }));
+    await expect(getAccount()).rejects.toMatchObject({ status: 401 });
+    expect(expired).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the step-up prompt the reason, so it can tell enrollment from a code', async () => {
+    const stepUp = vi.fn<(reason: ApiError) => Promise<boolean>>(async () => false);
+    setStepUpHandler(stepUp);
+    const notEnrolled = {
+      title: 'MFA required',
+      status: 403,
+      code: 'mfa_required',
+      detail: 'platform operators must enroll an authenticator: complete /v1/account/mfa/enroll and /v1/account/mfa/confirm',
+    };
+    responses.push(json(403, notEnrolled));
+    await expect(forceParkInstance('i-1', 'stuck_instance')).rejects.toBeInstanceOf(ApiError);
+    expect(needsEnrollment(stepUp.mock.calls[0][0])).toBe(true);
+    expect(needsEnrollment(new ApiError({ ...notEnrolled, detail: 'complete /v1/account/mfa/enroll or /v1/account/mfa/verify' }, 403, ''))).toBe(false);
+  });
+
+  it('enrolls and confirms with the shapes apid expects', async () => {
+    responses.push(json(200, { otpauth_url: 'otpauth://x', secret: 'S', qr_code_png_base64: 'iVBOR', recovery_codes: ['A-B'] }));
+    await expect(enrollMfa()).resolves.toMatchObject({ secret: 'S' });
+    expect(calls[0]).toMatchObject({ url: '/v1/account/mfa/enroll', method: 'POST', body: {} });
+
+    responses.push(json(200, { csrf_token: 'tok' }), json(200, {}));
+    await confirmMfa('123456');
+    expect(calls[1].url).toBe('/v1/auth/csrf?action=mfa_confirm');
+    expect(calls[2]).toMatchObject({ url: '/v1/account/mfa/confirm', method: 'POST', body: { totp: '123456', csrf_token: 'tok' } });
+    expect(calls[2].headers['Idempotency-Key']).toMatch(/.+/);
+  });
+});
+

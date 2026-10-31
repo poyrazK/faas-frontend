@@ -8,9 +8,11 @@ import { StatTile, SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
 import { TenantLink } from '@/components/operator/TenantLink';
+import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 
 export default function FleetOverviewPage() {
-  const { data, loading, error, reload } = useAsync(getObsOverview, [], 30000);
+  const query = useAsync(getObsOverview, [], 30000);
+  const { data, loading, error, reload } = query;
 
   if (loading && !data) {
     return (
@@ -56,6 +58,13 @@ export default function FleetOverviewPage() {
           </button>
         }
       />
+
+      <SnapshotFreshness snapshots={[query]} />
+      {error && data && (
+        <div role="alert" className="mb-4 rounded-lg bg-[var(--color-warning-subtle)] p-3 text-xs text-[var(--color-warning-bold)]">
+          Refresh failed: {error.message} The figures below are from the last successful snapshot.
+        </div>
+      )}
 
       {/* KPI Tiles */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
