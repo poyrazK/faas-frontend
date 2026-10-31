@@ -30,6 +30,7 @@ export const GITHUB_REASON_SUGGESTIONS = [
   'incident_mitigation',
 ] as const;
 
+/** @go api.GithubWebhookDeliveryRecord */
 export interface GithubWebhookDeliveryRecord {
   delivery_id: string;
   event_type: string;
@@ -43,6 +44,7 @@ export interface GithubWebhookDeliveryRecord {
   updated_at: string;
 }
 
+/** @go api.GithubCheckUpdateRecord */
 export interface GithubCheckUpdateRecord {
   deployment_id: string;
   generation: number;
@@ -54,11 +56,13 @@ export interface GithubCheckUpdateRecord {
   updated_at: string;
 }
 
+/** @go api.GithubRecoveryStatusResponse */
 export interface GithubRecoveryStatusResponse {
   deliveries: GithubWebhookDeliveryRecord[];
   check_updates: GithubCheckUpdateRecord[];
 }
 
+/** @go api.GithubRecoveryRetryResponse */
 export interface GithubRecoveryRetryResponse {
   ok: boolean;
   kind: 'delivery' | 'check_update';

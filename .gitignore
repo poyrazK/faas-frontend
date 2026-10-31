@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 cookies.txt
+
+# apid sources checked out by the contract guard
+/.backend

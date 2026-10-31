@@ -9,6 +9,6 @@ export default defineConfig({
     // Node environment only: the units under test are pure functions. Anything
     // needing a DOM would pull in jsdom, which is not warranted yet.
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
   },
 });
