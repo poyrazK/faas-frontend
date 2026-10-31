@@ -21,8 +21,8 @@ export default function AnomaliesPage() {
   return (
     <div>
       <PageHeader
-        title="Usage Anomaly Detection"
-        subtitle="Statistical Z-score anomaly detector scoring tenant usage against 7-day rolling baselines (ADR-091 §3.6)"
+        title="Anomalies"
+        subtitle="Tenant usage that departs from its 7-day baseline."
         actions={
           <div className="flex items-center gap-3">
             <FilterSelect

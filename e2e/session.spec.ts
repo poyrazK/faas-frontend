@@ -2,7 +2,8 @@ import { TOTP, expect, openWorkload, test } from './fixtures';
 
 test('an expired session returns to sign-in, keeping the page to come back to', async ({ page, mock }) => {
   await page.goto('/overview');
-  await expect(page.getByRole('heading', { name: 'Fleet Overview' })).toBeVisible();
+  // Let the overview's own first reads finish before the session ends.
+  await expect(page.getByText('3 things need attention')).toBeVisible();
   await mock.set({ expired: true });
   await page.getByRole('link', { name: 'Emergency controls' }).click();
   await expect(page).toHaveURL(/\/login\?next=%2Fcontrols$/);

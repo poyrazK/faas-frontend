@@ -21,7 +21,7 @@ export default function NotFound() {
         </p>
         <div className="mt-6 flex justify-center gap-2">
           <Link href="/overview" className="btn btn-primary">
-            Fleet overview
+            Overview
           </Link>
         </div>
       </div>

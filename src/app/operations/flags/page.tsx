@@ -117,7 +117,7 @@ export default function PlatformFlagsPage() {
     <div>
       <PageHeader
         title="Platform flags"
-        subtitle="Release platform features to selected accounts without a deploy (ADR-1700). Changes apply within seconds, are versioned and audited."
+        subtitle="Release features to selected accounts without a deploy. Versioned and audited."
         actions={
           <button type="button" onClick={flags.reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />

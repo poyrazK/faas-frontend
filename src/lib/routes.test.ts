@@ -53,4 +53,11 @@ describe('tab titles', () => {
       expect(opsRouteTitle(route.slug)).toBe(route.label);
     }
   });
+
+  it('heads every page with its sidebar label, so the link and the page agree', () => {
+    for (const route of OPS_ROUTES) {
+      const page = readFileSync(join(process.cwd(), 'src/app/operations', route.slug, 'page.tsx'), 'utf8');
+      expect(page.match(/<PageHeader\s+title="([^"]+)"/)?.[1], `${route.slug}/page.tsx`).toBe(route.label);
+    }
+  });
 });

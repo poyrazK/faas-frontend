@@ -130,7 +130,7 @@ function TenantsDirectory() {
     <div>
       <PageHeader
         title="Tenants"
-        subtitle="Find a customer and open their workspace: apps, deployments, billing, flags and a full activity timeline."
+        subtitle="Find a customer and open their workspace."
         actions={
           <div className="flex items-center gap-2">
             <button

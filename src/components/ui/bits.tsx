@@ -58,11 +58,11 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="text-[26px] font-bold leading-tight">{title}</h1>
+    <div className="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+      <div className="min-w-0">
+        <h1 className="text-[22px] font-bold leading-tight">{title}</h1>
         {subtitle && (
-          <p className="mt-1 text-sm" style={{ color: 'var(--color-ink-muted)' }}>
+          <p className="mt-0.5 max-w-3xl text-[13px]" style={{ color: 'var(--color-ink-muted)' }}>
             {subtitle}
           </p>
         )}

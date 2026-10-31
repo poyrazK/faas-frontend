@@ -20,8 +20,8 @@ export default function RateLimitsPage() {
   return (
     <div>
       <PageHeader
-        title="Rate Limits & Abuse Security"
-        subtitle="Dual monitoring: Postgres durable auth events + live in-process IP rate-limiter snapshot (ADR-091 §3.5)"
+        title="Rate limits"
+        subtitle="Sign-in abuse events and the live IP rate limiter."
         actions={
           <button onClick={reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />

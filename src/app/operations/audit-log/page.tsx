@@ -212,8 +212,8 @@ function GlobalAuditLog() {
   return (
     <div>
       <PageHeader
-        title="Global Operator Audit & Event Trail"
-        subtitle="Regulator-grade audit search and live platform lifecycle events across tenant accounts and operator actions (ADR-091 §3.7)"
+        title="Audit trail"
+        subtitle="Search operator actions and platform events across every account."
         actions={
           <button onClick={handleRefresh} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />

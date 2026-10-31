@@ -48,7 +48,7 @@ export default function ErrorBoundary({
             <Icon name="refresh" size={14} /> Try again
           </button>
           <Link href="/overview" className="btn btn-secondary">
-            Fleet overview
+            Overview
           </Link>
         </div>
       </div>

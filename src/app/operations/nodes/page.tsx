@@ -156,8 +156,8 @@ function ComputeNodes() {
   return (
     <div>
       <PageHeader
-        title="Compute Nodes"
-        subtitle="Enroll hosts, watch placement capacity and wake latency, and move nodes through their lifecycle. Drained and retired nodes stay listed."
+        title="Compute nodes"
+        subtitle="Hosts, placement capacity and lifecycle: enroll, drain, activate and retire."
         actions={
           <div className="flex gap-2">
             <button onClick={() => setEnrollTarget('new')} className="btn btn-primary btn-sm">

@@ -82,7 +82,7 @@ function GithubRecovery() {
     <div>
       <PageHeader
         title="GitHub recovery"
-        subtitle="githubd’s durable queues for incoming webhook deliveries and outgoing Check Run updates. Requeue dead items once the cause is fixed. Payloads and installation credentials are never shown."
+        subtitle="Requeue dead webhook deliveries and Check Run updates once the cause is fixed."
         actions={
           <button onClick={query.reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />
