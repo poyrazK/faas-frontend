@@ -29,6 +29,7 @@ export const optInsConfigKey = (flagKey: string) => `${OPT_INS_CONFIG_PREFIX}${f
 /**
  * Advances a rollout rule stage by stage while the flag's health routes stay
  * healthy. The rule's rollout is the current stage.
+ * @go api.PlatformFlagRamp
  */
 export interface PlatformFlagRamp {
   /** Strictly ascending basis points, 2..10 stages. */
@@ -45,6 +46,7 @@ export interface PlatformFlagRamp {
  * One targeting rule. Accounts, orgs, group, plans and rollout combine with
  * AND; the first matching rule decides. `value` is required on write (the Go
  * field is *bool without omitempty, so it reads back as null only if unset).
+ * @go api.PlatformFlagRule
  */
 export interface PlatformFlagRule {
   id: string;
@@ -61,7 +63,10 @@ export interface PlatformFlagRule {
   value: boolean | null;
 }
 
-/** Customers may join a preview themselves. */
+/**
+ * Customers may join a preview themselves.
+ * @go api.PlatformFlagSelfServe
+ */
 export interface PlatformFlagSelfServe {
   enabled: boolean;
   /** Empty means every plan. */
@@ -70,7 +75,10 @@ export interface PlatformFlagSelfServe {
   max_subjects?: number;
 }
 
-/** Stored flag value. `enabled` is the kill switch; first matching rule wins. */
+/**
+ * Stored flag value. `enabled` is the kill switch; first matching rule wins.
+ * @go api.PlatformFlagDefinition
+ */
 export interface PlatformFlagDefinition {
   enabled: boolean;
   default: boolean;
@@ -78,18 +86,23 @@ export interface PlatformFlagDefinition {
   self_serve?: PlatformFlagSelfServe;
 }
 
-/** Stored value of platform_flag_opt_ins.<key>. */
+/**
+ * Stored value of platform_flag_opt_ins.<key>.
+ * @go api.PlatformFlagOptIns
+ */
 export interface PlatformFlagOptIns {
   accounts?: string[];
   orgs?: string[];
 }
 
+/** @go api.OperatorPlatformFlagOptIns */
 export interface OperatorPlatformFlagOptInCounts {
   accounts: number;
   orgs: number;
   version: number;
 }
 
+/** @go api.OperatorRuntimeConfigApplyReceipt */
 export interface OperatorRuntimeConfigApplyReceipt {
   config_key: string;
   daemon: string;
@@ -100,6 +113,7 @@ export interface OperatorRuntimeConfigApplyReceipt {
   reported_at: string;
 }
 
+/** @go api.OperatorPlatformFlagConvergence */
 export interface OperatorPlatformFlagConvergence {
   converged: string[];
   pending: string[];
@@ -109,6 +123,7 @@ export interface OperatorPlatformFlagConvergence {
 /** Subject attributes a flag's rules may constrain; "account" is always present. */
 export type PlatformFlagAttribute = 'account' | 'plan' | 'org';
 
+/** @go api.OperatorPlatformFlag */
 export interface OperatorPlatformFlag {
   key: string;
   /** Runtime-configuration key the definition is written to. */
@@ -141,6 +156,7 @@ export interface OperatorPlatformFlag {
   enforcement?: string;
 }
 
+/** @go api.OperatorPlatformFlagGroups */
 export interface OperatorPlatformFlagGroups {
   config_key: string;
   groups: Record<string, string[]>;
@@ -149,6 +165,7 @@ export interface OperatorPlatformFlagGroups {
   version: number;
 }
 
+/** @go api.OperatorPlatformFlagList */
 export interface OperatorPlatformFlagList {
   items: OperatorPlatformFlag[];
   groups: OperatorPlatformFlagGroups;
@@ -163,6 +180,7 @@ export type PlatformFlagDecisionReason =
   | 'opt_in'
   | 'default';
 
+/** @go api.OperatorPlatformFlagDecision */
 export interface OperatorPlatformFlagDecision {
   flag: string;
   account_id: string;

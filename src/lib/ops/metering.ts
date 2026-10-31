@@ -135,7 +135,10 @@ export const EGRESS_FLOW_RETENTION_DAYS = 30;
 export const EGRESS_FLOW_PAGE_MAX = 1000;
 export const EGRESS_FLOW_DEFAULT_LIMIT = 200;
 
-/** api.EgressFlowLogEntry: one new flow a tenant guest opened. */
+/**
+ * api.EgressFlowLogEntry: one new flow a tenant guest opened.
+ * @go api.EgressFlowLogEntry
+ */
 export interface EgressFlowLogEntry {
   observed_at: string;
   node: string;
@@ -146,7 +149,10 @@ export interface EgressFlowLogEntry {
   remote_port: number;
 }
 
-/** api.EgressFlowLogResponse. `truncated` means the page limit was reached. */
+/**
+ * api.EgressFlowLogResponse. `truncated` means the page limit was reached.
+ * @go api.EgressFlowLogResponse
+ */
 export interface EgressFlowLogResponse {
   flows: EgressFlowLogEntry[];
   truncated: boolean;
@@ -219,7 +225,10 @@ export const MANAGED_POSTGRES_METERS = [
   'operations',
 ] as const;
 
-/** api.ManagedPostgresUsageLineItem: internal cost per meter. */
+/**
+ * api.ManagedPostgresUsageLineItem: internal cost per meter.
+ * @go api.ManagedPostgresUsageLineItem
+ */
 export interface ManagedPostgresUsageLineItem {
   code: string;
   meter: string;
@@ -231,7 +240,10 @@ export interface ManagedPostgresUsageLineItem {
 /** guardrail_state as derived by managedPostgresUsageView. */
 export type ManagedPostgresGuardrailState = 'disabled' | 'stale' | 'reached' | 'healthy';
 
-/** api.ManagedPostgresUsageOperatorResponse — GET /v1/admin/managed-postgres/usage/{account_id}. */
+/**
+ * api.ManagedPostgresUsageOperatorResponse — GET /v1/admin/managed-postgres/usage/{account_id}.
+ * @go api.ManagedPostgresUsageOperatorResponse
+ */
 export interface ManagedPostgresUsageOperatorResponse {
   account_id: string;
   period_start: string;
@@ -269,7 +281,10 @@ export const ACCOUNTING_REASON_LABELS: Record<string, string> = {
   final_correction_pending: 'Final correction pending',
 };
 
-/** api.ManagedPostgresAccountingDiagnostic. */
+/**
+ * api.ManagedPostgresAccountingDiagnostic.
+ * @go api.ManagedPostgresAccountingDiagnostic
+ */
 export interface ManagedPostgresAccountingDiagnostic {
   database_id: string;
   name: string;
@@ -290,7 +305,10 @@ export interface ManagedPostgresAccountingDiagnostic {
   lease_until?: string;
 }
 
-/** api.ManagedPostgresAccountingDiagnosticsResponse. `next_cursor` is a database id. */
+/**
+ * api.ManagedPostgresAccountingDiagnosticsResponse. `next_cursor` is a database id.
+ * @go api.ManagedPostgresAccountingDiagnosticsResponse
+ */
 export interface ManagedPostgresAccountingDiagnosticsResponse {
   account_id: string;
   evaluated_at: string;
@@ -323,11 +341,13 @@ export const MANAGED_POSTGRES_UNAVAILABLE_CODES = ['managed_postgres_unavailable
 
 /* ───────────────────── Managed PostgreSQL: usage import ────────────────── */
 
+/** @go api.ManagedPostgresUsageImportReading */
 export interface ManagedPostgresUsageImportReading {
   meter: string;
   quantity: number;
 }
 
+/** @go api.ManagedPostgresUsageImportWindow */
 export interface ManagedPostgresUsageImportWindow {
   from: string;
   to: string;
@@ -335,7 +355,10 @@ export interface ManagedPostgresUsageImportWindow {
   readings: ManagedPostgresUsageImportReading[];
 }
 
-/** api.ManagedPostgresUsageImportRequest without expected_revision (preview body). */
+/**
+ * api.ManagedPostgresUsageImportRequest without expected_revision (preview body).
+ * @go api.ManagedPostgresUsageImportRequest
+ */
 export interface ManagedPostgresUsageImportRequest {
   import_id: string;
   database_id: string;
@@ -345,7 +368,10 @@ export interface ManagedPostgresUsageImportRequest {
   windows: ManagedPostgresUsageImportWindow[];
 }
 
-/** api.ManagedPostgresUsageImportResult. `applied` is false on preview. */
+/**
+ * api.ManagedPostgresUsageImportResult. `applied` is false on preview.
+ * @go api.ManagedPostgresUsageImportResult
+ */
 export interface ManagedPostgresUsageImportResult {
   import_id: string;
   database_id: string;
@@ -363,14 +389,20 @@ export interface ManagedPostgresUsageImportResult {
 /** managedpostgres.MaximumUsageImportWindows. */
 export const MAX_USAGE_IMPORT_WINDOWS = 256;
 
-/** Read-only plan. Must not carry expected_revision (the server rejects it). */
+/**
+ * Read-only plan. Must not carry expected_revision (the server rejects it).
+ * @goBody api.ManagedPostgresUsageImportRequest
+ */
 export const previewManagedPostgresUsageImport = (accountId: string, body: ManagedPostgresUsageImportRequest) =>
   request<ManagedPostgresUsageImportResult>(
     `/v1/admin/managed-postgres/accounting/${encodeURIComponent(accountId)}/usage-imports/preview`,
     { method: 'POST', body: JSON.stringify(body) },
   );
 
-/** Applies exactly the previewed request; `expectedRevision` is the preview's `revision`. */
+/**
+ * Applies exactly the previewed request; `expectedRevision` is the preview's `revision`.
+ * @goBody api.ManagedPostgresUsageImportRequest
+ */
 export const applyManagedPostgresUsageImport = (
   accountId: string,
   body: ManagedPostgresUsageImportRequest,
@@ -478,7 +510,10 @@ export function usageImportFieldError(body: Omit<ManagedPostgresUsageImportReque
 
 /* ─────────────────── Managed PostgreSQL: reconciliation ────────────────── */
 
-/** api.ManagedPostgresAccountingReconciliationRequest without expected_revision. */
+/**
+ * api.ManagedPostgresAccountingReconciliationRequest without expected_revision.
+ * @go api.ManagedPostgresAccountingReconciliationRequest
+ */
 export interface ManagedPostgresReconciliationRequest {
   reconciliation_id: string;
   database_id: string;
@@ -492,7 +527,10 @@ export interface ManagedPostgresReconciliationRequest {
   reason: string;
 }
 
-/** api.ManagedPostgresAccountingReconciliationResult. */
+/**
+ * api.ManagedPostgresAccountingReconciliationResult.
+ * @go api.ManagedPostgresAccountingReconciliationResult
+ */
 export interface ManagedPostgresReconciliationResult {
   reconciliation_id: string;
   database_id: string;
@@ -506,12 +544,14 @@ export interface ManagedPostgresReconciliationResult {
   requires_usage_recovery: boolean;
 }
 
+/** @goBody api.ManagedPostgresAccountingReconciliationRequest */
 export const previewManagedPostgresReconciliation = (accountId: string, body: ManagedPostgresReconciliationRequest) =>
   request<ManagedPostgresReconciliationResult>(
     `/v1/admin/managed-postgres/accounting/${encodeURIComponent(accountId)}/reconciliations/preview`,
     { method: 'POST', body: JSON.stringify(body) },
   );
 
+/** @goBody api.ManagedPostgresAccountingReconciliationRequest */
 export const applyManagedPostgresReconciliation = (
   accountId: string,
   body: ManagedPostgresReconciliationRequest,
@@ -548,6 +588,7 @@ export function reconciliationFieldError(body: ManagedPostgresReconciliationRequ
  * api.ObjectStorageUsageReport: an authoritative cumulative UTC-month report
  * from a provider adapter. Every field is required (explicit zeros allowed,
  * null rejected) and unknown fields are refused.
+ * @go api.ObjectStorageUsageReport
  */
 export interface ObjectStorageUsageReport {
   account_id: string;
@@ -591,7 +632,10 @@ export function objectStorageReportError(r: ObjectStorageUsageReport, now = Date
   return null;
 }
 
-/** POST /v1/admin/object-storage/usage-reports → 204. A replay of the identical report is a no-op. */
+/**
+ * POST /v1/admin/object-storage/usage-reports → 204. A replay of the identical report is a no-op.
+ * @goBody api.ObjectStorageUsageReport
+ */
 export const recordObjectStorageUsageReport = (report: ObjectStorageUsageReport, opts?: OperatorWrite) =>
   request<void>(
     '/v1/admin/object-storage/usage-reports',

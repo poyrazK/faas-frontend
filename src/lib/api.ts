@@ -17,6 +17,7 @@
 export type Plan = 'free' | 'hobby' | 'pro' | 'scale';
 export type AccountStatus = 'active' | 'past_due' | 'suspended' | 'deleted_pending';
 
+/** @go api.AccountLimits */
 export interface AccountLimits {
   plan: Plan;
   ram_mb: number;
@@ -26,6 +27,7 @@ export interface AccountLimits {
   app_layer_max_mb: number;
 }
 
+/** @go api.AccountResponse */
 export interface Account {
   id: string;
   email: string;
@@ -88,25 +90,8 @@ export interface Deployment {
   rollout_state?: string;
 }
 
-/** One non-secret release field that changed from the previous deployment. */
-export interface DeploymentChange {
-  field: string;
-  before: unknown;
-  after: unknown;
-}
 
-/** App-scoped release cockpit returned by the deployment summary endpoint. */
-export interface DeploymentSummaryResponse {
-  deployment: Deployment;
-  previous?: Deployment | null;
-  changes: DeploymentChange[];
-  rollback_target_id?: string | null;
-}
 
-export interface DeploymentList {
-  items: Deployment[];
-  next_before: string | null;
-}
 
 export interface Instance {
   id: string;
@@ -121,54 +106,11 @@ export interface Instance {
   parked_at?: string | null;
 }
 
-export interface CustomDomain {
-  domain: string;
-  app_id: string;
-  challenge_token?: string | null;
-  verified: boolean;
-  verified_at?: string | null;
-  txt_record?: string | null;
-}
 
-export interface Cron {
-  id: string;
-  app_id: string;
-  schedule: string;
-  path: string;
-  enabled: boolean;
-  created_at: string;
-  last_fired_at?: string | null;
-}
 
-export interface ApiKey {
-  id: string;
-  prefix: string;
-  label: string | null;
-  last_used_at?: string | null;
-  created_at: string;
-  /** Present ONLY in the POST /v1/keys response; never returned again. */
-  plaintext?: string | null;
-}
 
-export interface UsageSummary {
-  month: string;
-  used_gb_hours: number;
-  included_gb_hours: number;
-  overage_gb_hours: number;
-  overage_cents: number;
-}
 
-export interface AppSecret {
-  key: string;
-  created_at: string;
-  updated_at: string;
-}
 
-export interface AppSecretList {
-  secrets: AppSecret[];
-  quota_max: number;
-  count: number;
-}
 
 /** Per-app usage row for one billing month (GET /v1/usage). */
 export interface AppUsage {
@@ -203,11 +145,11 @@ export interface Invocation {
   lease_expires_at?: string | null;
 }
 
-export interface InvocationList {
-  invocations: Invocation[];
-}
 
-/** RFC 7807 problem envelope returned by the backend on errors. */
+/**
+ * RFC 7807 problem envelope returned by the backend on errors.
+ * @go api.Problem
+ */
 export interface Problem {
   type?: string;
   title: string;
@@ -330,7 +272,10 @@ export async function request<T>(
 
 /* ─────────────────────────────── Auth ──────────────────────────────────── */
 
-/** Body of a successful POST /login. No API key is ever returned. */
+/**
+ * Body of a successful POST /login. No API key is ever returned.
+ * @go api.PasswordLoginResponse
+ */
 export interface LoginResult {
   account_id: string;
   plan: Plan;
@@ -405,6 +350,7 @@ export const issueCSRF = async (action: 'auth.logout' | 'mfa_recover') =>
  * Ends the server session. apid revokes it only when the JSON body carries a
  * CSRF token bound to auth.logout; without one it answers 400 csrf_mismatch
  * and the cookie stays valid. A 401 means the session is already gone.
+ * @goBody - (apid reads csrf_token in middleware, no request struct)
  */
 export async function logout(): Promise<void> {
   try {
@@ -417,7 +363,10 @@ export async function logout(): Promise<void> {
   }
 }
 
-/** POST /v1/account/mfa/verify — refreshes the session's five-minute step-up stamp. */
+/**
+ * POST /v1/account/mfa/verify — refreshes the session's five-minute step-up stamp.
+ * @goBody api.MFAVerifyRequest
+ */
 export const verifyMfa = (totp: string) =>
   request<void>('/v1/account/mfa/verify', {
     method: 'POST',
@@ -425,7 +374,10 @@ export const verifyMfa = (totp: string) =>
     body: JSON.stringify({ totp }),
   }, 'none');
 
-/** POST /v1/account/mfa/recover — burns a recovery code; also refreshes step-up. */
+/**
+ * POST /v1/account/mfa/recover — burns a recovery code; also refreshes step-up.
+ * @goBody api.MFARecoverRequest
+ */
 export async function recoverMfa(code: string): Promise<void> {
   const csrf_token = await issueCSRF('mfa_recover');
   await request<void>('/v1/account/mfa/recover', {
@@ -471,6 +423,7 @@ export const getAccount = () => request<Account>('/v1/account', { cache: 'no-sto
 
 /* ────────────────────────── Operator & Admin (/v1/admin/*) ─────────────────────── */
 
+/** @go api.ObsOverviewTotals */
 export interface ObsOverviewTotals {
   accounts_active: number;
   accounts_past_due: number;
@@ -484,11 +437,13 @@ export interface ObsOverviewTotals {
   audit_events_24h: number;
 }
 
+/** @go api.ObsOverviewRateLimited */
 export interface ObsOverviewRateLimited {
   account_id: string;
   hits: number;
 }
 
+/** @go api.ObsOverviewNodeHealth */
 export interface ObsOverviewNodeHealth {
   name: string;
   active: boolean;
@@ -496,11 +451,13 @@ export interface ObsOverviewNodeHealth {
   stale: boolean;
 }
 
+/** @go api.ObsOverviewFailureKind */
 export interface ObsOverviewFailureKind {
   kind: string;
   count: number;
 }
 
+/** @go api.ObsOverviewResponse */
 export interface ObsOverviewResponse {
   generated_at: string;
   totals: ObsOverviewTotals;
@@ -509,6 +466,7 @@ export interface ObsOverviewResponse {
   recent_failures_1h: ObsOverviewFailureKind[];
 }
 
+/** @go api.ObsHealthResponse */
 export interface ObsHealthResponse {
   generated_at: string;
   prometheus_available: boolean;
@@ -520,6 +478,7 @@ export interface ObsHealthResponse {
   alerts_firing: number;
 }
 
+/** @go api.ObsTenantRow */
 export interface ObsTenantRow {
   account_id: string;
   plan: Plan;
@@ -533,12 +492,14 @@ export interface ObsTenantRow {
   email?: string;
 }
 
+/** @go api.ObsTenantListResponse */
 export interface ObsTenantListResponse {
   items: ObsTenantRow[];
   next_cursor: string;
   limit: number;
 }
 
+/** @go api.ObsTenantApp */
 export interface ObsTenantApp {
   id: string;
   slug: string;
@@ -546,17 +507,20 @@ export interface ObsTenantApp {
   deployments: number;
 }
 
+/** @go api.ObsTenantOrg */
 export interface ObsTenantOrg {
   id: string;
   slug: string;
   role: string;
 }
 
+/** @go api.ObsTenantCounts */
 export interface ObsTenantCounts {
   active: number;
   revoked: number;
 }
 
+/** @go api.ObsTenantDetailResponse */
 export interface ObsTenantDetailResponse {
   account: ObsTenantRow;
   apps: ObsTenantApp[];
@@ -565,11 +529,13 @@ export interface ObsTenantDetailResponse {
   sessions: ObsTenantCounts;
 }
 
+/** @go api.ObsTenant360Response */
 export interface ObsTenant360Response extends ObsTenantDetailResponse {
   usage: ObsTenantUsage;
   billing: ObsTenantBilling;
 }
 
+/** @go api.ObsTenantUsage */
 export interface ObsTenantUsage {
   month: string;
   used_gb_hours: number;
@@ -584,6 +550,7 @@ export interface ObsTenantUsage {
   apps: ObsTenantUsageApp[];
 }
 
+/** @go api.ObsTenantUsageApp */
 export interface ObsTenantUsageApp {
   app_id: string;
   app_slug?: string;
@@ -596,6 +563,7 @@ export interface ObsTenantUsageApp {
   cold_boots: number;
 }
 
+/** @go api.ObsTenantBilling */
 export interface ObsTenantBilling {
   current_month_overage_cents: number;
   overage_cap_cents?: number;
@@ -603,6 +571,7 @@ export interface ObsTenantBilling {
   invoices: ObsInvoiceSummary[];
 }
 
+/** @go api.ObsInvoiceSummary */
 export interface ObsInvoiceSummary {
   id: string;
   provider: string;
@@ -615,12 +584,14 @@ export interface ObsInvoiceSummary {
   amount_paid_cents: number;
 }
 
+/** @go api.ObsCapacityResponse */
 export interface ObsCapacityResponse {
   generated_at: string;
   summary: ObsCapacitySummary;
   nodes: ObsCapacityNode[];
 }
 
+/** @go api.ObsCapacitySummary */
 export interface ObsCapacitySummary {
   total_nodes: number;
   active_nodes: number;
@@ -640,6 +611,7 @@ export interface ObsCapacitySummary {
   unplaced_apps: number;
 }
 
+/** @go api.ObsCapacityNode */
 export interface ObsCapacityNode {
   id: string;
   name: string;
@@ -658,6 +630,7 @@ export interface ObsCapacityNode {
   tenants_count: number;
 }
 
+/** @go api.ObsInvocationRow */
 export interface ObsInvocationRow {
   id: string;
   app_id: string;
@@ -673,6 +646,7 @@ export interface ObsInvocationRow {
   completed_at?: string;
 }
 
+/** @go api.ObsAuditActivityRow */
 export interface ObsAuditActivityRow {
   id: string;
   at: string;
@@ -680,6 +654,7 @@ export interface ObsAuditActivityRow {
   actor?: string;
 }
 
+/** @go api.ObsTenantActivityResponse */
 export interface ObsTenantActivityResponse {
   account_id: string;
   generated_at: string;
@@ -688,12 +663,14 @@ export interface ObsTenantActivityResponse {
   limit: number;
 }
 
+/** @go api.ObsAccountMutationResponse */
 export interface ObsAccountMutationResponse {
   account: ObsTenantRow;
   action: string;
   revoked_sessions: number;
 }
 
+/** @go api.ObsDeploymentRow */
 export interface ObsDeploymentRow {
   id: string;
   status: string;
@@ -705,6 +682,7 @@ export interface ObsDeploymentRow {
   created_at: string;
 }
 
+/** @go api.ObsInstanceRow */
 export interface ObsInstanceRow {
   id: string;
   app_id: string;
@@ -720,6 +698,7 @@ export interface ObsInstanceRow {
   parked_at?: string;
 }
 
+/** @go api.ObsAppDetail */
 export interface ObsAppDetail {
   id: string;
   account_id: string;
@@ -733,6 +712,7 @@ export interface ObsAppDetail {
   created_at: string;
 }
 
+/** @go api.ObsAppDetailResponse */
 export interface ObsAppDetailResponse {
   app: ObsAppDetail;
   deployments: ObsDeploymentRow[];
@@ -741,6 +721,7 @@ export interface ObsAppDetailResponse {
   health: ObsAppHealth;
 }
 
+/** @go api.AppErrorSummaryItem */
 export interface ObsAppErrorSummary {
   fingerprint: string;
   error_class: string;
@@ -755,7 +736,10 @@ export interface ObsAppErrorSummary {
 
 export type MetricsRange = '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d';
 
-/** Per-app request metrics as embedded in the admin app drill-down. */
+/**
+ * Per-app request metrics as embedded in the admin app drill-down.
+ * @go api.AppMetricsResponse
+ */
 export interface AppMetrics {
   app_id: string;
   range: MetricsRange;
@@ -771,6 +755,7 @@ export interface AppMetrics {
   queue_depth: number;
 }
 
+/** @go api.ObsAppHealth */
 export interface ObsAppHealth {
   generated_at: string;
   metrics: AppMetrics;
@@ -779,6 +764,7 @@ export interface ObsAppHealth {
   errors_window_end: string;
 }
 
+/** @go api.ObsNodeRow */
 export interface ObsNodeRow {
   id: string;
   name: string;
@@ -800,12 +786,14 @@ export interface ObsNodeRow {
   created_at: string;
 }
 
+/** @go api.ObsNodeListResponse */
 export interface ObsNodeListResponse {
   items: ObsNodeRow[];
   next_cursor: string;
   limit: number;
 }
 
+/** @go api.ObsNodeApp */
 export interface ObsNodeApp {
   id: string;
   slug: string;
@@ -819,6 +807,7 @@ export interface ObsNodeApp {
   last_request_at?: string;
 }
 
+/** @go api.ObsNodeDetailResponse */
 export interface ObsNodeDetailResponse {
   node: ObsNodeRow;
   apps: ObsNodeApp[];
@@ -826,6 +815,7 @@ export interface ObsNodeDetailResponse {
   drain: ObsNodeDrainStatus;
 }
 
+/** @go api.ObsNodeDrainStatus */
 export interface ObsNodeDrainStatus {
   total_instances: number;
   live_instances: number;
@@ -836,6 +826,7 @@ export interface ObsNodeDrainStatus {
   observed_at: string;
 }
 
+/** @go api.ObsNodeOperationPreflight */
 export interface ObsNodeOperationPreflight {
   affected_apps: number;
   affected_tenants: number;
@@ -851,6 +842,7 @@ export interface ObsNodeOperationPreflight {
  * 202 Accepted: the lifecycle change is queued as an operator intent and
  * converges asynchronously. `active` is the requested state, not the observed
  * one — poll `status_url` (getOperatorIntent) for the outcome.
+ * @go api.ObsNodeMutationResponse
  */
 export interface ObsNodeMutationResponse {
   ok: boolean;
@@ -869,6 +861,7 @@ export interface ObsNodeMutationResponse {
   preflight: ObsNodeOperationPreflight;
 }
 
+/** @go api.ObsHeartbeatRow */
 export interface ObsHeartbeatRow {
   received_at: string;
   last_heartbeat_at: string;
@@ -878,6 +871,7 @@ export interface ObsHeartbeatRow {
   stale: boolean;
 }
 
+/** @go api.ObsHeartbeatListResponse */
 export interface ObsHeartbeatListResponse {
   node_id: string;
   name: string;
@@ -887,6 +881,7 @@ export interface ObsHeartbeatListResponse {
   limit: number;
 }
 
+/** @go api.ObsAnomalyRow */
 export interface ObsAnomalyRow {
   account_id: string;
   app_id: string;
@@ -899,6 +894,7 @@ export interface ObsAnomalyRow {
   reason: string;
 }
 
+/** @go api.ObsAnomalyListResponse */
 export interface ObsAnomalyListResponse {
   generated_at: string;
   window_hours: number;
@@ -906,12 +902,14 @@ export interface ObsAnomalyListResponse {
   items: ObsAnomalyRow[];
 }
 
+/** @go api.ObsRateLimitDurableRow */
 export interface ObsRateLimitDurableRow {
   account_id: string;
   hits: number;
   last_event_at: string;
 }
 
+/** @go api.ObsRateLimitLiveRow */
 export interface ObsRateLimitLiveRow {
   ip: string;
   currently_rate_limited: boolean;
@@ -919,6 +917,7 @@ export interface ObsRateLimitLiveRow {
   last_event_at: string;
 }
 
+/** @go api.ObsRateLimitResponse */
 export interface ObsRateLimitResponse {
   generated_at: string;
   window_hours: number;
@@ -928,7 +927,10 @@ export interface ObsRateLimitResponse {
   live: ObsRateLimitLiveRow[];
 }
 
-/** One provider product/price handle. Plan is a billable plan (free has none). */
+/**
+ * One provider product/price handle. Plan is a billable plan (free has none).
+ * @go api.BillingCatalogEntry
+ */
 export interface BillingCatalogEntry {
   plan: string;
   kind: 'monthly' | 'overage' | 'product' | string;
@@ -936,14 +938,20 @@ export interface BillingCatalogEntry {
   synced_at: string;
 }
 
-/** Providers without a catalog surface answer 501 instead of this body. */
+/**
+ * Providers without a catalog surface answer 501 instead of this body.
+ * @go api.BillingCatalogResponse
+ */
 export interface BillingCatalogResponse {
   provider: string;
   synced_at: string;
   entries: BillingCatalogEntry[];
 }
 
-/** One audit_log row, as both /v1/audit-log/all and the admin search return it. */
+/**
+ * One audit_log row, as both /v1/audit-log/all and the admin search return it.
+ * @go api.ObsAuditLogRow
+ */
 export interface GlobalAuditLogEntry {
   id: string;
   kind: string;
@@ -956,7 +964,10 @@ export interface GlobalAuditLogEntry {
   is_operator_action?: boolean;
 }
 
-/** GET /v1/audit-log/all. next_before is omitted on the last page. */
+/**
+ * GET /v1/audit-log/all. next_before is omitted on the last page.
+ * @go api.ListAuditLogResponse
+ */
 export interface GlobalAuditLogResponse {
   entries: GlobalAuditLogEntry[];
   limit: number;
@@ -1044,18 +1055,21 @@ export const revokeObsAccountSessions = (id: string, reason: string, opts?: Oper
 export const getObsAppDetail = (id: string) =>
   request<ObsAppDetailResponse>(`/v1/admin/obs/apps/${encodeURIComponent(id)}`, { cache: 'no-store' });
 
+/** @go api.AccountCreditResponse */
 export interface AccountCreditResponse {
   id: string;
   cents_remaining: number;
   reason: string;
 }
 
+/** @goBody apidserver.issueCreditPayload */
 export const issueAccountCredit = (accountId: string, amountCents: number, reason: string, opts?: OperatorWrite) =>
   request<AccountCreditResponse>(
     `/v1/admin/accounts/${encodeURIComponent(accountId)}/credits`,
     { method: 'POST', headers: writeHeaders(opts), body: JSON.stringify({ cents: amountCents, reason }) },
   );
 
+/** @go api.AdminRefundResponse */
 export interface AdminRefundResponse {
   account_id: string;
   invoice_id: string;
@@ -1067,6 +1081,7 @@ export interface AdminRefundResponse {
   status: string;
 }
 
+/** @goBody apidserver.adminRefundPayload */
 export const refundAccount = (
   accountId: string,
   invoiceId: string,
@@ -1083,6 +1098,7 @@ export const refundAccount = (
     },
   );
 
+/** @go api.BillingReconcileResponse */
 export interface BillingReconcileResponse {
   account_id: string;
   start: string;
@@ -1152,6 +1168,7 @@ export const syncPaddleCatalog = (opts?: OperatorWrite) =>
 export const resetPaddleCatalog = (opts?: OperatorWrite) =>
   request<void>('/v1/admin/billing-paddle-catalog', { method: 'DELETE', headers: writeHeaders(opts) }, 'none');
 
+/** @go api.BillingPaddleOveragePreflightResponse */
 export interface BillingPaddleOveragePreflightResponse {
   table_exists: boolean;
   has_window_start: boolean;
@@ -1165,6 +1182,7 @@ export interface BillingPaddleOveragePreflightResponse {
 export const getPaddleOveragePreflight = () =>
   request<BillingPaddleOveragePreflightResponse>('/v1/admin/billing-paddle-overage/preflight', { cache: 'no-store' });
 
+/** @go api.ObsEventRow */
 export interface ObsEventRow {
   id: number;
   at: string;
@@ -1174,6 +1192,7 @@ export interface ObsEventRow {
   data?: Record<string, unknown> | null;
 }
 
+/** @go api.ObsEventListResponse */
 export interface ObsEventListResponse {
   generated_at: string;
   items: ObsEventRow[];
@@ -1195,12 +1214,14 @@ export const listObsEvents = (limit = 100, kindPrefix?: string, actor?: string, 
 /** Same-origin SSE feed for app, deployment, instance, and node changes. */
 export const obsNodeEventsUrl = '/v1/admin/obs/nodes/events';
 
+/** @go api.AdminSetGithubWebhookSecretResponse */
 export interface AdminSetGithubWebhookSecretResponse {
   installation_id: number;
   upgraded_at: string;
   upgraded_by: string;
 }
 
+/** @goBody apidserver.setGithubWebhookSecretPayload */
 export const setGithubWebhookSecret = (installationId: number, secretHex: string, opts?: OperatorWrite) =>
   request<AdminSetGithubWebhookSecretResponse>('/v1/admin/github-webhook-secrets', {
     method: 'POST',
@@ -1219,6 +1240,7 @@ export type OperatorIntentStatus = 'pending' | 'running' | 'succeeded' | 'failed
 
 export const TERMINAL_INTENT_STATUSES: readonly OperatorIntentStatus[] = ['succeeded', 'failed', 'cancelled', 'outcome_unknown'];
 
+/** @go api.OperatorParkExecutionResponse */
 export interface OperatorParkExecution {
   phase: string;
   node_id: string;
@@ -1233,6 +1255,7 @@ export interface OperatorParkExecution {
   updated_at: string;
 }
 
+/** @go api.OperatorIntentResponse */
 export interface OperatorIntentResponse {
   intent_id: string;
   kind: string;
@@ -1253,6 +1276,7 @@ export interface OperatorIntentResponse {
   cold_boot_generation?: number;
 }
 
+/** @go api.OperatorIntentAcceptedResponse */
 export interface OperatorIntentAcceptedResponse {
   ok: boolean;
   intent_id: string;
@@ -1291,6 +1315,7 @@ export interface OperatorRuntimeConfigTarget {
   scopeId?: string;
 }
 
+/** @go apidserver.runtimeConfigEntryResponse */
 export interface OperatorRuntimeConfig {
   key: string;
   label: string;
@@ -1312,11 +1337,13 @@ export interface OperatorRuntimeConfig {
   applied_at?: string;
 }
 
+/** @go apidserver.runtimeConfigListResponse */
 export interface OperatorRuntimeConfigListResponse {
   items: OperatorRuntimeConfig[];
   generated_at: string;
 }
 
+/** @go api.OperatorRuntimeConfigOperation */
 export interface OperatorRuntimeConfigOperation {
   id: string;
   key: string;
@@ -1338,13 +1365,13 @@ export interface OperatorRuntimeConfigOperation {
   finished_at?: string;
 }
 
+/** @go api.OperatorRuntimeConfigRevision */
 export interface OperatorRuntimeConfigRevision {
   id: number;
   key: string;
   scope: RuntimeConfigScope;
   scope_id: string;
   version: number;
-  rollout_percent?: number;
   old_value: unknown;
   new_value: unknown;
   actor_id?: string;
@@ -1361,6 +1388,7 @@ export const getOperatorRuntimeConfig = () =>
  * required to disable a core platform flag (the first attempt answers 409).
  * expected_version must be the version the operator was looking at when they
  * started editing, so a concurrent change surfaces as a conflict.
+ * @goBody apidserver.runtimeConfigPatchRequest
  */
 export const updateOperatorRuntimeConfig = (
   key: string,
@@ -1383,6 +1411,7 @@ export const updateOperatorRuntimeConfig = (
     },
   );
 
+/** @goBody apidserver.runtimeConfigRollbackRequest */
 export const rollbackOperatorRuntimeConfig = (
   key: string,
   version: number,
@@ -1418,6 +1447,7 @@ export const getOperatorRuntimeConfigRevisions = (key: string, limit = 20) => {
   );
 };
 
+/** @go api.SweepStuckBuildsResponse */
 export interface SweepStuckBuildsResponse {
   ok: boolean;
   swept_count: number;
@@ -1425,6 +1455,7 @@ export interface SweepStuckBuildsResponse {
   threshold_iso: string;
 }
 
+/** @go api.ObsBuilderHeartbeatRow */
 export interface ObsBuilderHeartbeatRow {
   node_id: string;
   received_at: string;
@@ -1432,6 +1463,7 @@ export interface ObsBuilderHeartbeatRow {
   disk_used_bytes: number | null;
 }
 
+/** @go api.ObsBuilderHeartbeatListResponse */
 export interface ObsBuilderHeartbeatListResponse {
   generated_at: string;
   items: ObsBuilderHeartbeatRow[];
@@ -1441,6 +1473,7 @@ export interface ObsBuilderHeartbeatListResponse {
 /**
  * Cumulative counters of the secret rekey walk. When the rekey runner is off
  * the endpoint answers 503 rekey_disabled rather than a body.
+ * @go api.RekeyProgress
  */
 export interface RekeyProgressResponse {
   total: number;
@@ -1450,6 +1483,7 @@ export interface RekeyProgressResponse {
   last_id?: string;
 }
 
+/** @go api.ObsWakeLatencyQuantile */
 export interface ObsWakeLatencyRow {
   node_id: string;
   node_name: string;
@@ -1459,6 +1493,7 @@ export interface ObsWakeLatencyRow {
   sample_count: number;
 }
 
+/** @go api.ObsNodeWakeLatencyResponse */
 export interface ObsWakeLatencyResponse {
   window: string;
   quantiles: ObsWakeLatencyRow[];
@@ -1478,6 +1513,7 @@ export interface AuditLogSearchParams {
   target_account_id?: string;
 }
 
+/** @go api.ObsAuditLogSearchResponse */
 export interface ObsAuditLogSearchResponse {
   generated_at: string;
   items: GlobalAuditLogEntry[];

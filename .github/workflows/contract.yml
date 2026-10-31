@@ -1,0 +1,54 @@
+name: Backend contract
+
+# Fails when the console and apid disagree: a response field the console
+# reads that apid no longer sends, a request field apid would reject, or a
+# path/method apid no longer serves. Runs on every PR and daily against
+# apid's main, so a backend change that breaks the console surfaces here
+# even when nothing changed in this repo.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Check console against apid
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out console
+        uses: actions/checkout@v4
+
+      - name: Check out apid wire types and routes (poyrazK/faas main)
+        uses: actions/checkout@v4
+        with:
+          repository: poyrazK/faas
+          ref: main
+          path: .backend
+          sparse-checkout: |
+            pkg/api
+            pkg/apid/apidserver
+            pkg/state
+            pkg/platformflags
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Report apid revision
+        run: echo "Checking against poyrazK/faas@$(git -C .backend rev-parse --short HEAD)"
+
+      - name: Contract guard
+        run: npm run contract -- --backend .backend
