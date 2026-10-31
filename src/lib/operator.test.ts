@@ -3,6 +3,7 @@ import {
   formatBytes,
   formatCents,
   formatMegabytes,
+  gbHours,
   parseMoneyAmount,
   reasonError,
   safeNextPath,
@@ -74,5 +75,12 @@ describe('money and size formatting', () => {
     expect(formatBytes(512 * 1024 ** 2)).toBe('512 MB');
     expect(formatMegabytes(1536)).toBe('1.5 GB');
     expect(formatMegabytes(undefined)).toBe('—');
+  });
+});
+
+describe('metering units', () => {
+  it('converts MB-seconds to GB-hours like apid (1 GB = 1024 MB)', () => {
+    expect(gbHours(1024 * 3600)).toBe(1);
+    expect(gbHours(512 * 3600 * 2)).toBe(1);
   });
 });

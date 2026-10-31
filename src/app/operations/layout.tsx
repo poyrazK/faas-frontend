@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { probeControlPlane, probeOperatorAccess } from '@/lib/api';
-import { OPS_HOME, OPS_ROUTES, isRouteActive, opsHref, type OpsRoute } from '@/lib/routes';
+import { OPS_HOME, OPS_ROUTES, isAccountId, isRouteActive, opsHref, tenantHref, type OpsRoute } from '@/lib/routes';
 import { Icon } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
@@ -303,7 +303,7 @@ function TenantJump() {
       onSubmit={(event) => {
         event.preventDefault();
         const q = value.trim();
-        if (q) router.push(`/tenants?q=${encodeURIComponent(q)}`);
+        if (q) router.push(isAccountId(q) ? tenantHref(q) : `/tenants?q=${encodeURIComponent(q)}`);
       }}
     >
       <Icon name="search" size={14} />

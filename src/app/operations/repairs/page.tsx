@@ -20,11 +20,11 @@ import { Mono, PageHeader, SearchInput } from '@/components/ui/bits';
 import { CursorFooter, SectionCard, StatTile } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
+import { tenantHref } from '@/lib/routes';
 
 const PAGE_SIZE = 64;
 
 const short = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
-const tenantHref = (accountId: string) => `/tenants?q=${encodeURIComponent(accountId)}`;
 
 export default function DataRepairsPage() {
   return (

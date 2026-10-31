@@ -45,3 +45,11 @@ describe('operator console routing', () => {
     expect(response.headers.get('x-middleware-rewrite')).toBeNull();
   });
 });
+
+describe('tenant workspace routing', () => {
+  it('serves /tenants/<id> from app/operations/tenants/[id]', () => {
+    expect(rewriteOf('/tenants/11111111-2222-4333-8444-555555555555')).toBe(
+      'https://operations.gregale.dev/operations/tenants/11111111-2222-4333-8444-555555555555',
+    );
+  });
+});

@@ -40,6 +40,9 @@ CI runs typecheck, lint, tests and a production build on every PR.
   renders it and `src/proxy.ts` maps each clean URL (`/tenants`) onto its
   route folder (`src/app/operations/tenants`). To add a page, add an entry and
   create the folder.
+- **Customers** — `/tenants/<account id>` is the customer workspace (overview,
+  apps, deployments, job runs, billing, flags, activity timeline). Link to it
+  with `tenantHref(id, tab?)` from `src/lib/routes.ts`, or `<TenantLink>`.
 - **API client** — `src/lib/api.ts` holds the shared transport and the core
   operator types; area clients live in `src/lib/ops/*`. Operator routes are
   not in apid's OpenAPI spec, so types are written against the Go structs in

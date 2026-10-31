@@ -219,6 +219,6 @@ describe('lookups', () => {
     expect(formatOffset(1250)).toBe('+1.25 s');
     expect(formatOffset(184_000)).toBe('+3m 04s');
     expect(formatOffset(null)).toBe('');
-    expect(tenantHref(ACCOUNT)).toBe(`/tenants?q=${ACCOUNT}`);
+    expect(tenantHref(ACCOUNT)).toBe(`/tenants/${ACCOUNT}`);
   });
 });
