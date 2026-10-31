@@ -3,7 +3,8 @@ import type { IconName } from '@/components/ui/Icons';
 /* ==========================================================================
    The one list of operator pages. The sidebar renders it and proxy.ts maps
    each clean URL (/tenants) onto its route file (app/operations/tenants), so
-   adding a page means adding it here and creating the folder — nothing else.
+   adding a page means adding it here and creating the folder with its page
+   and a layout.tsx that names the browser tab (opsRouteTitle) — nothing else.
    ========================================================================== */
 
 export interface OpsRoute {
@@ -36,6 +37,12 @@ export const OPS_ROUTES: readonly OpsRoute[] = [
   { slug: 'configuration', label: 'Runtime configuration', icon: 'settings', group: 'Platform' },
   { slug: 'github', label: 'GitHub recovery', icon: 'code', group: 'Platform' },
 ];
+
+/** The console's name in browser tabs; the root layout's title template appends it to every page title. */
+export const CONSOLE_TITLE = 'Gregale Operations';
+
+/** Browser-tab title of a page (the root layout adds " | Gregale Operations"). */
+export const opsRouteTitle = (slug: string) => OPS_ROUTES.find((route) => route.slug === slug)?.label ?? slug;
 
 /** Route folders under app/operations that are reachable but not in the sidebar. */
 export const OPS_HIDDEN_SLUGS: readonly string[] = ['login'];
