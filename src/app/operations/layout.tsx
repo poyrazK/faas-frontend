@@ -6,12 +6,14 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { probeControlPlane, probeOperatorAccess, setUnauthorizedHandler } from '@/lib/api';
-import { OPS_HOME, OPS_ROUTES, isAccountId, isRouteActive, opsHref, tenantHref, type OpsRoute } from '@/lib/routes';
+import { OPS_HOME, OPS_ROUTES, isRouteActive, opsHref, type OpsRoute } from '@/lib/routes';
 import { Icon } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
 import { StepUpProvider } from '@/components/operator/StepUpProvider';
 import { OperatorIntentsProvider, isTerminalIntent, useOperatorIntents } from '@/components/operator/OperatorIntents';
+import { JumpBox } from '@/components/operator/JumpBox';
+import { SessionsDialog } from '@/components/operator/SessionsDialog';
 
 const GROUPS: OpsRoute['group'][] = ['Monitor', 'Customers', 'Fleet', 'Platform'];
 
@@ -43,6 +45,7 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [access, setAccess] = useState<Access>('checking');
   const [accessError, setAccessError] = useState<string | null>(null);
   const [controlPlane, setControlPlane] = useState<'checking' | 'online' | 'degraded'>('checking');
@@ -217,7 +220,7 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
           </span>
         </Link>
 
-        <TenantJump />
+        <JumpBox />
 
         <div className="ml-auto flex items-center gap-2">
           <InFlightChip />
@@ -274,6 +277,17 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
                     </a>
                     <button
                       role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setSessionsOpen(true);
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 hover:bg-[var(--color-surface-subtle)]"
+                    >
+                      <Icon name="keys" size={14} />
+                      Your sessions…
+                    </button>
+                    <button
+                      role="menuitem"
                       onClick={() => void signOut()}
                       className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-[var(--color-danger)] hover:bg-[var(--color-surface-subtle)]"
                     >
@@ -287,6 +301,8 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+
+      <SessionsDialog open={sessionsOpen} onClose={() => setSessionsOpen(false)} />
 
       <aside
         className="fixed bottom-0 left-0 top-14 z-40 hidden border-r border-[var(--color-line)] bg-[var(--color-surface)] transition-[width] duration-200 md:block"
@@ -318,32 +334,6 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     </div>
-  );
-}
-
-/** Jump straight to a tenant from anywhere: account ID, email or org slug. */
-function TenantJump() {
-  const router = useRouter();
-  const [value, setValue] = useState('');
-  return (
-    <form
-      className="search-wrap ml-2 hidden w-72 lg:block"
-      role="search"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const q = value.trim();
-        if (q) router.push(isAccountId(q) ? tenantHref(q) : `/tenants?q=${encodeURIComponent(q)}`);
-      }}
-    >
-      <Icon name="search" size={14} />
-      <input
-        className="field field-sm"
-        placeholder="Find tenant by ID, email or org…"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        aria-label="Find tenant"
-      />
-    </form>
   );
 }
 

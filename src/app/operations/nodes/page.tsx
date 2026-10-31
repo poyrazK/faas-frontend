@@ -22,6 +22,7 @@ import {
   type ComputeNode,
 } from '@/lib/ops/nodes';
 import { EnrollNodeDialog } from './EnrollNodeDialog';
+import { ReleaseConvergence } from './ReleaseConvergence';
 import { formatMegabytes, isRealTimestamp, REASON_SUGGESTIONS, WAKE_SLO_P50_MS } from '@/lib/operator';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { PageHeader } from '@/components/ui/bits';
@@ -32,6 +33,7 @@ import { relativeTime } from '@/lib/format';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { useOperatorIntents } from '@/components/operator/OperatorIntents';
 import { CopyLinkButton, EntityId } from '@/components/operator/EntityId';
+import { InstanceActions } from '@/components/operator/InstanceActions';
 import { useUrlParams } from '@/lib/useUrlState';
 import { nodeHref } from '@/lib/routes';
 
@@ -259,6 +261,10 @@ function ComputeNodes() {
       )}
 
       <div className="mt-6">
+        <ReleaseConvergence />
+      </div>
+
+      <div className="mt-6">
         <SectionCard
           title={
             <div className="flex items-center justify-between gap-3">
@@ -431,6 +437,7 @@ function ComputeNodes() {
                         <th>State</th>
                         <th>RAM</th>
                         <th>Last request</th>
+                        <th />
                       </tr>
                     </thead>
                     <tbody>
@@ -445,6 +452,12 @@ function ComputeNodes() {
                           </td>
                           <td className="font-mono">{formatMegabytes(instance.ram_mb)}</td>
                           <td>{instance.last_request_at ? relativeTime(instance.last_request_at) : '—'}</td>
+                          <td>
+                            <InstanceActions
+                              instance={{ ...instance, node_name: instance.node_name || detailNode || undefined }}
+                              onDone={() => detailNode && void loadDetail(detailNode)}
+                            />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
