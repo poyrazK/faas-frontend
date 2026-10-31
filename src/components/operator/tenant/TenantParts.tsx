@@ -1,10 +1,16 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import type { ObsAppDetailResponse } from '@/lib/api';
 import { relativeTime } from '@/lib/format';
+import { formatMegabytes } from '@/lib/operator';
+import { nodeHref } from '@/lib/routes';
+import { EntityId } from '../EntityId';
+import { InstanceActions } from '../InstanceActions';
 
-export function AppWorkload({ detail }: { detail: ObsAppDetailResponse }) {
+/** One app's workload; `onChanged` reloads it after an instance action. */
+export function AppWorkload({ detail, onChanged }: { detail: ObsAppDetailResponse; onChanged?: () => void }) {
   const m = detail.health.metrics;
   return (
     <div className="space-y-4">
@@ -41,6 +47,48 @@ export function AppWorkload({ detail }: { detail: ObsAppDetailResponse }) {
                   <td>{error.route}</td>
                   <td>{error.request_count}</td>
                   <td>{relativeTime(error.last_seen_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {detail.instances.length > 0 && (
+        <div className="overflow-x-auto rounded border border-[var(--color-line)]">
+          <table className="dtable text-xs">
+            <thead>
+              <tr>
+                <th>Instance</th>
+                <th>State</th>
+                <th>Node</th>
+                <th>RAM</th>
+                <th>Last request</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {detail.instances.map((instance) => (
+                <tr key={instance.id}>
+                  <td>
+                    <EntityId id={instance.id} kind="instance" />
+                  </td>
+                  <td>
+                    <span className="badge badge-neutral">{instance.state.replace('_', ' ')}</span>
+                  </td>
+                  <td>
+                    {instance.node_name ? (
+                      <Link href={nodeHref(instance.node_name)} className="hover:underline">
+                        {instance.node_name}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="font-mono">{formatMegabytes(instance.ram_mb)}</td>
+                  <td>{instance.last_request_at ? relativeTime(instance.last_request_at) : '—'}</td>
+                  <td>
+                    <InstanceActions instance={{ ...instance, app_slug: instance.app_slug || detail.app.slug }} onDone={onChanged} />
+                  </td>
                 </tr>
               ))}
             </tbody>

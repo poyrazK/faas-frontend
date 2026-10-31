@@ -466,7 +466,7 @@ function AppsTab({ accountId, data, startAction }: TabContext) {
             ) : !workload.data ? (
               <div className="text-[var(--color-ink-muted)]">Loading workload…</div>
             ) : (
-              <AppWorkload detail={workload.data} />
+              <AppWorkload detail={workload.data} onChanged={workload.reload} />
             )}
           </div>
         </SectionCard>
