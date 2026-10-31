@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { probeControlPlane, probeOperatorAccess } from '@/lib/api';
+import { probeControlPlane, probeOperatorAccess, setUnauthorizedHandler } from '@/lib/api';
 import { OPS_HOME, OPS_ROUTES, isAccountId, isRouteActive, opsHref, tenantHref, type OpsRoute } from '@/lib/routes';
 import { Icon } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
@@ -35,7 +35,8 @@ export default function OperationsLayout({ children }: { children: React.ReactNo
 type Access = 'checking' | 'granted' | 'denied' | 'error';
 
 function OperationsShell({ children }: { children: React.ReactNode }) {
-  const { account, loading, signOut: endSession } = useAuth();
+  const { account, loading, signOut: endSession, refresh } = useAuth();
+  const { clearAll: clearIntents } = useOperatorIntents();
   const toast = useToast();
   const pathname = usePathname();
   const router = useRouter();
@@ -93,9 +94,37 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
   }, [onLogin]);
 
   const signOut = async () => {
+    // Tracked actions name customers; they must not outlive the operator's session in this tab.
+    clearIntents();
     const ended = await endSession();
     if (!ended) toast.error('Signed out here, but the server session could not be revoked. It expires on its own.');
   };
+
+  // A 401 on any request mid-shift means the session expired or was revoked:
+  // confirm with /v1/account, then sign out locally and go to login (the
+  // effect above adds ?next= so the operator lands back here).
+  const expiring = useRef(false);
+  const toastRef = useRef(toast);
+  useEffect(() => {
+    toastRef.current = toast;
+  }, [toast]);
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      if (expiring.current) return;
+      expiring.current = true;
+      void refresh()
+        .then((acct) => {
+          if (!acct) {
+            clearIntents();
+            toastRef.current.info('Your session ended. Sign in again to continue.');
+          }
+        })
+        .finally(() => {
+          expiring.current = false;
+        });
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [refresh, clearIntents]);
 
   if (onLogin) return <>{children}</>;
 
