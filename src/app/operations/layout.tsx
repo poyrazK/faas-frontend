@@ -6,12 +6,13 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { probeControlPlane, probeOperatorAccess, setUnauthorizedHandler } from '@/lib/api';
-import { OPS_HOME, OPS_ROUTES, isAccountId, isRouteActive, opsHref, tenantHref, type OpsRoute } from '@/lib/routes';
+import { OPS_HOME, OPS_ROUTES, isRouteActive, opsHref, type OpsRoute } from '@/lib/routes';
 import { Icon } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
 import { StepUpProvider } from '@/components/operator/StepUpProvider';
 import { OperatorIntentsProvider, isTerminalIntent, useOperatorIntents } from '@/components/operator/OperatorIntents';
+import { JumpBox } from '@/components/operator/JumpBox';
 
 const GROUPS: OpsRoute['group'][] = ['Monitor', 'Customers', 'Fleet', 'Platform'];
 
@@ -217,7 +218,7 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
           </span>
         </Link>
 
-        <TenantJump />
+        <JumpBox />
 
         <div className="ml-auto flex items-center gap-2">
           <InFlightChip />
@@ -318,32 +319,6 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     </div>
-  );
-}
-
-/** Jump straight to a tenant from anywhere: account ID, email or org slug. */
-function TenantJump() {
-  const router = useRouter();
-  const [value, setValue] = useState('');
-  return (
-    <form
-      className="search-wrap ml-2 hidden w-72 lg:block"
-      role="search"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const q = value.trim();
-        if (q) router.push(isAccountId(q) ? tenantHref(q) : `/tenants?q=${encodeURIComponent(q)}`);
-      }}
-    >
-      <Icon name="search" size={14} />
-      <input
-        className="field field-sm"
-        placeholder="Find tenant by ID, email or org…"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        aria-label="Find tenant"
-      />
-    </form>
   );
 }
 

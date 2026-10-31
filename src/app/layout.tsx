@@ -3,14 +3,15 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 import { ToastProvider } from "@/components/ui/Toast";
+import { CONSOLE_TITLE } from "@/lib/routes";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: {
-    default: "Gregale Operations",
-    template: "%s | Gregale Operations",
+    default: CONSOLE_TITLE,
+    template: `%s | ${CONSOLE_TITLE}`,
   },
   description: "Operator console for the Gregale platform.",
   robots: { index: false, follow: false },
