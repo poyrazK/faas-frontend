@@ -51,7 +51,6 @@ export function CredentialsSection({ site, query }: { site: HostingSite; query: 
     <>
       <SectionCard
         title="Automation credentials"
-        className="mt-6"
         action={
           <button className="btn btn-primary btn-sm" disabled={!!off} onClick={() => setCreating(true)}>
             <Icon name="plus" size={13} />

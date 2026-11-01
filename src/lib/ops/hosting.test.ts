@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
 import {
   branchOf,
+  checkBadge,
+  domainBadge,
+  formatBytes,
+  previewBadge,
+  provenanceLine,
+  publicationSummary,
+  releaseBadge,
   credentialBlocker,
   credentialLabelError,
   EMPTY_TRUST_DRAFT,
@@ -132,8 +139,46 @@ describe('hostingFeatureOff', () => {
   it('turns switched-off features into a sentence and leaves real failures alone', () => {
     expect(hostingFeatureOff(problem(503, 'frontend_hosting_disabled'))).toMatch(/turned off/);
     expect(hostingFeatureOff(problem(503, 'frontend_hosting_oidc_disabled'))).toMatch(/OIDC/);
+    expect(hostingFeatureOff(problem(503, 'frontend_hosting_domains_unconfigured'))).toMatch(/DNS provider/);
     expect(hostingFeatureOff(problem(503, 'frontend_hosting_unavailable'))).toBeNull();
     expect(hostingFeatureOff(problem(404, 'not_found'))).toBeNull();
     expect(hostingFeatureOff(new Error('boom'))).toBeNull();
+  });
+});
+
+describe('read models', () => {
+  it('summarises publication, including a stuck generation', () => {
+    expect(publicationSummary({ state: 'published', generation: 7, published_generation: 7, retry_count: 0 })).toMatchObject({
+      label: 'Published',
+      tone: 'badge-success',
+    });
+    const stuck = publicationSummary({ state: 'pending', generation: 8, published_generation: 7, retry_count: 3, last_error_code: 'provider_timeout' });
+    expect(stuck.tone).toBe('badge-danger');
+    expect(stuck.detail).toBe('Generation 8 is waiting to publish (7 is live). 3 retries so far, last error provider_timeout.');
+    expect(publicationSummary({ state: 'untracked', retry_count: 0 }).label).toBe('Not tracked');
+  });
+
+  it('badges checks, releases and domains', () => {
+    expect(checkBadge('blocked')).toEqual({ label: 'Blocked', tone: 'badge-danger' });
+    expect(checkBadge('not_checked').label).toBe('Not checked');
+    expect(releaseBadge('pending').label).toBe('Uploading');
+    expect(domainBadge('pending').label).toBe('Pending DNS');
+    expect(domainBadge('something_new')).toEqual({ label: 'something_new', tone: 'badge-neutral' });
+  });
+
+  it('reads source labels and preview state', () => {
+    expect(provenanceLine({ repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f6' })).toBe('gregale/website@main · a1b2c3d');
+    expect(provenanceLine({ description: 'manual upload' })).toBe('manual upload');
+    expect(provenanceLine(undefined)).toBeNull();
+    const preview = { revoked: false, expires_at: '2026-11-02T12:00:00Z', generation: 2, published_generation: 2 };
+    expect(previewBadge(preview, NOW).label).toBe('Live');
+    expect(previewBadge({ ...preview, published_generation: 1 }, NOW).label).toBe('Publishing');
+    expect(previewBadge({ ...preview, expires_at: '2026-11-01T11:00:00Z' }, NOW).label).toBe('Expired');
+    expect(previewBadge({ ...preview, revoked: true }, NOW).label).toBe('Revoked');
+  });
+
+  it('formats artifact sizes', () => {
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(2_621_440)).toBe('2.5 MB');
   });
 });

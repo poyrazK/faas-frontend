@@ -41,7 +41,6 @@ export function TrustsSection({ site, query }: { site: HostingSite; query: Async
     <>
       <SectionCard
         title="GitHub OIDC trusts"
-        className="mt-6"
         action={
           <button className="btn btn-primary btn-sm" disabled={!!off} onClick={() => setCreating(true)}>
             <Icon name="plus" size={13} />
