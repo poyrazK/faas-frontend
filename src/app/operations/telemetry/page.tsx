@@ -23,7 +23,9 @@ import {
   type ObsNotificationHealth,
   type ObsNotificationSignal,
   type ObsRuleHealthResponse,
+  getObsHealthDetail,
 } from '@/lib/ops/telemetry';
+import { PipelineHealth } from './PipelineHealth';
 import { runbookHref } from '@/lib/ops/incidents';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { FilterSelect, Mono, PageHeader } from '@/components/ui/bits';
@@ -51,6 +53,7 @@ import { CoverageSection, type CoverageView } from './CoverageSection';
 export default function TelemetryHealthPage() {
   const notifications = useAsync(getNotificationHealth, [], 30000);
   const rules = useAsync(getRuleHealth, [], 30000);
+  const pipeline = useAsync(getObsHealthDetail, [], 30000);
 
   const [historyWindow, setHistoryWindow] = useState('');
   const [failureDetails, setFailureDetails] = useState(false);
@@ -72,6 +75,7 @@ export default function TelemetryHealthPage() {
   const refreshAll = () => {
     notifications.reload();
     rules.reload();
+    pipeline.reload();
     history.reload();
     inputs.reload();
     ruleCoverage.reload();
@@ -175,6 +179,10 @@ export default function TelemetryHealthPage() {
           sub={!role ? 'Choose the expected role below' : `role ${role}`}
           color="var(--color-danger)"
         />
+      </div>
+
+      <div className="mt-6">
+        <PipelineHealth health={pipeline} />
       </div>
 
       <div className="mt-6">
@@ -376,7 +384,7 @@ function RuleHealthSection({ query }: { query: { data: ObsRuleHealthResponse | n
               <Fact label="Clock invalid" value={totals.invalid_clock} />
             </div>
           )}
-          {data.items.length > 0 && (
+          {(data.items ?? []).length > 0 && (
             <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
               <table className="dtable text-xs">
                 <thead>

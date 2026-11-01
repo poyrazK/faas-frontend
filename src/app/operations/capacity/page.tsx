@@ -22,29 +22,47 @@ export default function CapacityPage() {
   const query = useAsync(getObsCapacity, [], 30000);
   const { data, loading, error, reload } = query;
 
+  // The heading shows in every state, so the page is recognisable while it loads or fails.
+  const header = (
+    <PageHeader
+      title="Capacity"
+      subtitle="Fleet headroom, placement pressure and per-node utilization."
+      actions={
+        <button onClick={reload} className="btn btn-secondary btn-sm">
+          <Icon name="refresh" size={14} />
+          Refresh
+        </button>
+      }
+    />
+  );
+
   if (loading && !data) {
     return (
-      <div className="flex h-64 items-center justify-center text-sm text-[var(--color-ink-muted)]">
-        Loading fleet capacity…
+      <div>
+        {header}
+        <div className="card p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading fleet capacity…</div>
       </div>
     );
   }
 
   if (error && !data) {
     return (
-      <div className="card p-8 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-danger-subtle)] text-[var(--color-danger)]">
-          <Icon name="shield" size={24} />
+      <div>
+        {header}
+        <div className="card p-8 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-danger-subtle)] text-[var(--color-danger)]">
+            <Icon name="shield" size={24} />
+          </div>
+          <h2 className="mt-4 text-lg font-semibold">Could not load fleet capacity</h2>
+          <p className="mt-1 text-sm text-[var(--color-ink-muted)]">
+            {error.message ||
+              "Could not load fleet capacity. Admin permissions and MFA step-up are required."}
+          </p>
+          <button onClick={reload} className="btn btn-secondary btn-sm mt-4">
+            <Icon name="refresh" size={14} />
+            Try again
+          </button>
         </div>
-        <h2 className="mt-4 text-lg font-semibold">Could not load fleet capacity</h2>
-        <p className="mt-1 text-sm text-[var(--color-ink-muted)]">
-          {error.message ||
-            "Could not load fleet capacity. Admin permissions and MFA step-up are required."}
-        </p>
-        <button onClick={reload} className="btn btn-secondary btn-sm mt-4">
-          <Icon name="refresh" size={14} />
-          Retry Request
-        </button>
       </div>
     );
   }
@@ -53,16 +71,7 @@ export default function CapacityPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Capacity"
-        subtitle="Fleet headroom, placement pressure and per-node utilization."
-        actions={
-          <button onClick={reload} className="btn btn-secondary btn-sm">
-            <Icon name="refresh" size={14} />
-            Refresh Capacity
-          </button>
-        }
-      />
+      {header}
 
       <SnapshotFreshness snapshots={[query]} />
       {error && data && (

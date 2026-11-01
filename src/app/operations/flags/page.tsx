@@ -89,19 +89,41 @@ export default function PlatformFlagsPage() {
       return next;
     });
 
+  // The heading shows in every state, so the page is recognisable while it loads or fails.
+  const header = (
+    <PageHeader
+      title="Platform flags"
+      subtitle="Release features to selected accounts without a deploy. Versioned and audited."
+      actions={
+        <button type="button" onClick={flags.reload} className="btn btn-secondary btn-sm">
+          <Icon name="refresh" size={14} />
+          Refresh
+        </button>
+      }
+    />
+  );
+
   if (flags.loading && !flags.data) {
-    return <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading platform flags…</div>;
+    return (
+      <div>
+        {header}
+        <div className="card p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading platform flags…</div>
+      </div>
+    );
   }
 
   if (flags.error && !flags.data) {
     return (
-      <div className="card p-8 text-center">
-        <Icon name="shield" size={24} className="mx-auto text-[var(--color-danger)]" />
-        <h2 className="mt-4 text-lg font-semibold">Could not load platform flags</h2>
-        <p className="mt-1 text-sm text-[var(--color-ink-muted)]">{flags.error.message}</p>
-        <button type="button" onClick={flags.reload} className="btn btn-secondary btn-sm mt-4">
-          Retry
-        </button>
+      <div>
+        {header}
+        <div className="card p-8 text-center">
+          <Icon name="shield" size={24} className="mx-auto text-[var(--color-danger)]" />
+          <h2 className="mt-4 text-lg font-semibold">Could not load platform flags</h2>
+          <p className="mt-1 text-sm text-[var(--color-ink-muted)]">{flags.error.message}</p>
+          <button type="button" onClick={flags.reload} className="btn btn-secondary btn-sm mt-4">
+            Try again
+          </button>
+        </div>
       </div>
     );
   }
@@ -115,16 +137,7 @@ export default function PlatformFlagsPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Platform flags"
-        subtitle="Release features to selected accounts without a deploy. Versioned and audited."
-        actions={
-          <button type="button" onClick={flags.reload} className="btn btn-secondary btn-sm">
-            <Icon name="refresh" size={14} />
-            Refresh
-          </button>
-        }
-      />
+      {header}
 
       <SnapshotFreshness snapshots={[flags]} />
       {flags.error && (

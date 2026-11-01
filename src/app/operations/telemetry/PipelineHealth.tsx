@@ -1,11 +1,10 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
 import type { AsyncState } from '@/lib/useAsync';
 import { healthMetric, humanize, type ObsHealthDetail, type ObsHealthMetricKey } from '@/lib/ops/telemetry';
 import { SectionCard } from '@/components/ui/Panels';
-import { ErrorRow, LoadingRow, RefreshFailed, StateBadge, When } from './parts';
+import { ErrorRow, LoadingRow, RefreshFailed, StateBadge, When } from '../incidents/parts';
 
 const SIGNAL_LABELS: Record<ObsHealthMetricKey, string> = {
   audit_log_write_total_5m: 'Audit writes (5m)',
@@ -41,11 +40,13 @@ export function PipelineHealth({ health }: { health: AsyncState<ObsHealthDetail>
   const unavailable = !data || data.prometheus_available !== true || unhealthySignals;
   const firing = data ? healthMetric(data, 'alerts_firing').value : null;
   const failures = data ? healthMetric(data, 'audit_log_write_failures_5m').value : null;
+  // A missing or non-numeric ratio is unknown, not 0% (and never "NaN%").
+  const coverage = data && Number.isFinite(data.audit_log_coverage_ratio_5m) ? data.audit_log_coverage_ratio_5m : null;
   const degraded =
     !!data &&
     ((firing ?? 0) > 0 ||
       (failures ?? 0) > 0 ||
-      data.audit_log_coverage_ratio_5m < 1 ||
+      (coverage !== null && coverage < 1) ||
       missingOutcomes.some(([, count]) => count > 0) ||
       traceRatios.some(([, ratio]) => ratio < 1));
 
@@ -53,14 +54,9 @@ export function PipelineHealth({ health }: { health: AsyncState<ObsHealthDetail>
     <SectionCard
       title="Observability pipeline health"
       action={
-        <div className="flex items-center gap-2">
-          <span className={`badge ${!data ? 'badge-neutral' : unavailable ? 'badge-danger' : degraded ? 'badge-warning' : 'badge-success'}`}>
-            {!data ? (health.error ? 'Unknown' : 'Loading…') : unavailable ? 'Telemetry unavailable' : degraded ? 'Degraded' : 'Reporting'}
-          </span>
-          <Link href="/telemetry" className="btn btn-secondary btn-xs">
-            Telemetry health
-          </Link>
-        </div>
+        <span className={`badge ${!data ? 'badge-neutral' : unavailable ? 'badge-danger' : degraded ? 'badge-warning' : 'badge-success'}`}>
+          {!data ? (health.error ? 'Unknown' : 'Loading…') : unavailable ? 'Telemetry unavailable' : degraded ? 'Degraded' : 'Reporting'}
+        </span>
       }
     >
       {health.error && !data ? (
@@ -75,8 +71,8 @@ export function PipelineHealth({ health }: { health: AsyncState<ObsHealthDetail>
             <MetricTile health={data} metric="alerts_firing" />
             <div className="rounded-lg border border-[var(--color-line)] p-3 text-xs">
               <div className="text-[var(--color-ink-muted)]">Audit trace coverage (5m)</div>
-              <div className={`mt-1 font-semibold ${data.audit_log_coverage_ratio_5m < 1 ? 'text-[var(--color-warning-bold)]' : ''}`}>
-                {(data.audit_log_coverage_ratio_5m * 100).toFixed(1)}%
+              <div className={`mt-1 font-semibold ${coverage !== null && coverage < 1 ? 'text-[var(--color-warning-bold)]' : ''}`}>
+                {coverage === null ? 'Unknown' : `${(coverage * 100).toFixed(1)}%`}
               </div>
               <div className="text-[var(--color-ink-muted)]">
                 snapshot <When at={data.generated_at} />

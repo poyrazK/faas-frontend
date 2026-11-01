@@ -14,6 +14,8 @@ import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { TenantLink } from '@/components/operator/TenantLink';
 import { IntentStatusBadge, intentOutcome, isTerminalIntent, useOperatorIntents } from '@/components/operator/OperatorIntents';
+import { FleetEventStream } from '../incidents/FleetEventStream';
+import { RecentOperatorActions } from './RecentOperatorActions';
 
 const POLL_MS = 30_000;
 const LIST_LIMIT = 8;
@@ -181,6 +183,16 @@ export default function OverviewPage() {
       ) : (
         <FleetGlance data={overview.data} />
       )}
+
+      <h2 className="mb-3 mt-8 text-sm font-semibold text-[var(--color-ink-soft)]">Activity</h2>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="min-w-0">
+          <FleetEventStream />
+        </div>
+        <div className="min-w-0">
+          <RecentOperatorActions />
+        </div>
+      </div>
     </div>
   );
 }

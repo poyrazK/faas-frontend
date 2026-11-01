@@ -36,6 +36,8 @@ import { CopyLinkButton, EntityId } from '@/components/operator/EntityId';
 import { InstanceActions } from '@/components/operator/InstanceActions';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 import { useUrlParams } from '@/lib/useUrlState';
+import { pickParam } from '@/lib/urlState';
+import { PageTabs } from '@/components/ui/PageTabs';
 import { nodeHref } from '@/lib/routes';
 
 const NODE_ACTIONS: Record<ObsNodeAction, { label: string; tone: 'danger' | 'warning' | 'default'; impact: string }> = {
@@ -61,6 +63,14 @@ const NODE_ACTIONS: Record<ObsNodeAction, { label: string; tone: 'danger' | 'war
   },
 };
 
+const NODE_VIEWS = [
+  { key: 'hosts', label: 'Hosts', icon: 'storage' },
+  { key: 'release', label: 'Release', icon: 'deployments' },
+  { key: 'wake', label: 'Wake latency', icon: 'clock' },
+] as const;
+type NodeView = (typeof NODE_VIEWS)[number]['key'];
+const NODE_VIEW_KEYS = NODE_VIEWS.map((tab) => tab.key);
+
 export default function ComputeNodesPage() {
   return (
     <Suspense>
@@ -75,6 +85,8 @@ function ComputeNodes() {
   const [params, setParams] = useUrlParams();
   const nodeParam = params.get('node')?.trim() || null;
   const heartbeatParam = params.get('heartbeats')?.trim() || null;
+  // A release link (?release=) opens the release check without naming the view.
+  const view = pickParam<NodeView>(params.get('view'), NODE_VIEW_KEYS, params.get('release') ? 'release' : 'hosts');
   const [cursor, setCursor] = useState('');
   const nodeQuery = useAsync(() => listObsNodes(cursor), [cursor], 30000);
   const { data, loading, error, reload } = nodeQuery;
@@ -174,98 +186,107 @@ function ComputeNodes() {
       />
 
       <SnapshotFreshness snapshots={[nodeQuery, wakeQuery]} />
-      <SectionCard title="Hosts">
-        {error && !data ? (
-          <div role="alert" className="p-8 text-center text-sm text-[var(--color-danger)]">
-            Could not load compute nodes: {error.message}
-          </div>
-        ) : loading && !data ? (
-          <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading compute nodes…</div>
-        ) : !data?.items.length ? (
-          <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">No compute nodes are enrolled.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="dtable text-xs">
-              <thead>
-                <tr>
-                  <th>Node</th>
-                  <th>Lifecycle</th>
-                  <th>Size</th>
-                  <th>Load</th>
-                  <th>Last heartbeat</th>
-                  <th>
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.items.map((node: ObsNodeRow) => (
-                  <tr key={node.id} {...rowOpener(() => openDetail(node.name), `Open node ${node.name}`)}>
-                    <td className="nowrap">
-                      <span className="cell-primary">{node.name}</span>
-                      <div className="font-mono text-[11px] text-[var(--color-ink-muted)]">{node.overlay_ip || 'no overlay IP'}</div>
-                    </td>
-                    <td className="nowrap">
-                      <LifecycleBadge enrolled={enrolledByName.get(node.name)} active={node.active} />
-                    </td>
-                    <td className="nowrap font-mono">
-                      {node.vpcpus} vCPU · {formatMegabytes(node.mem_mb)}
-                    </td>
-                    <td className="nowrap font-mono">
-                      <div>
-                        {node.instances_live} live · {node.instances_running} running
-                      </div>
-                      <div
-                        className={node.admission_margin_mb < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-ink-muted)]'}
-                        title="RAM used of the admission ceiling"
-                      >
-                        {formatMegabytes(node.ram_used_mb)} of {formatMegabytes(node.admission_ceiling_mb)}
-                      </div>
-                    </td>
-                    <td className="nowrap">{isRealTimestamp(node.last_heartbeat_at) ? relativeTime(node.last_heartbeat_at) : 'Never'}</td>
-                    <td className="cell-menu">
-                      <RowMenu
-                        label={`Actions for ${node.name}`}
-                        items={[
-                          { label: 'Open node', onSelect: () => openDetail(node.name) },
-                          { label: 'Heartbeats (30 min)', onSelect: () => openHeartbeats(node.name) },
-                          { label: 'Copy link', onSelect: () => copyText(new URL(nodeHref(node.name), window.location.origin).toString()) },
-                        ]}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {error && data && (
-          <div role="alert" className="table-foot text-[var(--color-danger)]">
-            Refresh failed: {error.message}. Showing the last successful snapshot.
-          </div>
-        )}
-      </SectionCard>
+      <PageTabs
+        label="Compute node views"
+        tabs={NODE_VIEWS}
+        value={view}
+        onChange={(next) => setParams({ view: next === 'hosts' ? null : next })}
+      />
 
-      {(cursor || data?.next_cursor) && (
-        <div className="mt-3 flex gap-2">
-          {cursor && (
-            <button className="btn btn-secondary btn-xs" onClick={() => setCursor('')}>
-              First page
-            </button>
+      {view === 'hosts' && (
+        <>
+          <SectionCard title="Hosts">
+            {error && !data ? (
+              <div role="alert" className="p-8 text-center text-sm text-[var(--color-danger)]">
+                Could not load compute nodes: {error.message}
+              </div>
+            ) : loading && !data ? (
+              <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading compute nodes…</div>
+            ) : !data?.items.length ? (
+              <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">No compute nodes are enrolled.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="dtable text-xs">
+                  <thead>
+                    <tr>
+                      <th>Node</th>
+                      <th>Lifecycle</th>
+                      <th>Size</th>
+                      <th>Load</th>
+                      <th>Last heartbeat</th>
+                      <th>
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.items.map((node: ObsNodeRow) => (
+                      <tr key={node.id} {...rowOpener(() => openDetail(node.name), `Open node ${node.name}`)}>
+                        <td className="nowrap">
+                          <span className="cell-primary">{node.name}</span>
+                          <div className="font-mono text-[11px] text-[var(--color-ink-muted)]">{node.overlay_ip || 'no overlay IP'}</div>
+                        </td>
+                        <td className="nowrap">
+                          <LifecycleBadge enrolled={enrolledByName.get(node.name)} active={node.active} />
+                        </td>
+                        <td className="nowrap font-mono">
+                          {node.vpcpus} vCPU · {formatMegabytes(node.mem_mb)}
+                        </td>
+                        <td className="nowrap font-mono">
+                          <div>
+                            {node.instances_live} live · {node.instances_running} running
+                          </div>
+                          <div
+                            className={node.admission_margin_mb < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-ink-muted)]'}
+                            title="RAM used of the admission ceiling"
+                          >
+                            {formatMegabytes(node.ram_used_mb)} of {formatMegabytes(node.admission_ceiling_mb)}
+                          </div>
+                        </td>
+                        <td className="nowrap">{isRealTimestamp(node.last_heartbeat_at) ? relativeTime(node.last_heartbeat_at) : 'Never'}</td>
+                        <td className="cell-menu">
+                          <RowMenu
+                            label={`Actions for ${node.name}`}
+                            items={[
+                              { label: 'Open node', onSelect: () => openDetail(node.name) },
+                              { label: 'Heartbeats (30 min)', onSelect: () => openHeartbeats(node.name) },
+                              { label: 'Copy link', onSelect: () => copyText(new URL(nodeHref(node.name), window.location.origin).toString()) },
+                            ]}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {error && data && (
+              <div role="alert" className="table-foot text-[var(--color-danger)]">
+                Refresh failed: {error.message}. Showing the last successful snapshot.
+              </div>
+            )}
+          </SectionCard>
+
+          {(cursor || data?.next_cursor) && (
+            <div className="mt-3 flex gap-2">
+              {cursor && (
+                <button className="btn btn-secondary btn-xs" onClick={() => setCursor('')}>
+                  First page
+                </button>
+              )}
+              {data?.next_cursor && (
+                <button className="btn btn-secondary btn-xs" disabled={loading} onClick={() => setCursor(data.next_cursor)}>
+                  Next page
+                </button>
+              )}
+            </div>
           )}
-          {data?.next_cursor && (
-            <button className="btn btn-secondary btn-xs" disabled={loading} onClick={() => setCursor(data.next_cursor)}>
-              Next page
-            </button>
-          )}
-        </div>
+        </>
       )}
 
-      <div className="mt-6">
-        <ReleaseConvergence />
-      </div>
+      {view === 'release' && <ReleaseConvergence />}
 
-      <div className="mt-6">
+      {view === 'wake' && (
         <SectionCard
           title={
             <div className="flex items-center justify-between gap-3">
@@ -321,7 +342,7 @@ function ComputeNodes() {
             </div>
           )}
         </SectionCard>
-      </div>
+      )}
 
       <Modal open={detailNode !== null} onClose={closeDetail} title={`Node ${detailNode ?? ''}`} width={960}>
         {nodeDetailError ? (
