@@ -13,6 +13,7 @@ import {
   isDeploymentRetryable,
   isUuid,
   listOperatorDeployments,
+  OPERATOR_DEPLOYMENT_MAX_LIMIT,
   retryOperatorDeployment,
   WORKLOAD_REASON_SUGGESTIONS,
   type DeploymentStageName,
@@ -33,7 +34,9 @@ import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { appDeploymentsHref, deploymentHref, tenantHref } from '@/lib/routes';
 import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
+import { groupFailureCauses } from '@/lib/ops/deploymentFailures';
 import { StaleRepairDialog } from './StaleRepairDialog';
+import { FailureCauses } from './FailureCauses';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 
 const PAGE_SIZE = 50;
@@ -59,6 +62,8 @@ const AGE_OPTIONS = [
 ];
 
 const PRESET_KEYS = Object.keys(STATUS_PRESETS);
+/** Presets whose rows include failed deployments, so failure causes apply. */
+const FAILED_PRESETS = ['incident', 'failed', 'all'];
 const AGE_VALUES = AGE_OPTIONS.map((option) => option.value);
 
 type DeploymentAction = { type: 'cancel' | 'retry'; deployment: OperatorDeployment; defaultStage: DeploymentStageName };
@@ -84,8 +89,9 @@ function DeploymentOperations() {
   const includeDeleted = params.get('deleted') === '1';
   const offset = intParam(params.get('offset'));
   const deploymentParam = params.get('deployment');
-  /** Any filter change starts again from the first page. */
-  const setFilters = (updates: Parameters<typeof setParams>[0]) => setParams({ ...updates, offset: null });
+  const causeParam = params.get('cause');
+  /** Any filter change starts again from the first page, with every cause shown. */
+  const setFilters = (updates: Parameters<typeof setParams>[0]) => setParams({ ...updates, offset: null, cause: null });
 
   const filterProblem =
     account && !isUuid(account)
@@ -116,6 +122,38 @@ function DeploymentOperations() {
   );
   const current = query.data && query.data.key === key ? query.data : null;
   const page = current?.page ?? null;
+
+  // Failure causes come from their own request: the latest failed
+  // deployments under the same scope, not just the page of rows below.
+  const showsFailed = FAILED_PRESETS.includes(preset);
+  const causesKey = [account, app, age, includeDeleted ? 'deleted' : '', showsFailed ? 'failed' : ''].join('|');
+  const causesQuery = useAsync(
+    async () => {
+      if (filterProblem || !showsFailed) return { key: causesKey, page: null };
+      const failedPage = await listOperatorDeployments({
+        accountId: account || undefined,
+        appId: app || undefined,
+        statuses: ['failed'],
+        includeDeleted,
+        createdBefore: age ? new Date(Date.now() - Number(age) * 60_000) : undefined,
+        limit: OPERATOR_DEPLOYMENT_MAX_LIMIT,
+      });
+      return { key: causesKey, page: failedPage };
+    },
+    [causesKey],
+    POLL_MS * 2,
+  );
+  const failedPage = causesQuery.data && causesQuery.data.key === causesKey ? causesQuery.data.page : null;
+  const causes = failedPage ? groupFailureCauses(failedPage.deployments) : null;
+  // "Show" on a cause lists its deployments instead of the paged rows.
+  const byCause = showsFailed && !!causeParam;
+  const selectedCause = byCause && causes ? (causes.find((cause) => cause.id === causeParam) ?? null) : null;
+  const rows = byCause ? (causes ? (selectedCause?.deployments ?? []) : null) : (page?.deployments ?? null);
+  const rowsQuery = byCause ? causesQuery : query;
+  const reloadAll = () => {
+    query.reload();
+    causesQuery.reload();
+  };
 
   /* ── Detail drawer: responses are matched to the deployment they were for ── */
   const detailSeq = useRef(0);
@@ -193,7 +231,7 @@ function DeploymentOperations() {
               <Icon name="trash" size={14} />
               Repair stale…
             </button>
-            <button onClick={query.reload} className="btn btn-secondary btn-sm">
+            <button onClick={reloadAll} className="btn btn-secondary btn-sm">
               <Icon name="refresh" size={14} />
               Refresh
             </button>
@@ -201,9 +239,9 @@ function DeploymentOperations() {
         }
       />
 
-      <StaleRepairDialog open={repairOpen} onClose={() => setRepairOpen(false)} onRepaired={query.reload} />
+      <StaleRepairDialog open={repairOpen} onClose={() => setRepairOpen(false)} onRepaired={reloadAll} />
 
-      <SnapshotFreshness snapshots={[query]} />
+      <SnapshotFreshness snapshots={showsFailed ? [query, causesQuery] : [query]} />
 
       {scopeAccount && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3 text-xs">
@@ -263,24 +301,53 @@ function DeploymentOperations() {
         </label>
       </div>
 
+      {!filterProblem && showsFailed && failedPage && causes && causes.length > 0 && (
+        <FailureCauses
+          causes={causes}
+          total={failedPage.deployments.length}
+          truncated={failedPage.next_offset > 0}
+          selected={byCause ? causeParam : null}
+          onSelect={(id) => setParams({ cause: id, offset: null })}
+        />
+      )}
+
       <SectionCard>
+        {byCause && !filterProblem && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-5 py-2.5 text-xs">
+            <Icon name="filter" size={13} />
+            {selectedCause ? (
+              <span className="min-w-0 flex-1">
+                Failed deployments with one cause:{' '}
+                <span className="break-words font-mono">{[selectedCause.code, selectedCause.message].filter(Boolean).join(' ') || 'no error recorded'}</span>
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1">{causes ? 'No failed deployment has this cause any more.' : 'Loading failure causes…'}</span>
+            )}
+            <button className="btn btn-ghost btn-xs" onClick={() => setParams({ cause: null })}>
+              <Icon name="x" size={12} />
+              Show all deployments
+            </button>
+          </div>
+        )}
         {filterProblem ? (
           <div role="alert" className="p-8 text-center text-sm text-[var(--color-warning-bold)]">
             {filterProblem}
           </div>
-        ) : !page && query.loading ? (
+        ) : !rows && rowsQuery.loading ? (
           <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading deployments…</div>
-        ) : !page && query.error ? (
+        ) : !rows && rowsQuery.error ? (
           <div role="alert" className="p-8 text-center text-sm text-[var(--color-danger)]">
-            Could not load deployments: {query.error.message}
+            Could not load deployments: {rowsQuery.error.message}
           </div>
-        ) : !page ? (
+        ) : !rows ? (
           <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading deployments…</div>
-        ) : page.deployments.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
-            {offset > 0
-              ? 'No more deployments match these filters.'
-              : `No ${preset === 'incident' ? 'in-flight or failed ' : ''}deployments match these filters.`}
+            {byCause
+              ? 'Nothing to show for this cause.'
+              : offset > 0
+                ? 'No more deployments match these filters.'
+                : `No ${preset === 'incident' ? 'in-flight or failed ' : ''}deployments match these filters.`}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -298,7 +365,7 @@ function DeploymentOperations() {
                 </tr>
               </thead>
               <tbody>
-                {page.deployments.map((d) => (
+                {rows.map((d) => (
                   <tr key={d.id} {...rowOpener(() => openDetail(d.id), `Open deployment ${short(d.id)} of ${d.app_slug}`)}>
                     <td className="nowrap">
                       <span className="cell-primary">{d.app_slug}</span>
@@ -348,12 +415,12 @@ function DeploymentOperations() {
             </table>
           </div>
         )}
-        {query.error && page && (
+        {rowsQuery.error && rows && (
           <div role="alert" className="table-foot text-[var(--color-danger)]">
-            Refresh failed: {query.error.message}. Showing the last successful snapshot.
+            Refresh failed: {rowsQuery.error.message}. Showing the last successful snapshot.
           </div>
         )}
-        {page && (
+        {!byCause && page && (
           <CursorFooter
             count={page.deployments.length}
             noun="deployments"
