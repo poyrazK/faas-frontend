@@ -34,6 +34,7 @@ import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog
 import { useOperatorIntents } from '@/components/operator/OperatorIntents';
 import { CopyLinkButton, EntityId } from '@/components/operator/EntityId';
 import { InstanceActions } from '@/components/operator/InstanceActions';
+import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 import { useUrlParams } from '@/lib/useUrlState';
 import { nodeHref } from '@/lib/routes';
 
@@ -189,48 +190,48 @@ function ComputeNodes() {
                 <tr>
                   <th>Node</th>
                   <th>Lifecycle</th>
-                  <th>vCPUs</th>
-                  <th>Memory</th>
-                  <th>Admission ceiling</th>
-                  <th>Live / RAM used</th>
-                  <th>Overlay IP</th>
+                  <th>Size</th>
+                  <th>Load</th>
                   <th>Last heartbeat</th>
-                  <th />
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((node: ObsNodeRow) => (
-                  <tr key={node.id}>
-                    <td className="cell-primary">{node.name}</td>
-                    <td>
+                  <tr key={node.id} {...rowOpener(() => openDetail(node.name), `Open node ${node.name}`)}>
+                    <td className="nowrap">
+                      <span className="cell-primary">{node.name}</span>
+                      <div className="font-mono text-[11px] text-[var(--color-ink-muted)]">{node.overlay_ip || 'no overlay IP'}</div>
+                    </td>
+                    <td className="nowrap">
                       <LifecycleBadge enrolled={enrolledByName.get(node.name)} active={node.active} />
                     </td>
-                    <td className="font-mono">{node.vpcpus}</td>
-                    <td className="font-mono">{formatMegabytes(node.mem_mb)}</td>
-                    <td className="font-mono">{formatMegabytes(node.admission_ceiling_mb)}</td>
-                    <td className="font-mono">
+                    <td className="nowrap font-mono">
+                      {node.vpcpus} vCPU · {formatMegabytes(node.mem_mb)}
+                    </td>
+                    <td className="nowrap font-mono">
                       <div>
                         {node.instances_live} live · {node.instances_running} running
                       </div>
                       <div
-                        className={
-                          node.admission_margin_mb < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-ink-muted)]'
-                        }
+                        className={node.admission_margin_mb < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-ink-muted)]'}
+                        title="RAM used of the admission ceiling"
                       >
-                        {formatMegabytes(node.ram_used_mb)} / {formatMegabytes(node.admission_ceiling_mb)}
+                        {formatMegabytes(node.ram_used_mb)} of {formatMegabytes(node.admission_ceiling_mb)}
                       </div>
                     </td>
-                    <td className="font-mono">{node.overlay_ip || '—'}</td>
-                    <td>{isRealTimestamp(node.last_heartbeat_at) ? relativeTime(node.last_heartbeat_at) : 'Never'}</td>
-                    <td className="text-right">
-                      <div className="flex justify-end gap-1.5">
-                        <button onClick={() => openDetail(node.name)} className="btn btn-secondary btn-xs">
-                          Inspect
-                        </button>
-                        <button onClick={() => openHeartbeats(node.name)} className="btn btn-secondary btn-xs">
-                          Heartbeats
-                        </button>
-                      </div>
+                    <td className="nowrap">{isRealTimestamp(node.last_heartbeat_at) ? relativeTime(node.last_heartbeat_at) : 'Never'}</td>
+                    <td className="cell-menu">
+                      <RowMenu
+                        label={`Actions for ${node.name}`}
+                        items={[
+                          { label: 'Open node', onSelect: () => openDetail(node.name) },
+                          { label: 'Heartbeats (30 min)', onSelect: () => openHeartbeats(node.name) },
+                          { label: 'Copy link', onSelect: () => copyText(new URL(nodeHref(node.name), window.location.origin).toString()) },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}

@@ -53,6 +53,8 @@ import { FleetEventStream } from './FleetEventStream';
 import { EmptyRow, ErrorRow, LoadingRow, Notice, RefreshFailed, StateBadge, When } from './parts';
 import { useUrlParams } from '@/lib/useUrlState';
 import { EntityId } from '@/components/operator/EntityId';
+import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
+import { incidentHref } from '@/lib/routes';
 
 const errorMessage = (err: unknown) => (err as Error)?.message || 'Request failed';
 
@@ -507,8 +509,9 @@ function Incidents() {
                         <th>Incident</th>
                         <th>Status</th>
                         <th>Observed</th>
-                        <th>Go to</th>
-                        <th />
+                        <th>
+                          <span className="sr-only">Actions</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -651,12 +654,15 @@ function InboxRow({ item, onInspect }: { item: ObsIncident; onInspect: (ref: Inc
   const links = incidentConsoleLinks(item);
   const runbook = runbookHref(item.runbook_url);
   const triage = item.triage;
+  const open = () => {
+    if (ref) onInspect(ref);
+  };
   return (
-    <tr>
-      <td>
+    <tr {...(ref ? rowOpener(open, `Open incident: ${item.summary}`) : {})}>
+      <td className="nowrap">
         <span className={badgeClass(severityTone(item.severity))}>{item.severity}</span>
       </td>
-      <td className="max-w-[420px]">
+      <td className="max-w-[460px]">
         <div className="cell-primary truncate" title={item.summary}>
           {item.summary}
         </div>
@@ -680,35 +686,19 @@ function InboxRow({ item, onInspect }: { item: ObsIncident; onInspect: (ref: Inc
           )}
         </div>
       </td>
-      <td>
+      <td className="nowrap">
         <When at={item.observed_at} />
       </td>
-      <td>
-        <div className="flex flex-wrap gap-1">
-          {links.map((link) => (
-            <Link key={link.href} href={link.href} className="btn btn-ghost btn-xs">
-              {link.label}
-            </Link>
-          ))}
-          {runbook && (
-            <a href={runbook} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-xs">
-              Runbook
-              <Icon name="external" size={11} />
-            </a>
-          )}
-          {links.length === 0 && !runbook && <span className="text-[var(--color-ink-muted)]">—</span>}
-        </div>
-      </td>
-      <td className="text-right">
-        <button
-          type="button"
-          className="btn btn-secondary btn-xs"
-          disabled={!ref}
-          title={ref ? undefined : 'This incident reference cannot be inspected'}
-          onClick={() => ref && onInspect(ref)}
-        >
-          Inspect
-        </button>
+      <td className="cell-menu">
+        <RowMenu
+          label={`Actions for incident ${item.summary}`}
+          items={[
+            ref ? { label: 'Open incident', onSelect: open } : { label: 'Open incident', disabled: true, title: 'This incident reference cannot be inspected' },
+            ...links.map((link) => ({ label: `Go to ${link.label.toLowerCase()}`, href: link.href })),
+            runbook ? { label: 'Runbook', href: runbook, external: true } : null,
+            ref && { label: 'Copy incident link', onSelect: () => copyText(new URL(incidentHref(item.id), window.location.origin).toString()) },
+          ]}
+        />
       </td>
     </tr>
   );

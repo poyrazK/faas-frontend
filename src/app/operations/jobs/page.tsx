@@ -26,6 +26,7 @@ import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { jobRunHref, tenantHref } from '@/lib/routes';
 import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
+import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 
 const PAGE_SIZE = 50;
 const TASK_PAGE_SIZE = 50;
@@ -177,51 +178,50 @@ function JobRunOperations() {
             <table className="dtable text-xs">
               <thead>
                 <tr>
-                  <th>Job / run</th>
-                  <th>Account</th>
+                  <th>Job</th>
                   <th>Status</th>
                   <th>Tasks</th>
                   <th>RAM / task</th>
-                  <th>Created</th>
                   <th>Started</th>
-                  <th />
+                  <th>Account</th>
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {page.runs.map((run) => (
-                  <tr key={run.run_id}>
-                    <td>
+                  <tr key={run.run_id} {...rowOpener(() => openDetail(run.run_id), `Open run ${short(run.run_id)} of ${run.job_name}`)}>
+                    <td className="nowrap">
                       <span className="cell-primary">{run.job_name}</span>
-                      <div className="text-[11px] text-[var(--color-ink-muted)]">
-                        run <EntityId id={run.run_id} kind="job_run" href={null} />
+                      <div className="font-mono text-[11px] text-[var(--color-ink-muted)]" title={run.run_id}>
+                        run {short(run.run_id)}
                       </div>
                     </td>
-                    <td>
-                      <EntityId id={run.account_id} kind="account" />
-                      {account !== run.account_id && (
-                        <div>
-                          <button
-                            className="text-[11px] text-[var(--color-ink-muted)] hover:underline"
-                            onClick={() => setParams({ account: run.account_id, offset: null })}
-                          >
-                            Only this account
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                    <td>
+                    <td className="nowrap">
                       <span className={`badge ${jobStatusTone(run.aggregate_status)}`}>{run.aggregate_status}</span>
                     </td>
                     <td>
                       <TaskCounts run={run} />
                     </td>
-                    <td className="font-mono">{formatMegabytes(run.ram_mb)}</td>
-                    <td title={run.created_at}>{relativeTime(run.created_at)}</td>
-                    <td>{isRealTimestamp(run.started_at) ? relativeTime(run.started_at) : 'Not started'}</td>
-                    <td className="text-right">
-                      <button onClick={() => openDetail(run.run_id)} className="btn btn-secondary btn-xs">
-                        Inspect
-                      </button>
+                    <td className="nowrap font-mono">{formatMegabytes(run.ram_mb)}</td>
+                    <td className="nowrap" title={isRealTimestamp(run.started_at) ? run.started_at : run.created_at}>
+                      {isRealTimestamp(run.started_at) ? relativeTime(run.started_at) : `Queued ${relativeTime(run.created_at)}`}
+                    </td>
+                    <td className="nowrap">
+                      <EntityId id={run.account_id} kind="account" copy={false} />
+                    </td>
+                    <td className="cell-menu">
+                      <RowMenu
+                        label={`Actions for run ${short(run.run_id)}`}
+                        items={[
+                          { label: 'Open run', onSelect: () => openDetail(run.run_id) },
+                          account !== run.account_id && { label: 'Show only this account', onSelect: () => setParams({ account: run.account_id, offset: null }) },
+                          { label: 'Open tenant', href: tenantHref(run.account_id) },
+                          { label: 'Copy run ID', onSelect: () => copyText(run.run_id) },
+                          isJobRunCancellable(run.aggregate_status) && { label: 'Cancel run…', tone: 'danger', onSelect: () => setCancelTarget(run) },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
