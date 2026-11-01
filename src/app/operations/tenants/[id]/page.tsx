@@ -37,6 +37,7 @@ import { useKeyed } from '@/components/operator/tenant/shared';
 import { useTenant, type TenantData } from '@/components/operator/tenant/useTenant';
 import { EntityId } from '@/components/operator/EntityId';
 import { RowMenu } from '@/components/ui/RowMenu';
+import { chosenOrgSlug, workspaceTitle } from '@/lib/ops/tenantNames';
 
 const TAB_LABELS: Record<TenantTab, { label: string; icon: IconName }> = {
   overview: { label: 'Overview', icon: 'overview' },
@@ -55,20 +56,6 @@ const isTab = (value: string | null): value is TenantTab => !!value && (TENANT_T
  * from any account ID in the console. Each tab has its own URL so it can be
  * pasted into a ticket or an incident channel.
  */
-/**
- * The workspace heading: the email once revealed, else the customer's
- * organization, else the kind of account. Never just "Customer account".
- */
-function workspaceName(detail: TenantData['detail'] | undefined, includePii: boolean): string {
-  if (!detail) return 'Loading customer…';
-  const account = detail.account;
-  if (account.email) return account.email;
-  const org = account.org_slug || detail.orgs[0]?.slug;
-  if (org) return `org ${org}`;
-  if (includePii) return 'No email on file';
-  return account.is_personal ? 'Personal account' : 'Organization account';
-}
-
 export default function TenantWorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   return (
@@ -123,7 +110,7 @@ function Workspace({ accountId }: { accountId: string }) {
 
       <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="truncate text-[22px] font-bold leading-tight">{workspaceName(detail, includePii)}</h1>
+          <h1 className="truncate text-[22px] font-bold leading-tight">{workspaceTitle(detail, includePii)}</h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-[var(--color-ink-muted)]">
             <Mono>{accountId}</Mono>
             <CopyButton value={accountId} label="Copy ID" />
@@ -134,7 +121,7 @@ function Workspace({ accountId }: { accountId: string }) {
                 <span className={`badge ${detail.account.mfa_enrolled ? 'badge-success' : 'badge-neutral'}`}>
                   MFA {detail.account.mfa_enrolled ? 'on' : 'off'}
                 </span>
-                {detail.account.org_slug && <span>org {detail.account.org_slug}</span>}
+                {chosenOrgSlug(detail.account.org_slug) && <span>org {detail.account.org_slug}</span>}
                 <span>customer since {new Date(detail.account.created_at).toLocaleDateString()}</span>
               </>
             )}

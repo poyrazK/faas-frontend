@@ -36,6 +36,9 @@ test('an incident row’s menu carries its console links', async ({ page }) => {
 
 test('a tenant opens from its row, is named, and keeps suspension behind More', async ({ page }) => {
   await page.goto('/tenants');
+  // A generated personal-org slug ("u-" + hex) is an ID, never shown as a name.
+  await expect(page.getByRole('row', { name: 'Open tenant 66666666…' })).toContainText('Personal account');
+  await expect(page.getByText(/org u-/)).toHaveCount(0);
   await page.getByRole('row', { name: 'Open tenant 11111111…' }).click();
   await expect(page).toHaveURL(`/tenants/${ACCOUNT}`);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('org ada-labs');
