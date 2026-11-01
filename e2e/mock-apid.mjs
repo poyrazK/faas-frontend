@@ -87,6 +87,39 @@ const deployment = (id, status, extra = {}) => ({
   source_bytes: 1048576, priority: 0, created_at: ago(14), ...extra,
 });
 
+const DISK_FULL = (available) => `vm spawn: builderd: create drive1: builderd: insufficient host free space for build drive: available=${available} bytes, required=21474836480 bytes`;
+const NO_NODE_FITS = 'snapshot prime failed: sched: prime: create instance: capacity_unavailable: placement: no active compute_node fits 2056 MB billable across 2 candidates';
+
+/** Failed deployments as production shows them: a few causes, repeated with only numbers changed. */
+const failedDeployments = () => {
+  const failed = (n, slug, minutesAgo, extra) =>
+    deployment(`fa11ed${String(n).padStart(2, '0')}-0000-4000-8000-000000000000`, 'failed', { app_id: `b0000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`, app_slug: slug, kind: 'tarball', rollout_state: 'aborted', created_at: ago(minutesAgo), ...extra });
+  return [
+    failed(1, 'h14-fn', 60 * 30, { error: DISK_FULL(21436325888) }),
+    failed(2, 'h14-py', 60 * 50, { error: DISK_FULL(19063808000) }),
+    failed(3, 'my-first-api', 60 * 70, { error: DISK_FULL(20703383552), account_id: ACCOUNT2 }),
+    failed(4, 'bazaar-grpc', 60 * 5, { error_code: 'capacity_unavailable', error: NO_NODE_FITS }),
+    failed(5, 'h14-py', 60 * 80, { error_code: 'capacity_unavailable', error: NO_NODE_FITS }),
+    failed(6, 'h14-fn', 60 * 90, { error: 'build exited 1' }),
+    failed(7, 'h14-grpc', 60 * 95, { error: 'build exited 2' }),
+    failed(8, 'h14-py', 60 * 40, { error: 'vm wait: builderd: destroy: rpc error: code = PermissionDenied desc = only schedd may call instance destruction' }),
+    failed(9, 'h14-grpc', 60 * 100, { error_code: 'validation_failed', error: 'snapshot prime failed: sched: prime: cold boot: validation_failed: healthcheck_path and healthcheck_grpc are mutually exclusive' }),
+    failed(10, 'h14-fn', 60 * 110, { error_code: 'source_unavailable', error: 'source download: 404 Not Found' }),
+  ];
+};
+
+/** apid's status filter: omitted means in flight + failed, "all" means every status. */
+function deploymentsFor(query) {
+  const rows = [
+    deployment('7a1b2c3d-0000-4000-8000-000000000001', 'building', { created_at: ago(180) }),
+    deployment('7a1b2c3d-0000-4000-8000-000000000002', 'imaging', { created_at: ago(200) }),
+    ...failedDeployments(),
+  ];
+  const status = query.get('status');
+  const wanted = !status ? ['pending', 'building', 'imaging', 'snapshotting', 'failed'] : status === 'all' ? null : status.split(',');
+  return wanted ? rows.filter((d) => wanted.includes(d.status)) : rows;
+}
+
 const depIncident = () => ({
   id: 'deployment/7a1b2c3d-0000-4000-8000-000000000001', type: 'deployment', severity: 'error', status: 'failed',
   summary: 'checkout-api deployment failed: build_failed', account_id: ACCOUNT, app_id: APP_ID,
@@ -430,10 +463,7 @@ function route(method, path, query, body) {
 
     /* ── Deployments and job runs ── */
     case key === 'GET /v1/admin/ops/deployments':
-      return { status: 200, body: { limit: 50, offset: 0, next_offset: -1, account_id: query.get('account_id') || undefined, deployments: [
-        deployment('7a1b2c3d-0000-4000-8000-000000000001', 'building', { created_at: ago(180) }),
-        deployment('7a1b2c3d-0000-4000-8000-000000000002', 'imaging', { created_at: ago(200) }),
-      ] } };
+      return { status: 200, body: { limit: Number(query.get('limit')) || 50, offset: 0, next_offset: -1, account_id: query.get('account_id') || undefined, deployments: deploymentsFor(query) } };
     case /^GET \/v1\/admin\/ops\/deployments\/[^/]+$/.test(key): {
       const id = path.split('/').pop();
       // The second deployment's build is still running: stale repair must skip it.
