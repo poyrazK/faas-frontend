@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { probeControlPlane, probeOperatorAccess, setUnauthorizedHandler } from '@/lib/api';
-import { OPS_HOME, OPS_ROUTES, isRouteActive, opsHref, type OpsRoute } from '@/lib/routes';
+import { OPS_GROUPS, OPS_HOME, OPS_ROUTES, isRouteActive, opsHref, type OpsGroup } from '@/lib/routes';
 import { Icon } from '@/components/ui/Icons';
 import { Spinner } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
@@ -15,7 +15,8 @@ import { OperatorIntentsProvider, isTerminalIntent, useOperatorIntents } from '@
 import { JumpBox } from '@/components/operator/JumpBox';
 import { SessionsDialog } from '@/components/operator/SessionsDialog';
 
-const GROUPS: OpsRoute['group'][] = ['Monitor', 'Customers', 'Fleet', 'Platform'];
+/** Which folded sidebar sections the operator opened (per browser). */
+const NAV_OPEN_KEY = 'gregale.ops.nav.open';
 
 const isLoginPath = (pathname: string) => pathname === '/login' || pathname === '/operations/login';
 
@@ -46,6 +47,7 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<OpsGroup[]>([]);
   const [access, setAccess] = useState<Access>('checking');
   const [accessError, setAccessError] = useState<string | null>(null);
   const [controlPlane, setControlPlane] = useState<'checking' | 'online' | 'degraded'>('checking');
@@ -56,6 +58,15 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
     }
   }, [loading, account, onLogin, pathname, router]);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(NAV_OPEN_KEY) ?? '[]');
+      if (Array.isArray(stored)) queueMicrotask(() => setOpenGroups(stored.filter((name): name is OpsGroup => OPS_GROUPS.some((g) => g.name === name))));
+    } catch {
+      /* storage unavailable or unreadable: start folded */
+    }
+  }, []);
 
   const accountId = account?.id;
   useEffect(() => {
@@ -162,32 +173,65 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
 
   const railW = collapsed ? 60 : 228;
 
+  const toggleGroup = (group: OpsGroup) =>
+    setOpenGroups((current) => {
+      const next = current.includes(group) ? current.filter((name) => name !== group) : [...current, group];
+      try {
+        window.localStorage.setItem(NAV_OPEN_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable: the section still opens for this page view */
+      }
+      return next;
+    });
+
   const nav = (compact: boolean) => (
     <nav className="flex h-full flex-col justify-between overflow-y-auto p-3" aria-label="Operations">
       <div>
-        {GROUPS.map((group) => (
-          <div key={group}>
-            {compact ? <div className="my-2 border-t border-[var(--color-line)]" /> : <div className="nav-group">{group}</div>}
-            <div className="space-y-0.5">
-              {OPS_ROUTES.filter((route) => route.group === group).map((route) => {
-                const active = isRouteActive(route.slug, pathname);
-                return (
-                  <Link
-                    key={route.slug}
-                    href={opsHref(route.slug)}
-                    onClick={() => setDrawerOpen(false)}
-                    aria-current={active ? 'page' : undefined}
-                    className={`nav-item ${active ? 'nav-item-active' : ''} ${compact ? 'justify-center px-0' : ''}`}
-                    title={compact ? route.label : undefined}
-                  >
-                    <Icon name={route.icon} size={16} />
-                    {!compact && <span>{route.label}</span>}
-                  </Link>
-                );
-              })}
+        {OPS_GROUPS.map(({ name: group, collapsible }) => {
+          const routes = OPS_ROUTES.filter((route) => route.group === group);
+          const holdsActive = routes.some((route) => isRouteActive(route.slug, pathname));
+          const open = !collapsible || compact || holdsActive || openGroups.includes(group);
+          return (
+            <div key={group}>
+              {compact ? (
+                <div className="my-2 border-t border-[var(--color-line)]" />
+              ) : collapsible ? (
+                <button
+                  type="button"
+                  className="nav-group flex w-full items-center justify-between hover:text-[var(--color-ink-soft)] disabled:cursor-default"
+                  aria-expanded={open}
+                  disabled={holdsActive}
+                  onClick={() => toggleGroup(group)}
+                >
+                  {group}
+                  <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+                </button>
+              ) : (
+                <div className="nav-group">{group}</div>
+              )}
+              {open && (
+                <div className="space-y-0.5">
+                  {routes.map((route) => {
+                    const active = isRouteActive(route.slug, pathname);
+                    return (
+                      <Link
+                        key={route.slug}
+                        href={opsHref(route.slug)}
+                        onClick={() => setDrawerOpen(false)}
+                        aria-current={active ? 'page' : undefined}
+                        className={`nav-item ${active ? 'nav-item-active' : ''} ${compact ? 'justify-center px-0' : ''}`}
+                        title={compact ? route.label : undefined}
+                      >
+                        <Icon name={route.icon} size={16} />
+                        {!compact && <span>{route.label}</span>}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <button
         className={`nav-item mt-4 hidden w-full md:flex ${compact ? 'justify-center px-0' : ''}`}

@@ -50,7 +50,8 @@ export function StatTile({
             {trend && <Delta {...trend} invert={invertTrend} />}
           </div>
           {sub && (
-            <div className="mt-2 truncate text-xs" style={{ color: 'var(--color-ink-muted)' }}>
+            // Wraps instead of truncating: when a figure is unknown, this line is the reason.
+            <div className="mt-2 break-words text-xs" style={{ color: 'var(--color-ink-muted)' }}>
               {sub}
             </div>
           )}

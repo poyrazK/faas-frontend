@@ -50,7 +50,7 @@ function Metering() {
     <div>
       <PageHeader
         title="Metering"
-        subtitle="Trace egress, inspect and repair managed PostgreSQL accounting, and record object-storage usage. Previews are read-only; applying is audited."
+        subtitle="Egress flows, managed PostgreSQL accounting and object-storage usage."
       />
 
       <form

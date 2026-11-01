@@ -158,8 +158,8 @@ export default function RuntimeConfigurationPage() {
   return (
     <div>
       <PageHeader
-        title="Runtime Configuration"
-        subtitle="Versioned platform settings with desired and effective state. Every change is audited and can be rolled back."
+        title="Runtime configuration"
+        subtitle="Platform settings with desired and effective values. Every change is audited and can be rolled back."
         actions={
           <button type="button" onClick={config.reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />

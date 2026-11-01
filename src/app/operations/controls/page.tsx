@@ -100,8 +100,8 @@ export default function OperatorControlsPage() {
   return (
     <div>
       <PageHeader
-        title="Recovery & Fleet Controls"
-        subtitle="Emergency primitives for live microVMs, apps, builds and integrations. Every action is audited."
+        title="Emergency controls"
+        subtitle="Force park, restart or cold boot; sweep stuck builds; rotate webhook secrets."
         actions={
           <button
             onClick={() => {

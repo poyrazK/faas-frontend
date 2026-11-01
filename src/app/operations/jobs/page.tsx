@@ -108,8 +108,8 @@ function JobRunOperations() {
   return (
     <div>
       <PageHeader
-        title="Customer job runs"
-        subtitle="Queued and running batch job runs across customers. Inspect a run’s tasks and cancel runaway work. Every view and action is audited."
+        title="Job runs"
+        subtitle="Queued and running customer job runs; inspect tasks and cancel runaway work. Every view is audited."
         actions={
           <button onClick={query.reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />

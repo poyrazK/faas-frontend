@@ -50,15 +50,12 @@ export default function CapacityPage() {
   }
 
   const summary = data?.summary;
-  const snapshotTime = data?.generated_at
-    ? new Date(data.generated_at).toLocaleTimeString()
-    : "";
 
   return (
     <div>
       <PageHeader
-        title="Capacity Planning"
-        subtitle={`Fleet headroom, placement pressure, and node-level utilization (Snapshot at ${snapshotTime})`}
+        title="Capacity"
+        subtitle="Fleet headroom, placement pressure and per-node utilization."
         actions={
           <button onClick={reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />

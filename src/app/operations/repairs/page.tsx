@@ -66,7 +66,7 @@ function DataRepairHealthView() {
     <div>
       <PageHeader
         title="Data repairs"
-        subtitle="Customer PostgreSQL selective-repair operations: phase backlog, sandbox capacity they hold, and operations that need an operator. Read-only; recover by following the linked runbook."
+        subtitle="Customer PostgreSQL repairs that are stuck or need an operator. Read-only."
         actions={
           <button onClick={query.reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />

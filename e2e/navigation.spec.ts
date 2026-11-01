@@ -42,7 +42,7 @@ test('a deployment link opens its panel', async ({ page }) => {
 test('the jump box opens whatever ID is pasted', async ({ page }) => {
   await page.goto('/overview');
   // The shortcut is live once the signed-in shell has rendered.
-  await expect(page.getByRole('heading', { name: 'Fleet Overview' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await page.keyboard.press('ControlOrMeta+k');
   const dialog = page.getByRole('dialog', { name: 'Jump to' });
   await expect(dialog).toBeVisible();

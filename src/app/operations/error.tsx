@@ -38,7 +38,7 @@ export default function OperationsError({
           Try again
         </button>
         <Link href="/overview" className="btn btn-secondary btn-sm">
-          Fleet overview
+          Overview
         </Link>
       </div>
     </div>

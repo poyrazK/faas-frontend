@@ -184,8 +184,8 @@ function DeploymentOperations() {
   return (
     <div>
       <PageHeader
-        title="Customer deployments"
-        subtitle="Find stuck or failed customer deployments, inspect their stage timeline and build, and cancel or retry them. Every view and action is audited."
+        title="Deployments"
+        subtitle="Find stuck or failed customer deployments and cancel or retry them. Every view is audited."
         actions={
           <div className="flex gap-2">
             <button onClick={() => setRepairOpen(true)} className="btn btn-secondary btn-sm">

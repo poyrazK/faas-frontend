@@ -150,6 +150,17 @@ function route(method, path, query, body) {
         alert_retention: { state: 'current', expired_episodes: 0 } } };
     case key === 'GET /v1/admin/obs/rule-health':
       return { status: 200, body: { state: 'healthy', truncated: false, generated_at: now(), groups: [] } };
+    case key === 'GET /v1/admin/obs/incidents/platform_alert/summary':
+      return { status: 200, body: { as_of: now(), scope: 'retained_platform_alert_episodes', age_basis: 'episode_started_at',
+        collection: { state: 'current', collection_state: 'collected', last_attempt_at: ago(1), last_success_at: ago(1) },
+        retention: { state: 'current', as_of: now(), cutoff: ago(60 * 24 * 30), last_pruned_episodes: 0, expired_episodes: 0 },
+        counts: { total: 3, firing: 1, unknown: 0, resolved: 1, needs_attention: 2 }, groups: [],
+        oldest_unacknowledged: { incident_id: `platform_alert/${'a'.repeat(64)}`, status: 'firing', severity: 'critical', started_at: ago(42), age_seconds: 2520, evidence_path: '' },
+        oldest_unowned: null } };
+
+    /* ── Operator access probe (the console reads /v1/admin/config to confirm operator rights) ── */
+    case key === 'GET /v1/admin/config':
+      return { status: 200, body: { generated_at: now(), items: [] } };
 
     /* ── Tenants ── */
     case key === 'GET /v1/admin/obs/tenants':

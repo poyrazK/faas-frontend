@@ -330,7 +330,7 @@ function Incidents() {
     <div>
       <PageHeader
         title="Incidents"
-        subtitle="The unified incident inbox across deployments, job runs, compute nodes and platform alerts, with evidence, related context and alert triage."
+        subtitle="Every open problem across deployments, job runs, compute nodes and platform alerts."
         actions={
           <>
             <Link href="/telemetry" className="btn btn-secondary btn-sm">

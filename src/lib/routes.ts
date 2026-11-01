@@ -10,32 +10,43 @@ import type { IconName } from '@/components/ui/Icons';
 export interface OpsRoute {
   /** URL segment, identical to the folder under src/app/operations. */
   slug: string;
+  /** Sidebar link, page heading and browser-tab title. */
   label: string;
   icon: IconName;
-  group: 'Monitor' | 'Customers' | 'Fleet' | 'Platform';
+  group: OpsGroup;
 }
 
+/** Sidebar sections, by what the operator is doing; daily on-call pages first. */
+export type OpsGroup = 'On call' | 'Customers' | 'Investigate' | 'Platform admin';
+
+export const OPS_GROUPS: readonly { name: OpsGroup; /** Folded away unless opened or one of its pages is open. */ collapsible?: boolean }[] = [
+  { name: 'On call' },
+  { name: 'Customers' },
+  { name: 'Investigate' },
+  { name: 'Platform admin', collapsible: true },
+];
+
 export const OPS_ROUTES: readonly OpsRoute[] = [
-  { slug: 'overview', label: 'Fleet overview', icon: 'overview', group: 'Monitor' },
-  { slug: 'incidents', label: 'Incidents', icon: 'alerts', group: 'Monitor' },
-  { slug: 'anomalies', label: 'Anomalies', icon: 'spark', group: 'Monitor' },
-  { slug: 'audit-log', label: 'Audit trail', icon: 'logs', group: 'Monitor' },
-  { slug: 'telemetry', label: 'Telemetry health', icon: 'bell', group: 'Monitor' },
-  { slug: 'status', label: 'Status page', icon: 'globe', group: 'Monitor' },
+  { slug: 'overview', label: 'Overview', icon: 'overview', group: 'On call' },
+  { slug: 'incidents', label: 'Incidents', icon: 'alerts', group: 'On call' },
+  { slug: 'deployments', label: 'Deployments', icon: 'deployments', group: 'On call' },
+  { slug: 'jobs', label: 'Job runs', icon: 'queues', group: 'On call' },
+  { slug: 'nodes', label: 'Compute nodes', icon: 'storage', group: 'On call' },
+  { slug: 'controls', label: 'Emergency controls', icon: 'bolt', group: 'On call' },
   { slug: 'tenants', label: 'Tenants', icon: 'user', group: 'Customers' },
-  { slug: 'deployments', label: 'Customer deployments', icon: 'deployments', group: 'Customers' },
-  { slug: 'jobs', label: 'Job runs', icon: 'queues', group: 'Customers' },
+  { slug: 'lookup', label: 'Support lookup', icon: 'traces', group: 'Customers' },
   { slug: 'repairs', label: 'Data repairs', icon: 'databases', group: 'Customers' },
   { slug: 'metering', label: 'Metering', icon: 'usage', group: 'Customers' },
-  { slug: 'lookup', label: 'Support lookup', icon: 'traces', group: 'Customers' },
-  { slug: 'rate-limits', label: 'Rate limits', icon: 'shield', group: 'Customers' },
-  { slug: 'billing', label: 'Billing catalog', icon: 'plans', group: 'Customers' },
-  { slug: 'nodes', label: 'Compute nodes', icon: 'storage', group: 'Fleet' },
-  { slug: 'capacity', label: 'Capacity', icon: 'metrics', group: 'Fleet' },
-  { slug: 'controls', label: 'Emergency controls', icon: 'bolt', group: 'Fleet' },
-  { slug: 'flags', label: 'Platform flags', icon: 'filter', group: 'Platform' },
-  { slug: 'configuration', label: 'Runtime configuration', icon: 'settings', group: 'Platform' },
-  { slug: 'github', label: 'GitHub recovery', icon: 'code', group: 'Platform' },
+  { slug: 'audit-log', label: 'Audit trail', icon: 'logs', group: 'Investigate' },
+  { slug: 'anomalies', label: 'Anomalies', icon: 'spark', group: 'Investigate' },
+  { slug: 'telemetry', label: 'Telemetry health', icon: 'bell', group: 'Investigate' },
+  { slug: 'capacity', label: 'Capacity', icon: 'metrics', group: 'Investigate' },
+  { slug: 'flags', label: 'Platform flags', icon: 'filter', group: 'Platform admin' },
+  { slug: 'configuration', label: 'Runtime configuration', icon: 'settings', group: 'Platform admin' },
+  { slug: 'rate-limits', label: 'Rate limits', icon: 'shield', group: 'Platform admin' },
+  { slug: 'billing', label: 'Billing catalog', icon: 'plans', group: 'Platform admin' },
+  { slug: 'status', label: 'Status page', icon: 'globe', group: 'Platform admin' },
+  { slug: 'github', label: 'GitHub recovery', icon: 'code', group: 'Platform admin' },
 ];
 
 /** The console's name in browser tabs; the root layout's title template appends it to every page title. */
@@ -75,7 +86,7 @@ export const isAccountId = (value: string) => UUID_PATTERN.test(value.trim());
 
 const withQuery = (path: string, query: Record<string, string>) => `${path}?${new URLSearchParams(query)}`;
 
-/** A deployment's detail panel on Customer deployments. */
+/** A deployment's detail panel on Deployments. */
 export const deploymentHref = (deploymentId: string) => withQuery('/deployments', { deployment: deploymentId.trim() });
 
 /** A job run's detail panel on Job runs. */
@@ -91,5 +102,5 @@ export const incidentHref = (incidentId: string) => withQuery('/incidents', { in
 export const traceHref = (traceId: string) => withQuery('/lookup', { trace: traceId.trim() });
 export const wakeHref = (wakeId: string) => withQuery('/lookup', { wake: wakeId.trim() });
 
-/** Customer deployments filtered to one app (every status). */
+/** Deployments filtered to one app (every status). */
 export const appDeploymentsHref = (appId: string) => withQuery('/deployments', { app: appId.trim(), status: 'all' });

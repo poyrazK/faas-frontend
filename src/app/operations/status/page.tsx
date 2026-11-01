@@ -92,7 +92,7 @@ export default function StatusAuthoringPage() {
     <div>
       <PageHeader
         title="Status page"
-        subtitle="Publish incidents and schedule maintenance on gregale.dev/status. Everything here is customer-visible the moment it is sent."
+        subtitle="Publish incidents and maintenance on gregale.dev/status. Customers see it immediately."
         actions={
           <>
             <a href={PUBLIC_STATUS_URL} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm">

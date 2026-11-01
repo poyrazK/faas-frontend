@@ -94,7 +94,7 @@ export default function TelemetryHealthPage() {
     <div>
       <PageHeader
         title="Telemetry health"
-        subtitle="Notification path, loaded alert rules, alert collection, scrape inputs, and expected rule coverage. Missing evidence is shown as unknown, never as healthy."
+        subtitle="Whether alerting, rules and scrapes work. Missing evidence shows as unknown, never as healthy."
         actions={
           <>
             <Link href="/incidents" className="btn btn-secondary btn-sm">

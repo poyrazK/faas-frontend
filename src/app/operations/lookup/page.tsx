@@ -83,7 +83,7 @@ function SupportLookup() {
     <div>
       <PageHeader
         title="Support lookup"
-        subtitle="Follow one trace or one wake through operator intents and platform events. Paste the ID from a ticket, a log line or an error response."
+        subtitle="Follow a trace or wake ID from a ticket, a log line or an error response."
       />
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">

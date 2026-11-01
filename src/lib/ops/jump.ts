@@ -47,9 +47,9 @@ export function jumpTargets(raw: string): JumpTarget[] {
   } else if (isAccountId(query)) {
     ids.push(
       { href: tenantHref(lower), label: 'Tenant with this account ID', hint: 'Tenants' },
-      { href: deploymentHref(lower), label: 'Deployment with this ID', hint: 'Customer deployments' },
+      { href: deploymentHref(lower), label: 'Deployment with this ID', hint: 'Deployments' },
       { href: jobRunHref(lower), label: 'Job run with this ID', hint: 'Job runs' },
-      { href: appDeploymentsHref(lower), label: 'Deployments of the app with this ID', hint: 'Customer deployments' },
+      { href: appDeploymentsHref(lower), label: 'Deployments of the app with this ID', hint: 'Deployments' },
       { href: wakeHref(lower), label: 'Wake with this ID', hint: 'Support lookup' },
     );
   } else if (TRACE_ID_PATTERN.test(lower)) {

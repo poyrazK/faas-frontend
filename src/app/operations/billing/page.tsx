@@ -29,8 +29,8 @@ export default function BillingCatalogPage() {
   return (
     <div>
       <PageHeader
-        title="Billing Catalog"
-        subtitle="Provider product and price handles the platform bills against, plus the overage dedupe preflight."
+        title="Billing catalog"
+        subtitle="The provider products and prices the platform bills against."
         actions={
           <div className="flex items-center gap-2">
             <button onClick={() => setPending('sync')} disabled={unsupported} className="btn btn-primary btn-sm">
