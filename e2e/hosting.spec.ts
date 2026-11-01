@@ -232,3 +232,105 @@ test('an unbound domain create is recovered with a reviewed provider ID, then re
   await expect(revoke).toBeHidden();
   await expect(page.getByRole('row', { name: /main-b2b00000/ })).toContainText('Revoked');
 });
+
+test('traffic shows the sampled last 24 hours, with failures grouped by edge code', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}`);
+  await page.getByRole('tablist', { name: 'Hosting site views' }).getByRole('tab', { name: 'Traffic' }).click();
+  await expect(page).toHaveURL(/[?&]tab=traffic/);
+
+  const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Traffic, last 24 hours' }) });
+  await expect(card.getByText('Sampled')).toBeVisible();
+  await expect(card.getByText('Served from cache')).toBeVisible();
+  await expect(card.getByText('Requests per hour')).toBeVisible();
+  const outage = card.getByRole('row', { name: /hosting_artifact_unavailable/ });
+  await expect(outage).toContainText('503');
+  await expect(outage).toContainText('The release files could not be read');
+  await expect(card.getByRole('row', { name: /hosting_file_not_found/ })).toHaveCount(4);
+  await expect(card).toContainText('up to 1 in 4 requests recorded');
+  await expect(card).toContainText('not billing or health evidence');
+});
+
+test('switched-off traffic analytics are explained instead of shown as an error', async ({ page, mock }) => {
+  await mock.set({ analytics: false });
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=traffic`);
+  await expect(page.getByText('Traffic analytics are turned off on this control plane.')).toBeVisible();
+});
+
+test('the cleanup plan says why each release is kept, and a policy change is previewed before it is saved', async ({ page, mock }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=releases`);
+  const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Retention', exact: true }) });
+  await expect(card).toContainText('No policy has been set for this site; these are the defaults.');
+  await expect(card.getByText('Off', { exact: true })).toBeVisible();
+  await expect(card.getByRole('row', { name: /f1a00000/ })).toContainText('Live in production.');
+  await expect(card.getByRole('row', { name: /f3c00000/ })).toContainText('Was live before, so it is kept for rollback.');
+  await expect(card.getByRole('row', { name: /f2b00000/ })).toContainText('A live preview serves it.');
+  const abandoned = card.getByRole('row', { name: /f4d00000/ });
+  await expect(abandoned).toContainText('Eligible');
+  await expect(abandoned).toContainText('An upload that was never finished.');
+  await expect(card).toContainText('3.0 MB could be reclaimed');
+
+  await card.getByRole('button', { name: 'Edit policy' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit retention policy' });
+  const preview = dialog.getByRole('status');
+  await expect(preview).toContainText('With these ages 1 release is eligible now');
+  await expect(preview).toContainText('f4d00000');
+  await expect(dialog.getByRole('button', { name: 'Save policy' })).toBeDisabled();
+
+  await dialog.getByLabel('Unfinished uploads, idle hours').fill('72');
+  await expect(preview).toContainText('With these ages nothing is eligible now.');
+  await dialog.getByLabel('Unfinished uploads, idle hours').fill('0');
+  await expect(dialog.getByText('Between 1 and 720 hours (30 days).')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Save policy' })).toBeDisabled();
+
+  await dialog.getByLabel('Unfinished uploads, idle hours').fill('24');
+  await dialog.getByLabel('Retire eligible releases automatically').check();
+  await expect(preview).toContainText('The next retention pass retires them.');
+  await dialog.getByRole('button', { name: 'Save policy' }).click();
+  await expect(dialog).toBeHidden();
+
+  await expect(card).toContainText('Revision 1');
+  await expect(card.getByText('On', { exact: true })).toBeVisible();
+  await expect(card.getByRole('row', { name: /f4d00000/ })).toContainText('Will retire');
+  const puts = (await mock.requests()).filter((r) => r.method === 'PUT' && r.path.endsWith('/retention'));
+  expect(puts.map((r) => r.status)).toEqual([200]);
+  expect(puts[0].idempotencyKey).toBeNull();
+});
+
+test('a retention policy changed elsewhere is refreshed instead of overwritten', async ({ page, mock }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=releases`);
+  const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Retention', exact: true }) });
+  await expect(card).toContainText('these are the defaults');
+  await mock.set({ retentionRevision: 4 });
+
+  await card.getByRole('button', { name: 'Edit policy' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit retention policy' });
+  await dialog.getByLabel('Retire eligible releases automatically').check();
+  await dialog.getByRole('button', { name: 'Save policy' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The page has been refreshed');
+  await expect(card).toContainText('Revision 4');
+
+  await dialog.getByRole('button', { name: 'Save policy' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(card).toContainText('Revision 5');
+  const puts = (await mock.requests()).filter((r) => r.method === 'PUT' && r.path.endsWith('/retention'));
+  expect(puts.map((r) => r.status)).toEqual([409, 200]);
+});
+
+test('the site list shows storage against its limits and what the control plane has on', async ({ page, mock }) => {
+  await mock.set({ retention: false });
+  await page.goto('/hosting');
+  await expect(page.getByRole('meter', { name: 'Storage reserved' })).toHaveAttribute('aria-valuenow', '33');
+  await expect(page.getByText('21.0 MB', { exact: true })).toBeVisible();
+  await expect(page.getByRole('meter', { name: 'Uploads in progress' })).toHaveAttribute('aria-valuenow', '10');
+
+  const features = page.locator('.card', { has: page.getByRole('heading', { name: 'Features on this control plane' }) });
+  await expect(features.getByRole('listitem').filter({ hasText: 'Custom domains' })).toContainText('On');
+  await expect(features.getByRole('listitem').filter({ hasText: 'Custom domains' })).toContainText('5 per site');
+  await expect(features.getByRole('listitem').filter({ hasText: 'Release retention' })).toContainText('Off');
+  await expect(features).toContainText('edge.gregale.site');
+});
+
+test('preview capacity counts live previews and slots CI has reserved', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=domains`);
+  await expect(page.getByText('8 of 10 preview slots free · 1 reserved by CI')).toBeVisible();
+});

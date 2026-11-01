@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import {
   domainBadge,
   domainRecovery,
+  getHostingPreviewCapacity,
+  hostingFeatureOff,
   isUuid,
   listHostingDomains,
   listHostingPreviews,
@@ -37,6 +39,7 @@ const RECOVERY_DOCS = 'https://github.com/poyrazK/faas/blob/main/docs/internal-f
 export function DomainsTab({ site, nonce }: { site: HostingSite; nonce: number }) {
   const domains = useAsync(() => listHostingDomains(site.id), [site.id, nonce], 60_000);
   const previews = useAsync(() => listHostingPreviews(site.id), [site.id, nonce], 60_000);
+  const capacity = useAsync(() => getHostingPreviewCapacity(site.id), [site.id, nonce], 60_000);
   const [action, setAction] = useState<DomainAction | null>(null);
 
   return (
@@ -134,7 +137,22 @@ export function DomainsTab({ site, nonce }: { site: HostingSite; nonce: number }
         </QueryBody>
       </SectionCard>
 
-      <SectionCard title="Preview URLs">
+      <SectionCard
+        title="Preview URLs"
+        action={
+          capacity.data ? (
+            <span
+              className={`text-[11px] ${capacity.data.available === 0 ? 'font-medium text-[var(--color-warning-bold)]' : 'text-[var(--color-ink-muted)]'}`}
+              title="Stored admission capacity, not edge health"
+            >
+              {capacity.data.available} of {capacity.data.limit} preview slots free
+              {capacity.data.reservations > 0 && ` · ${capacity.data.reservations} reserved by CI`}
+            </span>
+          ) : capacity.error && !hostingFeatureOff(capacity.error) ? (
+            <span className="text-[11px] text-[var(--color-ink-muted)]">Preview capacity unavailable</span>
+          ) : undefined
+        }
+      >
         <QueryBody
           query={previews}
           noun="preview URLs"

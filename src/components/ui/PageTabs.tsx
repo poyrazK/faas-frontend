@@ -1,12 +1,13 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Icon, type IconName } from './Icons';
 
 /**
  * Tabs that split a long page into views (the same look as the tenant
  * workspace's section links). The caller keeps the selected view, usually in
- * the URL, so a tab can be linked to. Arrow keys move between tabs.
+ * the URL, so a tab can be linked to. Arrow keys move between tabs. On a
+ * narrow screen the row scrolls sideways, keeping the selected tab in view.
  */
 export function PageTabs<T extends string>({
   tabs,
@@ -19,6 +20,17 @@ export function PageTabs<T extends string>({
   onChange: (next: T) => void;
   label: string;
 }) {
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Only the row scrolls (sideways): scrollIntoView could also move the page.
+    const row = list.current;
+    const tab = row?.querySelector<HTMLElement>(`[data-tab="${value}"]`);
+    if (!row || !tab) return;
+    const bounds = row.getBoundingClientRect();
+    const box = tab.getBoundingClientRect();
+    if (box.left < bounds.left) row.scrollLeft -= bounds.left - box.left + 16;
+    else if (box.right > bounds.right) row.scrollLeft += box.right - bounds.right + 16;
+  }, [value]);
   const onKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
     event.preventDefault();
@@ -29,6 +41,7 @@ export function PageTabs<T extends string>({
   };
   return (
     <div
+      ref={list}
       role="tablist"
       aria-label={label}
       onKeyDown={onKey}

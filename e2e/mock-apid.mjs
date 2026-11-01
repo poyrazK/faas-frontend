@@ -10,7 +10,8 @@
 //
 // Test hooks (not part of apid):
 //   POST /__mock/reset              fresh state, timestamps relative to now
-//   POST /__mock/state {...}        flip switches: {"enrolled": false}, {"expired": true}, {"oidc": false}
+//   POST /__mock/state {...}        flip switches: {"enrolled": false}, {"expired": true}, {"oidc": false},
+//                                   {"analytics": false}, {"retention": false}, {"siteRevision": 9}, {"retentionRevision": 4}
 //   GET  /__mock/requests           every request since the last reset, oldest first
 //
 // MOCK_APID_PORT sets the port (3199); MOCK_APID_LOG=1 logs each request.
@@ -30,6 +31,7 @@ const SITE_ID = 'd0000000-0000-4000-8000-000000000001';
 const SITE_RELEASE_LIVE = 'f1a00000-0000-4000-8000-000000000001';
 const SITE_RELEASE_STAGED = 'f2b00000-0000-4000-8000-000000000002';
 const SITE_RELEASE_OLD = 'f3c00000-0000-4000-8000-000000000003';
+const SITE_RELEASE_ABANDONED = 'f4d00000-0000-4000-8000-000000000004';
 const RUN_OK = 'b1a00000-0000-4000-8000-000000000001';
 const RUN_EXPIRED = 'b2b00000-0000-4000-8000-000000000002';
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -46,6 +48,8 @@ function freshState() {
     configVersion: 3,
     suspended: false,
     oidc: true,
+    analytics: true,
+    retention: true,
     tokens: 0,
     hosting: freshHosting(),
     intents: new Map(),
@@ -112,7 +116,11 @@ function freshHosting() {
       siteRelease(SITE_RELEASE_OLD, 'ready', 60 * 24 * 4, { first_promoted_at: ago(60 * 24 * 4), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: '0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6' } }),
       siteRelease(SITE_RELEASE_LIVE, 'ready', 70, { first_promoted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } }),
       siteRelease(SITE_RELEASE_STAGED, 'pending', 30, { provenance: { repository: 'gregale/website', branch: 'redesign', commit_sha: 'c0ffee1234567890abcdef1234567890abcdef12' } }),
+      // An upload abandoned two days ago: retention's first candidate.
+      siteRelease(SITE_RELEASE_ABANDONED, 'pending', 60 * 48, { artifact_bytes: 1_048_576 }),
     ],
+    // No stored policy yet: revision 0, off, the default 24-hour ages.
+    retention: { revision: 0, enabled: false, pending_age_seconds: 86_400, staged_age_seconds: 86_400 },
     history: [
       { site_id: SITE_ID, revision: 7, previous_revision: 6, release_id: SITE_RELEASE_LIVE, previous_release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1' }, accepted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } },
       { site_id: SITE_ID, revision: 6, previous_revision: 5, release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1', key_id: 'k0000000-0000-4000-8000-000000000001' }, accepted_at: ago(60 * 24 * 4) },
@@ -133,6 +141,94 @@ function freshHosting() {
     ],
   };
 }
+
+const MANIFEST_MAX_BYTES = 1_048_576;
+const RETENTION_MIN = 3600;
+const RETENTION_MAX = 30 * 86_400;
+const reservedBytes = (release) => 2 * release.artifact_bytes + MANIFEST_MAX_BYTES;
+
+const retentionPolicy = () => {
+  const { revision, enabled, pending_age_seconds, staged_age_seconds, updated_at } = state.hosting.retention;
+  return { site_id: SITE_ID, revision, enabled, pending_age_seconds, staged_age_seconds, ...(updated_at ? { updated_at } : {}) };
+};
+
+/** pkg/hosting cleanupEntry, for the mock's releases, previews and runs. */
+function cleanupEntry(release, rules) {
+  const entry = { release_id: release.id, state: release.state, eligible: false, reason: '', reserved_bytes: reservedBytes(release) };
+  const at = Date.now();
+  if (release.state === 'retiring') return { ...entry, reason: 'retirement_grace_period' };
+  if (release.id === state.hosting.active) return { ...entry, reason: 'active_release' };
+  if (release.first_promoted_at) return { ...entry, reason: 'previously_published' };
+  const previews = state.hosting.previews.filter((p) => p.release_id === release.id);
+  if (previews.some((p) => !p.revoked && Date.parse(p.expires_at) > at)) return { ...entry, reason: 'active_preview' };
+  if (previews.length) return { ...entry, reason: 'preview_cleanup_pending' };
+  const run = state.hosting.runs.find((r) => r.release_id === release.id && !r.canceled);
+  if (run && Date.parse(run.preview_expires_at) > at) return { ...entry, reason: 'ci_retry_window' };
+  if (release.state !== 'pending' && (release.state !== 'ready' || !run)) return { ...entry, reason: 'manual_staging' };
+  const age = release.state === 'ready' ? rules.staged_age_seconds : rules.pending_age_seconds;
+  const eligibleAt = new Date(Date.parse(release.last_activity_at) + age * 1000).toISOString();
+  if (Date.parse(eligibleAt) > at) return { ...entry, reason: 'recent_activity', eligible_at: eligibleAt };
+  return { ...entry, eligible: true, eligible_at: eligibleAt, reason: release.state === 'ready' ? 'expired_ci_release' : 'abandoned_upload' };
+}
+
+function cleanupPlan(override) {
+  const policy = retentionPolicy();
+  const rules = override ?? { pending_age_seconds: policy.pending_age_seconds, staged_age_seconds: policy.staged_age_seconds };
+  const entries = state.hosting.releases.map((release) => cleanupEntry(release, rules));
+  return {
+    policy, rules, evaluated_at: now(), entries,
+    proposed: rules.pending_age_seconds !== policy.pending_age_seconds || rules.staged_age_seconds !== policy.staged_age_seconds,
+    reclaimable_reserved_bytes: entries.filter((e) => e.eligible).reduce((sum, e) => sum + e.reserved_bytes, 0),
+    retiring_reserved_bytes: entries.filter((e) => e.state === 'retiring').reduce((sum, e) => sum + e.reserved_bytes, 0),
+  };
+}
+
+/** The last 24 hours in hourly buckets: a daytime curve, a few 404s and one 503 spike. */
+function siteTraffic() {
+  const end = new Date();
+  end.setUTCMinutes(0, 0, 0);
+  const buckets = [];
+  const failures = [];
+  for (let i = 23; i >= 0; i--) {
+    const start = new Date(end.getTime() - i * 3_600_000).toISOString();
+    const requests = 400 + ((i * 37) % 11) * 60;
+    const notFound = i % 6 === 0 ? 12 : 0;
+    const unavailable = i === 3 ? 30 : 0;
+    const hits = Math.round((requests - notFound - unavailable) * 0.8);
+    buckets.push({ start, requests, payload_bytes: (requests - notFound - unavailable) * 24_576, cache_hits: hits, cache_misses: requests - notFound - unavailable - hits, client_errors: notFound, server_errors: unavailable });
+    if (notFound) failures.push({ start, status: 404, code: 'hosting_file_not_found', requests: notFound });
+    if (unavailable) failures.push({ start, status: 503, code: 'hosting_artifact_unavailable', requests: unavailable });
+  }
+  const total = (field) => buckets.reduce((sum, b) => sum + b[field], 0);
+  return {
+    site_id: SITE_ID, source: 'cloudflare_analytics_engine', approximate: true, period_start: buckets[0].start, period_end: end.toISOString(), observed_at: now(), max_sample_interval: 4,
+    requests: total('requests'), payload_bytes: total('payload_bytes'), cache_hits: total('cache_hits'), cache_misses: total('cache_misses'), client_errors: total('client_errors'), server_errors: total('server_errors'),
+    buckets, failures: failures.sort((a, b) => Date.parse(b.start) - Date.parse(a.start)),
+  };
+}
+
+function hostingUsage() {
+  const live = state.hosting.releases.filter((r) => r.state !== 'deleted');
+  const sum = (rows, f) => rows.reduce((total, r) => total + f(r), 0);
+  return {
+    account_id: 'op-1', reserved_bytes: sum(live, reservedBytes), storage_limit_bytes: 64 * 1_048_576,
+    payload_bytes: sum(live, (r) => r.artifact_bytes), ready_payload_bytes: sum(live.filter((r) => r.state === 'ready'), (r) => r.artifact_bytes),
+    retiring_reserved_bytes: sum(live.filter((r) => r.state === 'retiring'), reservedBytes),
+    pending_uploads: live.filter((r) => r.state === 'pending').length, pending_uploads_limit: 20, releases: live.length, observed_at: now(),
+  };
+}
+
+const hostingCapabilities = () => ({
+  staged_releases_supported: true, config_enabled: true, upload_base_url: 'https://uploads.mock.test',
+  automation_enabled: true, automation_credentials_per_site: 5, ci_runs_per_site: 100, oidc_enabled: state.oidc, ci_setup_enabled: state.oidc,
+  activity_enabled: true, activity_page_size: 50, cancellation_enabled: true, diagnostics_enabled: true,
+  history_enabled: true, history_per_site: 50, history_page_size: 25,
+  previews_enabled: true, previews_per_site: 10, preview_reservations_enabled: true,
+  domains_enabled: true, domains_per_site: 5, domain_cname_target: 'edge.gregale.site',
+  analytics_enabled: state.analytics, retention_enabled: state.retention,
+  retention_age_default_seconds: 86_400, retention_age_min_seconds: RETENTION_MIN, retention_age_max_seconds: RETENTION_MAX,
+  sites_per_account: 10, releases_per_site: 50, account_storage_max_bytes: 64 * 1_048_576, account_pending_uploads_max: 20,
+});
 
 const releaseConflict = () => problem(409, 'hosting_release_conflict', 'Hosting state changed', 'refresh the site revision; only ready releases can be promoted and active or preview-referenced releases cannot be retired');
 const domainConflict = () => problem(409, 'hosting_domain_conflict', 'Domain state changed', 'refresh the domain; hostname reservations, current revisions, and an active durable site are required');
@@ -176,9 +272,10 @@ function route(method, path, query, body) {
     return { status: 200, body: { ok: true } };
   }
   if (key === 'POST /__mock/state') {
-    for (const name of ['enrolled', 'expired', 'oidc']) if (name in (body || {})) state[name] = Boolean(body[name]);
-    // Another operator changed the site after the page loaded.
+    for (const name of ['enrolled', 'expired', 'oidc', 'analytics', 'retention']) if (name in (body || {})) state[name] = Boolean(body[name]);
+    // Another operator changed the site, or its retention policy, after the page loaded.
     if ('siteRevision' in (body || {})) state.hosting.revision = Number(body.siteRevision);
+    if ('retentionRevision' in (body || {})) state.hosting.retention.revision = Number(body.retentionRevision);
     return { status: 200, body: { enrolled: state.enrolled, expired: state.expired, oidc: state.oidc, siteRevision: state.hosting.revision } };
   }
   if (key === 'GET /__mock/requests') return { status: 200, body: state.requests };
@@ -372,6 +469,10 @@ function route(method, path, query, body) {
     /* ── Internal static hosting ── */
     case key === 'GET /v1/internal/hosting/sites':
       return { status: 200, body: [site()] };
+    case key === 'GET /v1/internal/hosting/usage':
+      return { status: 200, body: hostingUsage() };
+    case key === 'GET /v1/internal/hosting/capabilities':
+      return { status: 200, body: hostingCapabilities() };
     case /^\/v1\/internal\/hosting\/sites\/[^/]+/.test(path) && path.split('/')[5] !== SITE_ID:
       return problem(404, 'not_found', 'Not found', 'no such hosting resource');
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}`:
@@ -425,6 +526,34 @@ function route(method, path, query, body) {
       return { status: 200, body: state.hosting.domains };
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/previews`:
       return { status: 200, body: state.hosting.previews };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/preview-capacity`: {
+      const live = state.hosting.previews.filter((p) => !p.revoked && Date.parse(p.expires_at) > Date.now()).length;
+      return { status: 200, body: { site_id: SITE_ID, limit: 10, previews: live, reservations: 1, available: 10 - live - 1, observed_at: now() } };
+    }
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/traffic`:
+      if (!state.analytics) return problem(503, 'frontend_hosting_analytics_disabled', 'Traffic analytics unavailable', 'internal traffic analytics are disabled');
+      return { status: 200, body: siteTraffic() };
+    case /^(GET|PUT) \/v1\/internal\/hosting\/sites\/[^/]+\/(cleanup|retention)$/.test(key) && !state.retention:
+      return problem(503, 'frontend_hosting_retention_disabled', 'Hosting retention unavailable', 'internal hosting retention is disabled');
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/cleanup`: {
+      if (!query.has('pending_age_seconds') && !query.has('staged_age_seconds')) return { status: 200, body: cleanupPlan() };
+      const rules = { pending_age_seconds: Number(query.get('pending_age_seconds')), staged_age_seconds: Number(query.get('staged_age_seconds')) };
+      if (Object.values(rules).some((v) => !Number.isInteger(v) || v < RETENTION_MIN || v > RETENTION_MAX)) {
+        return problem(400, 'validation_error', 'Validation failed', 'provide both bounded age values as whole seconds');
+      }
+      return { status: 200, body: cleanupPlan(rules) };
+    }
+    case key === `PUT /v1/internal/hosting/sites/${SITE_ID}/retention`: {
+      const allowed = ['enabled', 'pending_age_seconds', 'staged_age_seconds', 'expected_revision'];
+      const ages = [body?.pending_age_seconds, body?.staged_age_seconds];
+      if (unknownKeys(body, allowed).length || typeof body.enabled !== 'boolean' || typeof body.expected_revision !== 'number' || ages.some((v) => !Number.isInteger(v) || v < RETENTION_MIN || v > RETENTION_MAX)) {
+        return problem(400, 'validation_error', 'Validation failed', 'a policy revision, enabled value and bounded age rules are required');
+      }
+      if (body.expected_revision !== state.hosting.retention.revision) return releaseConflict();
+      const { enabled, pending_age_seconds, staged_age_seconds } = body;
+      state.hosting.retention = { revision: state.hosting.retention.revision + 1, enabled, pending_age_seconds, staged_age_seconds, updated_at: now() };
+      return { status: 200, body: retentionPolicy() };
+    }
 
     /* ── Hosting writes: revision-fenced like apid (409 when the operator saw an older state) ── */
     case key === `POST /v1/internal/hosting/sites/${SITE_ID}/promotions`: {

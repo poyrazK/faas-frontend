@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
 import {
   branchOf,
+  cacheHitRate,
+  cleanupBadge,
+  CLEANUP_REASONS,
+  durationText,
+  hostingFeatures,
+  percentText,
+  retentionHoursError,
+  shareOf,
+  trafficPoints,
   DOMAIN_RECOVERY_DELAY_MS,
   domainRecovery,
   isUuid,
@@ -229,5 +238,62 @@ describe('actions', () => {
     await expect(refreshOnConflict(() => Promise.reject(other), refresh)).rejects.toBe(other);
     expect(refreshed).toBe(1);
     await expect(refreshOnConflict(() => Promise.resolve('ok'), refresh)).resolves.toBe('ok');
+  });
+});
+
+describe('traffic and usage', () => {
+  it('reads a cache hit rate only when something was cacheable', () => {
+    expect(cacheHitRate({ cache_hits: 90, cache_misses: 10 })).toBe(0.9);
+    expect(cacheHitRate({ cache_hits: 0, cache_misses: 0 })).toBeNull();
+    expect(percentText(0.9)).toBe('90%');
+    expect(percentText(0.004)).toBe('0.4%');
+    expect(percentText(null)).toBe('—');
+  });
+
+  it('labels hourly buckets with the local hour', () => {
+    const start = new Date(2026, 10, 1, 9, 0, 0).toISOString();
+    expect(trafficPoints([{ start, requests: 12 }])).toEqual([{ date: new Date(start), label: '09:00', value: 12 }]);
+  });
+
+  it('lists features with their per-site limits', () => {
+    const caps = { automation_enabled: true, automation_credentials_per_site: 5, previews_enabled: false, previews_per_site: 0, history_enabled: true, history_per_site: 50 } as Parameters<typeof hostingFeatures>[0];
+    const features = hostingFeatures(caps);
+    expect(features.find((f) => f.label === 'Automation credentials')).toEqual({ label: 'Automation credentials', on: true, detail: '5 per site' });
+    expect(features.find((f) => f.label === 'Preview URLs')).toMatchObject({ on: false, detail: undefined });
+    expect(features.find((f) => f.label === 'Promotion history')?.detail).toBe('last 50 per site');
+  });
+
+  it('clamps how full a limit is', () => {
+    expect(shareOf(25, 100)).toBe(0.25);
+    expect(shareOf(150, 100)).toBe(1);
+    expect(shareOf(5, 0)).toBe(0);
+  });
+});
+
+describe('retention', () => {
+  it('describes ages and refuses what apid refuses', () => {
+    expect(durationText(3600)).toBe('1 hour');
+    expect(durationText(36 * 3600)).toBe('36 hours');
+    expect(durationText(86_400)).toBe('1 day');
+    expect(durationText(30 * 86_400)).toBe('30 days');
+    expect(retentionHoursError('24')).toBeNull();
+    expect(retentionHoursError('720')).toBeNull();
+    expect(retentionHoursError('0')).toMatch(/Between 1 and 720/);
+    expect(retentionHoursError('721')).toMatch(/Between/);
+    expect(retentionHoursError('1.5')).toMatch(/Whole hours/);
+    expect(retentionHoursError(' ')).toMatch(/Whole hours/);
+  });
+
+  it('says whether an eligible release will actually be retired', () => {
+    expect(cleanupBadge({ eligible: true, state: 'pending' }, true).label).toBe('Will retire');
+    expect(cleanupBadge({ eligible: true, state: 'pending' }, false).label).toBe('Eligible');
+    expect(cleanupBadge({ eligible: false, state: 'ready' }, true).label).toBe('Kept');
+    expect(cleanupBadge({ eligible: false, state: 'retiring' }, true).label).toBe('Retiring');
+  });
+
+  it('explains every reason apid gives', () => {
+    for (const reason of ['site_ineligible', 'awaiting_retirement_publication', 'retirement_grace_period', 'awaiting_artifact_cleanup', 'active_release', 'previously_published', 'active_preview', 'preview_cleanup_pending', 'ci_retry_window', 'manual_staging', 'activity_unknown', 'recent_activity', 'abandoned_upload', 'expired_ci_release']) {
+      expect(CLEANUP_REASONS[reason]).toBeTruthy();
+    }
   });
 });
