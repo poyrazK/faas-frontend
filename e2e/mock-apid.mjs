@@ -3,13 +3,14 @@
 // any route without one answers 503 mock_unavailable, so error states render.
 //
 // Behaviour that matters to the tests mirrors apid:
-//   - admin writes need a step-up younger than five minutes (403 step_up_required),
+//   - admin writes, and hosting credential and OIDC trust writes, need a step-up
+//     younger than five minutes (403 step_up_required),
 //     and an operator with no authenticator gets 403 mfa_required "must enroll";
 //   - TOTP 123456 passes /v1/account/mfa/verify and /confirm; every CSRF token is "csrf-mock".
 //
 // Test hooks (not part of apid):
 //   POST /__mock/reset              fresh state, timestamps relative to now
-//   POST /__mock/state {...}        flip switches: {"enrolled": false}, {"expired": true}
+//   POST /__mock/state {...}        flip switches: {"enrolled": false}, {"expired": true}, {"oidc": false}
 //   GET  /__mock/requests           every request since the last reset, oldest first
 //
 // MOCK_APID_PORT sets the port (3199); MOCK_APID_LOG=1 logs each request.
@@ -25,6 +26,7 @@ const ACCOUNT2 = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 const APP_ID = 'b0000000-0000-4000-8000-000000000001';
 const RELEASE_NEW = 'a3f9c2d1e8b74c6f9d0e1a2b3c4d5e6f7a8b9c0d';
 const RELEASE_OLD = '9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d';
+const SITE_ID = 'd0000000-0000-4000-8000-000000000001';
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 const now = () => new Date().toISOString();
@@ -38,6 +40,8 @@ function freshState() {
     steppedUpAt: 0,
     configVersion: 3,
     suspended: false,
+    oidc: true,
+    tokens: 0,
     intents: new Map(),
     requests: [],
     nodes: new Map([
@@ -45,6 +49,13 @@ function freshState() {
       ['node-b', { id: 'n2', name: 'node-b', target_url: 'tcp://10.8.0.3:7001', vpcpus: 16, mem_mb: 65536, max_concurrency: 200, admission_ceiling_mb: 55705, active: true, lifecycle: 'active', release_id: RELEASE_OLD, generation: 3, last_heartbeat_at: ago(0.2), created_at: ago(60 * 24 * 60) }],
       ['node-c', { id: 'n3', name: 'node-c', target_url: 'tcp://10.8.0.4:7001', vpcpus: 16, mem_mb: 65536, max_concurrency: 200, admission_ceiling_mb: 55705, active: false, lifecycle: 'maintenance', generation: 2, created_at: ago(60 * 24 * 20) }],
     ]),
+    credentials: [
+      { id: 'c1000000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, label: 'github-actions main', operations: ['stage', 'preview'], created_at: ago(60 * 24 * 2), expires_at: ago(-60 * 24 * 5) },
+      { id: 'c1000000-0000-4000-8000-000000000002', account_id: 'op-1', site_id: SITE_ID, label: 'old-ci', operations: ['stage'], created_at: ago(60 * 24 * 40), expires_at: ago(60 * 24 * 10) },
+    ],
+    trusts: [
+      { id: 'e1000000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, repository_owner_id: '1234567', repository_id: '89012345', repository: 'gregale/website', ref: 'refs/heads/main', workflow_ref: 'gregale/website/.github/workflows/deploy.yml@refs/heads/main', event_name: 'push', created_at: ago(60 * 24 * 3) },
+    ],
     sessions: [
       { id: 's0000000-0000-4000-8000-000000000001', issued_ip: '203.0.113.7', issued_ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', issued_at: ago(60 * 3), last_seen_at: ago(0.1), current_session: true },
       { id: 's0000000-0000-4000-8000-000000000002', issued_ip: '198.51.100.20', issued_ua: 'gregalectl/1.42 (darwin/arm64)', issued_at: ago(60 * 24 * 2), last_seen_at: ago(60 * 5), current_session: false },
@@ -72,6 +83,15 @@ const depIncident = () => ({
   dedupe_key: 'deployment/dep-1', audit_path: `/v1/admin/obs/audit-log/search?kind_prefix=deployment.&target_account_id=${ACCOUNT}`,
 });
 
+const site = () => ({
+  id: SITE_ID, account_id: 'op-1', project_id: 'gregale', environment: 'production', name: 'website', hostname: 'website.gregale.site',
+  origin_id: 'origin-1', status: 'active', active_release_id: 'f0000000-0000-4000-8000-000000000001', revision: 7, durable_routing: true,
+  suspended: false, created_at: ago(60 * 24 * 30),
+});
+
+/** apid decodes these bodies with DisallowUnknownFields: an unexpected key is a 400. */
+const unknownKeys = (body, allowed) => Object.keys(body || {}).filter((k) => !allowed.includes(k));
+
 const queueIntent = (kind) => {
   const id = `intent-${Date.now()}-${state.intents.size}`;
   state.intents.set(id, { created: Date.now(), kind });
@@ -80,15 +100,18 @@ const queueIntent = (kind) => {
 
 function route(method, path, query, body) {
   const key = `${method} ${path}`;
-  const adminWrite = path.startsWith('/v1/admin/') && method !== 'GET';
+  // requireAdminCredentialMutation: the same step-up policy as admin writes.
+  const adminWrite =
+    (path.startsWith('/v1/admin/') || /^\/v1\/internal\/hosting\/sites\/[^/]+\/(automation-credentials|oidc-trusts)/.test(path)) &&
+    method !== 'GET';
 
   if (key === 'POST /__mock/reset') {
     state = freshState();
     return { status: 200, body: { ok: true } };
   }
   if (key === 'POST /__mock/state') {
-    for (const name of ['enrolled', 'expired']) if (name in (body || {})) state[name] = Boolean(body[name]);
-    return { status: 200, body: { enrolled: state.enrolled, expired: state.expired } };
+    for (const name of ['enrolled', 'expired', 'oidc']) if (name in (body || {})) state[name] = Boolean(body[name]);
+    return { status: 200, body: { enrolled: state.enrolled, expired: state.expired, oidc: state.oidc } };
   }
   if (key === 'GET /__mock/requests') return { status: 200, body: state.requests };
   if (key === 'GET /healthz') return { status: 200, text: 'ok' };
@@ -277,6 +300,49 @@ function route(method, path, query, body) {
         { id: 'au-1', kind: 'operator.action.account.credit', account_id: ACCOUNT, actor: 'operator@ops.test', received_at: ago(60 * 26), is_operator_action: true },
         { id: 'au-2', kind: 'operator.action.app.force_cold_boot', account_id: ACCOUNT, actor: 'operator@ops.test', received_at: ago(45), is_operator_action: true },
       ] } };
+
+    /* ── Internal static hosting ── */
+    case key === 'GET /v1/internal/hosting/sites':
+      return { status: 200, body: [site()] };
+    case /^\/v1\/internal\/hosting\/sites\/[^/]+/.test(path) && path.split('/')[5] !== SITE_ID:
+      return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}`:
+      return { status: 200, body: site() };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/automation-credentials`:
+      return { status: 200, body: state.credentials };
+    case key === `POST /v1/internal/hosting/sites/${SITE_ID}/automation-credentials`: {
+      const extra = unknownKeys(body, ['label', 'operations', 'ttl_seconds']);
+      if (extra.length || !body?.label) return problem(400, 'validation', 'Invalid request', 'invalid label, operations or credential lifetime');
+      state.tokens += 1;
+      const ttl = body.ttl_seconds || 86400;
+      const credential = { id: `c2000000-0000-4000-8000-00000000000${state.tokens}`, account_id: 'op-1', site_id: SITE_ID, label: body.label,
+        operations: body.operations?.length ? body.operations : ['stage', 'preview'], created_at: now(), expires_at: new Date(Date.now() + ttl * 1000).toISOString() };
+      state.credentials.push(credential);
+      return { status: 201, body: { credential, token: `fp_host_mock${state.tokens}${'x'.repeat(40)}` } };
+    }
+    case /^DELETE \/v1\/internal\/hosting\/sites\/[^/]+\/automation-credentials\/[^/]+$/.test(key): {
+      const id = path.split('/').pop();
+      if (!state.credentials.some((c) => c.id === id)) return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+      state.credentials = state.credentials.filter((c) => c.id !== id);
+      return { status: 204 };
+    }
+    case /^(GET|POST|DELETE) \/v1\/internal\/hosting\/sites\/[^/]+\/oidc-trusts/.test(key) && !state.oidc:
+      return problem(503, 'frontend_hosting_oidc_disabled', 'GitHub site identity unavailable', 'internal hosting OIDC is disabled or unconfigured');
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/oidc-trusts`:
+      return { status: 200, body: state.trusts };
+    case key === `POST /v1/internal/hosting/sites/${SITE_ID}/oidc-trusts`: {
+      const extra = unknownKeys(body, ['repository_owner_id', 'repository_id', 'repository', 'ref', 'workflow_ref', 'event_name', 'environment']);
+      if (extra.length || !body?.repository) return problem(400, 'validation', 'Invalid request', 'exact GitHub repository IDs, repository, branch ref, workflow ref and push/workflow_dispatch/schedule event are required');
+      const trust = { id: `e2000000-0000-4000-8000-00000000000${state.trusts.length + 1}`, account_id: 'op-1', site_id: SITE_ID, ...body, created_at: now() };
+      state.trusts.push(trust);
+      return { status: 201, body: trust };
+    }
+    case /^DELETE \/v1\/internal\/hosting\/sites\/[^/]+\/oidc-trusts\/[^/]+$/.test(key): {
+      const id = path.split('/').pop();
+      if (!state.trusts.some((t) => t.id === id)) return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+      state.trusts = state.trusts.filter((t) => t.id !== id);
+      return { status: 204 };
+    }
 
     default:
       return problem(503, 'mock_unavailable', 'Not available in the local mock', `${method} ${path} has no fixture`);
