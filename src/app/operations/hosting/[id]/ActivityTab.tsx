@@ -2,12 +2,15 @@
 
 import React, { useState } from 'react';
 import {
+  cancelHostingRun,
   checkBadge,
   getHostingActivity,
   getHostingDiagnostics,
   provenanceLine,
+  refreshOnConflict,
   RETRY_ADVICE,
   untilText,
+  type HostingActivityEntry,
   type HostingSite,
 } from '@/lib/ops/hosting';
 import { relativeTime } from '@/lib/format';
@@ -16,7 +19,9 @@ import { useUrlParams } from '@/lib/useUrlState';
 import { SectionCard } from '@/components/ui/Panels';
 import { Modal } from '@/components/ui/Modal';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
+import { Mono } from '@/components/ui/bits';
 import { EntityId, shortId } from '@/components/operator/EntityId';
+import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { ChecksList, QueryBody } from './shared';
 
 /**
@@ -31,6 +36,7 @@ export function ActivityTab({ site, nonce }: { site: HostingSite; nonce: number 
   const [cursors, setCursors] = useState<string[]>([]);
   const before = cursors[cursors.length - 1];
   const activity = useAsync(() => getHostingActivity(site.id, before), [site.id, nonce, before], 60_000);
+  const [canceling, setCanceling] = useState<HostingActivityEntry | null>(null);
 
   return (
     <>
@@ -94,6 +100,7 @@ export function ActivityTab({ site, nonce }: { site: HostingSite; nonce: number 
                                 { label: 'Diagnose run', onSelect: open },
                                 { label: 'Copy run ID', onSelect: () => copyText(entry.run_id) },
                                 !!entry.release_id && { label: 'Copy release ID', onSelect: () => copyText(entry.release_id) },
+                                !!entry.can_cancel && { label: 'Cancel run…', tone: 'danger', onSelect: () => setCanceling(entry) },
                               ]}
                             />
                           </td>
@@ -124,6 +131,33 @@ export function ActivityTab({ site, nonce }: { site: HostingSite; nonce: number 
       </SectionCard>
 
       {runId && <RunDiagnostics site={site} runId={runId} onClose={() => setParams({ run: null })} />}
+
+      {canceling && (
+        <OperatorActionDialog
+          open
+          title="Cancel CI run"
+          tone="danger"
+          reason="none"
+          submitLabel="Cancel run"
+          fingerprint={canceling.run_id}
+          impact={
+            <div className="space-y-1.5">
+              <p>
+                Permanently cancels run <Mono>{shortId(canceling.run_id)}</Mono>
+                {provenanceLine(canceling.provenance) && <> ({provenanceLine(canceling.provenance)})</>}. Its preview is revoked and its
+                release is cleaned up when nothing else uses it. The run cannot be resumed; CI has to start a new one.
+              </p>
+              <p className="text-xs text-[var(--color-ink-soft)]">Production is not affected: apid never cancels a run whose release is or was live.</p>
+            </div>
+          }
+          onClose={() => setCanceling(null)}
+          onSubmit={async () => {
+            await refreshOnConflict(() => cancelHostingRun(site.id, canceling.run_id), activity.reload);
+            activity.reload();
+            return `Canceled run ${shortId(canceling.run_id)}`;
+          }}
+        />
+      )}
     </>
   );
 }

@@ -47,6 +47,7 @@ function freshState() {
     suspended: false,
     oidc: true,
     tokens: 0,
+    hosting: freshHosting(),
     intents: new Map(),
     requests: [],
     nodes: new Map([
@@ -90,14 +91,51 @@ const depIncident = () => ({
 
 const site = () => ({
   id: SITE_ID, account_id: 'op-1', project_id: 'gregale', environment: 'production', name: 'website', hostname: 'website.gregale.site',
-  origin_id: 'origin-1', status: 'active', active_release_id: SITE_RELEASE_LIVE, revision: 7, durable_routing: true,
-  suspended: false, created_at: ago(60 * 24 * 30),
+  origin_id: 'origin-1', status: 'active', active_release_id: state.hosting.active, revision: state.hosting.revision, durable_routing: true,
+  suspended: state.hosting.suspended, created_at: ago(60 * 24 * 30),
 });
 
-const siteRelease = (id, state, minutesAgo, extra = {}) => ({
-  id, site_id: SITE_ID, state, manifest: { files: [{ path: 'index.html' }, { path: 'app.js' }, { path: 'app.css' }], spa_fallback: true },
-  artifact_bytes: 2_621_440, created_at: ago(minutesAgo), last_activity_at: ago(minutesAgo), ...extra,
-});
+function siteRelease(id, releaseState, minutesAgo, extra = {}) {
+  return {
+    id, site_id: SITE_ID, state: releaseState, manifest: { files: [{ path: 'index.html' }, { path: 'app.js' }, { path: 'app.css' }], spa_fallback: true },
+    artifact_bytes: 2_621_440, created_at: ago(minutesAgo), last_activity_at: ago(minutesAgo), ...extra,
+  };
+}
+
+/** The hosted site's mutable state: writes change it, reads report it. */
+function freshHosting() {
+  return {
+    revision: 7,
+    active: SITE_RELEASE_LIVE,
+    suspended: false,
+    releases: [
+      siteRelease(SITE_RELEASE_OLD, 'ready', 60 * 24 * 4, { first_promoted_at: ago(60 * 24 * 4), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: '0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6' } }),
+      siteRelease(SITE_RELEASE_LIVE, 'ready', 70, { first_promoted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } }),
+      siteRelease(SITE_RELEASE_STAGED, 'pending', 30, { provenance: { repository: 'gregale/website', branch: 'redesign', commit_sha: 'c0ffee1234567890abcdef1234567890abcdef12' } }),
+    ],
+    history: [
+      { site_id: SITE_ID, revision: 7, previous_revision: 6, release_id: SITE_RELEASE_LIVE, previous_release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1' }, accepted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } },
+      { site_id: SITE_ID, revision: 6, previous_revision: 5, release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1', key_id: 'k0000000-0000-4000-8000-000000000001' }, accepted_at: ago(60 * 24 * 4) },
+    ],
+    runs: [
+      { run_id: RUN_OK, release_id: SITE_RELEASE_STAGED, preview_id: 'a7a00000-0000-4000-8000-000000000001', created_at: ago(30), preview_expires_at: ago(-60 * 23), can_cancel: true, state: 'pending', provenance: { repository: 'gregale/website', branch: 'redesign', commit_sha: 'c0ffee1234567890abcdef1234567890abcdef12' }, checks: [] },
+      { run_id: RUN_EXPIRED, release_id: SITE_RELEASE_OLD, preview_id: 'a7b00000-0000-4000-8000-000000000002', created_at: ago(60 * 24 * 4), preview_expires_at: ago(60 * 24 * 3), state: 'blocked', checks: [] },
+    ],
+    previews: [
+      { id: 'a7b00000-0000-4000-8000-000000000002', account_id: 'op-1', site_id: SITE_ID, release_id: SITE_RELEASE_OLD, hostname: 'main-b2b00000.preview.gregale.site', origin_id: 'origin-1', expires_at: ago(60 * 24 * 3), revoked: false, generation: 1, published_generation: 1, next_attempt_at: ago(60 * 24 * 4), created_at: ago(60 * 24 * 4) },
+      { id: 'a7a00000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, release_id: SITE_RELEASE_STAGED, hostname: 'redesign-b1a00000.preview.gregale.site', origin_id: 'origin-1', expires_at: ago(-60 * 23), revoked: false, generation: 1, published_generation: 1, next_attempt_at: ago(29), created_at: ago(29) },
+    ],
+    domains: [
+      { id: 'dd000000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, hostname: 'www.gregale.dev', provider_origin_id: 'po-1', challenge: '', state: 'active', revision: 2, generation: 2, published_generation: 2, published_at: ago(60 * 24 * 19), details: { tls_status: 'active', records: [], provider_id: '5b0c2a5e-0000-4000-8000-000000000001', create_started_at: ago(60 * 24 * 20), verified_at: ago(60 * 24 * 20) }, next_attempt_at: ago(60 * 24 * 19), attempts: 1, created_at: ago(60 * 24 * 20) },
+      { id: 'dd000000-0000-4000-8000-000000000002', account_id: 'op-1', site_id: SITE_ID, hostname: 'docs.gregale.dev', provider_origin_id: 'po-1', challenge: 'a1b2c3', state: 'pending', revision: 1, generation: 1, published_generation: 0, details: { tls_status: 'pending_validation', records: [{ type: 'CNAME', name: 'docs.gregale.dev', value: 'website.gregale.site' }, { type: 'TXT', name: '_gregale-challenge.docs.gregale.dev', value: 'a1b2c3' }] }, next_attempt_at: ago(-10), attempts: 4, last_error_code: 'dns_not_found', created_at: ago(60 * 5) },
+      // A hostname create whose response was lost: no provider ID, so it needs operator recovery.
+      { id: 'dd000000-0000-4000-8000-000000000003', account_id: 'op-1', site_id: SITE_ID, hostname: 'shop.gregale.dev', provider_origin_id: 'po-1', challenge: 'd4e5f6', state: 'pending', revision: 3, generation: 1, published_generation: 0, details: { tls_status: '', records: [], create_started_at: ago(10), verified_at: ago(9) }, next_attempt_at: ago(-1), attempts: 1, last_error_code: 'provider_conflict', created_at: ago(11) },
+    ],
+  };
+}
+
+const releaseConflict = () => problem(409, 'hosting_release_conflict', 'Hosting state changed', 'refresh the site revision; only ready releases can be promoted and active or preview-referenced releases cannot be retired');
+const domainConflict = () => problem(409, 'hosting_domain_conflict', 'Domain state changed', 'refresh the domain; hostname reservations, current revisions, and an active durable site are required');
 const check = (step, state, code, summary, action) => ({ step, state, code, summary, action });
 const SERVING_NOT_CHECKED = check('serving', 'not_checked', 'serving_not_checked', 'Serving health, DNS, TLS and Access sign-in were not tested.', 'After publication, allow edge refresh and check the URL through the normal Access flow.');
 
@@ -139,7 +177,9 @@ function route(method, path, query, body) {
   }
   if (key === 'POST /__mock/state') {
     for (const name of ['enrolled', 'expired', 'oidc']) if (name in (body || {})) state[name] = Boolean(body[name]);
-    return { status: 200, body: { enrolled: state.enrolled, expired: state.expired, oidc: state.oidc } };
+    // Another operator changed the site after the page loaded.
+    if ('siteRevision' in (body || {})) state.hosting.revision = Number(body.siteRevision);
+    return { status: 200, body: { enrolled: state.enrolled, expired: state.expired, oidc: state.oidc, siteRevision: state.hosting.revision } };
   }
   if (key === 'GET /__mock/requests') return { status: 200, body: state.requests };
   if (key === 'GET /healthz') return { status: 200, text: 'ok' };
@@ -374,33 +414,78 @@ function route(method, path, query, body) {
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/status`:
       return { status: 200, body: { site: site(), publication: { state: 'pending', generation: 8, published_generation: 7, published_at: ago(60), pending_since: ago(3), next_attempt_at: ago(-1), last_attempt_at: ago(1), retry_count: 2, last_error_code: 'provider_timeout' } } };
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/releases`:
-      return { status: 200, body: [
-        siteRelease(SITE_RELEASE_OLD, 'ready', 60 * 24 * 4, { first_promoted_at: ago(60 * 24 * 4), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: '0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6' } }),
-        siteRelease(SITE_RELEASE_LIVE, 'ready', 70, { first_promoted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } }),
-        siteRelease(SITE_RELEASE_STAGED, 'pending', 30, { provenance: { repository: 'gregale/website', branch: 'redesign', commit_sha: 'c0ffee1234567890abcdef1234567890abcdef12' } }),
-      ] };
+      return { status: 200, body: state.hosting.releases };
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/history`:
-      return { status: 200, body: { retention_limit: 50, events: [
-        { site_id: SITE_ID, revision: 7, previous_revision: 6, release_id: SITE_RELEASE_LIVE, previous_release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1' }, accepted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } },
-        { site_id: SITE_ID, revision: 6, previous_revision: 5, release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1', key_id: 'k0000000-0000-4000-8000-000000000001' }, accepted_at: ago(60 * 24 * 4) },
-      ] } };
+      return { status: 200, body: { retention_limit: 50, events: state.hosting.history } };
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/runs`:
-      return { status: 200, body: { site_id: SITE_ID, observed_at: now(), serving_health: 'not_checked', source_labels_included: true, entries: [
-        { run_id: RUN_OK, release_id: SITE_RELEASE_STAGED, preview_id: 'a7a00000-0000-4000-8000-000000000001', created_at: ago(30), preview_expires_at: ago(-60 * 23), state: 'pending', provenance: { repository: 'gregale/website', branch: 'redesign', commit_sha: 'c0ffee1234567890abcdef1234567890abcdef12' }, checks: [] },
-        { run_id: RUN_EXPIRED, release_id: SITE_RELEASE_OLD, preview_id: 'a7b00000-0000-4000-8000-000000000002', created_at: ago(60 * 24 * 4), preview_expires_at: ago(60 * 24 * 3), state: 'blocked', checks: [] },
-      ] } };
+      return { status: 200, body: { site_id: SITE_ID, observed_at: now(), serving_health: 'not_checked', source_labels_included: true, entries: state.hosting.runs } };
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/diagnostics`:
       return { status: 200, body: siteDiagnostics(query.get('run_id')) };
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/domains`:
-      return { status: 200, body: [
-        { id: 'dd000000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, hostname: 'www.gregale.dev', provider_origin_id: 'po-1', challenge: '', state: 'active', revision: 2, generation: 2, published_generation: 2, published_at: ago(60 * 24 * 19), details: { tls_status: 'active', records: [] }, next_attempt_at: ago(60 * 24 * 19), attempts: 1, created_at: ago(60 * 24 * 20) },
-        { id: 'dd000000-0000-4000-8000-000000000002', account_id: 'op-1', site_id: SITE_ID, hostname: 'docs.gregale.dev', provider_origin_id: 'po-1', challenge: 'a1b2c3', state: 'pending', revision: 1, generation: 1, published_generation: 0, details: { tls_status: 'pending_validation', records: [{ type: 'CNAME', name: 'docs.gregale.dev', value: 'website.gregale.site' }, { type: 'TXT', name: '_gregale-challenge.docs.gregale.dev', value: 'a1b2c3' }] }, next_attempt_at: ago(-10), attempts: 4, last_error_code: 'dns_not_found', created_at: ago(60 * 5) },
-      ] };
+      return { status: 200, body: state.hosting.domains };
     case key === `GET /v1/internal/hosting/sites/${SITE_ID}/previews`:
-      return { status: 200, body: [
-        { id: 'a7b00000-0000-4000-8000-000000000002', account_id: 'op-1', site_id: SITE_ID, release_id: SITE_RELEASE_OLD, hostname: 'main-b2b00000.preview.gregale.site', origin_id: 'origin-1', expires_at: ago(60 * 24 * 3), revoked: false, generation: 1, published_generation: 1, next_attempt_at: ago(60 * 24 * 4), created_at: ago(60 * 24 * 4) },
-        { id: 'a7a00000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, release_id: SITE_RELEASE_STAGED, hostname: 'redesign-b1a00000.preview.gregale.site', origin_id: 'origin-1', expires_at: ago(-60 * 23), revoked: false, generation: 1, published_generation: 1, next_attempt_at: ago(29), created_at: ago(29) },
-      ] };
+      return { status: 200, body: state.hosting.previews };
+
+    /* ── Hosting writes: revision-fenced like apid (409 when the operator saw an older state) ── */
+    case key === `POST /v1/internal/hosting/sites/${SITE_ID}/promotions`: {
+      if (unknownKeys(body, ['release_id', 'expected_revision']).length) return problem(400, 'validation', 'Invalid request', 'release_id and expected_revision are required');
+      const release = state.hosting.releases.find((r) => r.id === body.release_id);
+      if (!release) return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+      if (body.expected_revision !== state.hosting.revision || release.state !== 'ready') return releaseConflict();
+      state.hosting.history.unshift({ site_id: SITE_ID, revision: state.hosting.revision + 1, previous_revision: state.hosting.revision, release_id: release.id, previous_release_id: state.hosting.active, actor: { account_id: 'op-1' }, accepted_at: now(), provenance: release.provenance });
+      state.hosting.revision += 1;
+      state.hosting.active = release.id;
+      release.first_promoted_at ??= now();
+      return { status: 202, body: site() };
+    }
+    case /^DELETE \/v1\/internal\/hosting\/sites\/[^/]+\/releases\/[^/]+$/.test(key): {
+      const release = state.hosting.releases.find((r) => r.id === path.split('/').pop());
+      if (!release) return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+      const previewed = state.hosting.previews.some((p) => p.release_id === release.id && !p.revoked && Date.parse(p.expires_at) > Date.now());
+      if (release.id === state.hosting.active || previewed || !['ready', 'pending'].includes(release.state)) return releaseConflict();
+      release.state = 'retiring';
+      return { status: 202, body: release };
+    }
+    case key === `PUT /v1/internal/hosting/sites/${SITE_ID}/suspension`: {
+      if (unknownKeys(body, ['suspended', 'expected_revision']).length || typeof body?.suspended !== 'boolean') return problem(400, 'validation', 'Invalid request', 'suspended and expected_revision are required');
+      if (body.expected_revision !== state.hosting.revision) return releaseConflict();
+      state.hosting.suspended = body.suspended;
+      state.hosting.revision += 1;
+      return { status: 202, body: site() };
+    }
+    case /^POST \/v1\/internal\/hosting\/sites\/[^/]+\/ci\/[^/]+\/cancel$/.test(key): {
+      const run = state.hosting.runs.find((r) => r.run_id === path.split('/')[7]);
+      if (!run) return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+      if (!run.can_cancel) return problem(409, 'hosting_ci_cancel_protected', 'CI run is protected', 'production releases, previously promoted releases and other preview references cannot be canceled; inspect the run and release before acting');
+      Object.assign(run, { canceled: true, can_cancel: false, state: 'canceled' });
+      const preview = state.hosting.previews.find((p) => p.id === run.preview_id);
+      if (preview) Object.assign(preview, { revoked: true, generation: 2 });
+      return { status: 200, body: { id: run.run_id, site_id: SITE_ID, release_id: run.release_id, preview_id: run.preview_id, canceled: true } };
+    }
+    case /^DELETE \/v1\/internal\/hosting\/sites\/[^/]+\/previews\/[^/]+$/.test(key): {
+      if (unknownKeys(body, ['expected_generation']).length || body?.expected_generation !== 1) return problem(400, 'validation', 'Invalid request', 'preview and expected_generation=1 are required');
+      const preview = state.hosting.previews.find((p) => p.id === path.split('/').pop());
+      if (!preview) return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+      if (preview.generation !== 1) return releaseConflict();
+      Object.assign(preview, { revoked: true, generation: 2 });
+      return { status: 202, body: preview };
+    }
+    case /^DELETE \/v1\/internal\/hosting\/sites\/[^/]+\/domains\/[^/]+$/.test(key): {
+      if (unknownKeys(body, ['expected_revision']).length) return problem(400, 'validation', 'Invalid request', 'domain and expected_revision are required');
+      const domain = state.hosting.domains.find((d) => d.id === path.split('/').pop());
+      if (!domain) return problem(404, 'not_found', 'Not found', 'no such hosting resource');
+      if (body?.expected_revision !== domain.revision) return domainConflict();
+      Object.assign(domain, { state: 'deleting', revision: domain.revision + 1 });
+      return { status: 202, body: domain };
+    }
+    case /^POST \/v1\/internal\/hosting\/sites\/[^/]+\/domains\/[^/]+\/recover$/.test(key): {
+      if (unknownKeys(body, ['expected_revision', 'provider_id', 'expected_hostname']).length) return problem(400, 'validation', 'Invalid request', 'provider_id, expected_hostname, and expected_revision are required');
+      const domain = state.hosting.domains.find((d) => d.id === path.split('/')[7]);
+      if (!domain || domain.details.provider_id || body?.expected_hostname !== domain.hostname || body?.expected_revision !== domain.revision) return domainConflict();
+      domain.details.provider_id = body.provider_id;
+      domain.revision += 1;
+      return { status: 202, body: domain };
+    }
 
     default:
       return problem(503, 'mock_unavailable', 'Not available in the local mock', `${method} ${path} has no fixture`);

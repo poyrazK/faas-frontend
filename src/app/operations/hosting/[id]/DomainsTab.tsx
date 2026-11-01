@@ -1,18 +1,43 @@
 'use client';
 
-import React from 'react';
-import { domainBadge, listHostingDomains, listHostingPreviews, previewBadge, untilText, type HostingSite } from '@/lib/ops/hosting';
+import React, { useState } from 'react';
+import {
+  domainBadge,
+  domainRecovery,
+  isUuid,
+  listHostingDomains,
+  listHostingPreviews,
+  previewBadge,
+  recoverHostingDomain,
+  refreshOnConflict,
+  removeHostingDomain,
+  revokeHostingPreview,
+  untilText,
+  type HostingDomain,
+  type HostingPreview,
+  type HostingSite,
+} from '@/lib/ops/hosting';
 import { relativeTime } from '@/lib/format';
 import { useAsync } from '@/lib/useAsync';
 import { SectionCard } from '@/components/ui/Panels';
 import { RowMenu, copyText } from '@/components/ui/RowMenu';
+import { Mono } from '@/components/ui/bits';
 import { shortId } from '@/components/operator/EntityId';
+import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { QueryBody } from './shared';
+
+type DomainAction =
+  | { kind: 'remove'; domain: HostingDomain }
+  | { kind: 'recover'; domain: HostingDomain }
+  | { kind: 'revoke'; preview: HostingPreview };
+
+const RECOVERY_DOCS = 'https://github.com/poyrazK/faas/blob/main/docs/internal-frontend-hosting-domains.md#recover-an-uncertain-hostname-create';
 
 /** Custom domains (with the DNS records still to set) and preview URLs. */
 export function DomainsTab({ site, nonce }: { site: HostingSite; nonce: number }) {
   const domains = useAsync(() => listHostingDomains(site.id), [site.id, nonce], 60_000);
   const previews = useAsync(() => listHostingPreviews(site.id), [site.id, nonce], 60_000);
+  const [action, setAction] = useState<DomainAction | null>(null);
 
   return (
     <div className="space-y-6">
@@ -43,6 +68,7 @@ export function DomainsTab({ site, nonce }: { site: HostingSite; nonce: number }
                   {rows.map((domain) => {
                     const badge = domainBadge(domain.state);
                     const records = domain.state === 'active' ? [] : domain.details.records ?? [];
+                    const recovery = domainRecovery(domain);
                     return (
                       <React.Fragment key={domain.id}>
                         <tr>
@@ -73,6 +99,13 @@ export function DomainsTab({ site, nonce }: { site: HostingSite; nonce: number }
                                   onSelect: () => copyText(records.map((r) => `${r.name} ${r.type} ${r.value}`).join('\n')),
                                 },
                                 { label: 'Copy domain ID', onSelect: () => copyText(domain.id) },
+                                recovery.applies && {
+                                  label: 'Bind reviewed provider ID…',
+                                  disabled: !!recovery.blocker,
+                                  title: recovery.blocker ?? 'For a hostname create whose response was lost',
+                                  onSelect: () => setAction({ kind: 'recover', domain }),
+                                },
+                                domain.state !== 'deleting' && { label: 'Remove domain…', tone: 'danger', onSelect: () => setAction({ kind: 'remove', domain }) },
                               ]}
                             />
                           </td>
@@ -156,6 +189,14 @@ export function DomainsTab({ site, nonce }: { site: HostingSite; nonce: number }
                               items={[
                                 { label: 'Copy preview URL', onSelect: () => copyText(`https://${preview.hostname}`) },
                                 { label: 'Copy release ID', onSelect: () => copyText(preview.release_id) },
+                                !preview.revoked && {
+                                  label: 'Revoke preview…',
+                                  tone: 'danger',
+                                  // apid revokes only a preview it has not changed since creating (generation 1).
+                                  disabled: preview.generation !== 1,
+                                  title: preview.generation !== 1 ? 'The preview changed since it was created; refresh first' : undefined,
+                                  onSelect: () => setAction({ kind: 'revoke', preview }),
+                                },
                               ]}
                             />
                           </td>
@@ -168,6 +209,138 @@ export function DomainsTab({ site, nonce }: { site: HostingSite; nonce: number }
           )}
         </QueryBody>
       </SectionCard>
+
+      {action?.kind === 'remove' && (
+        <OperatorActionDialog
+          open
+          title="Remove custom domain"
+          tone="danger"
+          reason="none"
+          confirmText={action.domain.hostname}
+          submitLabel="Remove domain"
+          fingerprint={`${action.domain.id}|${action.domain.revision}`}
+          impact={
+            <div className="space-y-1.5">
+              <p>
+                Stops serving the site on <Mono>{action.domain.hostname}</Mono>. Gregale publishes a disabled alias at once, then deletes
+                the Cloudflare hostname and this record after cleanup.
+              </p>
+              <p className="text-xs text-[var(--color-ink-soft)]">
+                Keep DNS pointed at Gregale until the domain disappears from this list, so cleanup can finish.
+              </p>
+            </div>
+          }
+          onClose={() => setAction(null)}
+          onSubmit={async ({ idempotencyKey }) => {
+            await refreshOnConflict(
+              () => removeHostingDomain(site.id, action.domain.id, action.domain.revision, { idempotencyKey }),
+              domains.reload,
+            );
+            domains.reload();
+            return `Removing ${action.domain.hostname}`;
+          }}
+        />
+      )}
+
+      {action?.kind === 'recover' && <RecoverDomainDialog site={site} domain={action.domain} onClose={() => setAction(null)} onDone={domains.reload} />}
+
+      {action?.kind === 'revoke' && (
+        <OperatorActionDialog
+          open
+          title="Revoke preview"
+          tone="danger"
+          reason="none"
+          submitLabel="Revoke preview"
+          fingerprint={`${action.preview.id}|${action.preview.generation}`}
+          impact={
+            <p>
+              Takes <Mono>{action.preview.hostname}</Mono> offline now. A revoked preview cannot be restored; CI has to start a new run to
+              publish another one.
+            </p>
+          }
+          onClose={() => setAction(null)}
+          onSubmit={async ({ idempotencyKey }) => {
+            await refreshOnConflict(
+              () => revokeHostingPreview(site.id, action.preview.id, action.preview.generation, { idempotencyKey }),
+              previews.reload,
+            );
+            previews.reload();
+            return `Revoked ${action.preview.hostname}`;
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * apid never repeats a hostname create whose response was lost: an operator
+ * finds the exact Cloudflare resource for that attempt and binds its ID.
+ * apid checks it (zone, hostname, certificate mode, no custom origin) before
+ * binding; binding neither enables routing nor cancels a removal.
+ */
+function RecoverDomainDialog({
+  site,
+  domain,
+  onClose,
+  onDone,
+}: {
+  site: HostingSite;
+  domain: HostingDomain;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [providerId, setProviderId] = useState('');
+  const [touched, setTouched] = useState(false);
+  const valid = isUuid(providerId);
+  return (
+    <OperatorActionDialog
+      open
+      title="Bind reviewed provider ID"
+      tone="warning"
+      reason="none"
+      confirmText={domain.hostname}
+      submitLabel="Bind provider ID"
+      canSubmit={valid}
+      fingerprint={`${domain.id}|${domain.revision}|${providerId.trim()}`}
+      impact={
+        <div className="space-y-1.5">
+          <p>
+            Binds the Cloudflare custom hostname you reviewed to <Mono>{domain.hostname}</Mono> and authorizes Gregale to manage and
+            delete it. Provisioning or cleanup resumes on the next pass.
+          </p>
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            Find the exact resource created for this attempt in the zone&apos;s custom hostnames, using provider audit evidence: a matching
+            hostname alone is not proof of ownership.{' '}
+            <a href={RECOVERY_DOCS} target="_blank" rel="noreferrer" className="underline">
+              Recovery procedure
+            </a>
+          </p>
+        </div>
+      }
+      onClose={onClose}
+      onSubmit={async ({ idempotencyKey }) => {
+        await refreshOnConflict(() => recoverHostingDomain(site.id, domain, providerId.trim(), { idempotencyKey }), onDone);
+        onDone();
+        return `Bound the provider hostname for ${domain.hostname}`;
+      }}
+    >
+      <div>
+        <label className="label" htmlFor="hosting-domain-provider-id">
+          Cloudflare custom hostname ID
+        </label>
+        <input
+          id="hosting-domain-provider-id"
+          className="field field-sm font-mono"
+          value={providerId}
+          onChange={(event) => setProviderId(event.target.value)}
+          onBlur={() => setTouched(true)}
+          placeholder="00000000-0000-0000-0000-000000000000"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        {touched && !valid && <p className="mt-1 text-xs text-[var(--color-danger)]">The exact provider UUID.</p>}
+      </div>
+    </OperatorActionDialog>
   );
 }

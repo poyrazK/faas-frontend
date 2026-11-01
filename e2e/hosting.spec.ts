@@ -128,3 +128,107 @@ test('domains show the DNS records still to set, and previews their state', asyn
   await expect(page.getByRole('row', { name: /redesign-b1a00000/ })).toContainText('Live');
   await expect(page.getByRole('row', { name: /main-b2b00000/ })).toContainText('Expired');
 });
+
+test('putting an older release live is a rollback, sent with an idempotency key', async ({ page, mock }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=releases`);
+  await page.getByRole('button', { name: 'Actions for release f3c00000…' }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Put live…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Put release live' });
+  await expect(dialog).toContainText('replacing f1a00000…');
+  await expect(dialog).toContainText('To undo, put f1a00000… live again');
+  await dialog.getByRole('button', { name: 'Put live' }).click();
+  await expect(dialog).toBeHidden();
+
+  await expect(page.getByRole('row', { name: /f3c00000/ }).first()).toContainText('Live');
+  await expect(page.getByRole('row', { name: /7 → 8/ })).toBeVisible();
+  const posts = (await mock.requests()).filter((r) => r.method === 'POST' && r.path.endsWith('/promotions'));
+  expect(posts.map((r) => r.status)).toEqual([202]);
+  expect(posts[0].idempotencyKey).toBeTruthy();
+});
+
+test('a stale site revision refreshes the page instead of acting on old data', async ({ page, mock }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=releases`);
+  await expect(page.getByRole('row', { name: /f3c00000/ }).first()).toBeVisible();
+  await mock.set({ siteRevision: 9 });
+
+  await page.getByRole('button', { name: 'Actions for release f3c00000…' }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Put live…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Put release live' });
+  const refreshed = page.waitForResponse((r) => r.url().endsWith(`/v1/internal/hosting/sites/${HOSTING_SITE}`) && r.request().method() === 'GET');
+  await dialog.getByRole('button', { name: 'Put live' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The page has been refreshed');
+  await refreshed;
+
+  // The refreshed revision goes out with the next attempt.
+  await dialog.getByRole('button', { name: 'Put live' }).click();
+  await expect(dialog).toBeHidden();
+  const posts = (await mock.requests()).filter((r) => r.method === 'POST' && r.path.endsWith('/promotions'));
+  expect(posts.map((r) => r.status)).toEqual([409, 202]);
+});
+
+test('suspending a site needs its name typed, and resuming serves it again', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}`);
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Suspend site…' }).click();
+  const suspend = page.getByRole('dialog', { name: 'Suspend site' });
+  await expect(suspend.getByRole('button', { name: 'Suspend site' })).toBeDisabled();
+  await suspend.getByLabel('Type website to confirm').fill('website');
+  await suspend.getByRole('button', { name: 'Suspend site' }).click();
+  await expect(suspend).toBeHidden();
+  await expect(page.getByText('Suspended', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Resume site…' }).click();
+  const resume = page.getByRole('dialog', { name: 'Resume site' });
+  await resume.getByRole('button', { name: 'Resume site' }).click();
+  await expect(resume).toBeHidden();
+  await expect(page.getByText('Suspended', { exact: true })).toHaveCount(0);
+});
+
+test('canceling a run is offered only where apid allows it, and revokes its preview', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=activity`);
+  // That run's release was live once, so apid protects it.
+  await page.getByRole('button', { name: 'Actions for run b2b00000…' }).click();
+  await expect(page.getByRole('menu').getByRole('menuitem', { name: 'Cancel run…' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'Actions for run b1a00000…' }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Cancel run…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Cancel CI run' });
+  await expect(dialog).toContainText('Production is not affected');
+  await dialog.getByRole('button', { name: 'Cancel run' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('row', { name: 'Open run b1a00000…' })).toContainText('Canceled');
+
+  await page.getByRole('tab', { name: 'Domains & previews' }).click();
+  await expect(page.getByRole('row', { name: /redesign-b1a00000/ })).toContainText('Revoked');
+});
+
+test('an unbound domain create is recovered with a reviewed provider ID, then removed; a preview is revoked', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=domains`);
+  await page.getByRole('button', { name: 'Actions for domain shop.gregale.dev' }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Bind reviewed provider ID…' }).click();
+  const recover = page.getByRole('dialog', { name: 'Bind reviewed provider ID' });
+  await expect(recover.getByRole('link', { name: 'Recovery procedure' })).toHaveAttribute('href', /internal-frontend-hosting-domains/);
+  await recover.getByLabel('Cloudflare custom hostname ID').fill('0f8fad5b-d9cb-469f-a165-70867728950e');
+  await recover.getByLabel('Type shop.gregale.dev to confirm').fill('shop.gregale.dev');
+  await recover.getByRole('button', { name: 'Bind provider ID' }).click();
+  await expect(recover).toBeHidden();
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Actions for domain shop.gregale.dev' }).click();
+  await expect(page.getByRole('menu').getByRole('menuitem', { name: 'Bind reviewed provider ID…' })).toHaveCount(0);
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Remove domain…' }).click();
+  const remove = page.getByRole('dialog', { name: 'Remove custom domain' });
+  await remove.getByLabel('Type shop.gregale.dev to confirm').fill('shop.gregale.dev');
+  await remove.getByRole('button', { name: 'Remove domain' }).click();
+  await expect(remove).toBeHidden();
+  await expect(page.getByRole('row', { name: /shop\.gregale\.dev/ }).first()).toContainText('Deleting');
+
+  await page.getByRole('button', { name: 'Actions for preview main-b2b00000.preview.gregale.site' }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Revoke preview…' }).click();
+  const revoke = page.getByRole('dialog', { name: 'Revoke preview' });
+  await revoke.getByRole('button', { name: 'Revoke preview' }).click();
+  await expect(revoke).toBeHidden();
+  await expect(page.getByRole('row', { name: /main-b2b00000/ })).toContainText('Revoked');
+});

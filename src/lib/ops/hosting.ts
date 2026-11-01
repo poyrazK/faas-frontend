@@ -21,7 +21,7 @@
    what it did not check (serving health, DNS, TLS), and so does the console.
    ========================================================================== */
 
-import { ApiError, request } from '@/lib/api';
+import { ApiError, request, writeHeaders, type OperatorWrite } from '@/lib/api';
 
 /** @go api.HostingSite */
 export interface HostingSite {
@@ -32,6 +32,8 @@ export interface HostingSite {
   hostname: string;
   status: string;
   active_release_id: string;
+  /** Bumped by every promotion and suspension; writes send the one the operator saw. */
+  revision: number;
   durable_routing: boolean;
   suspended: boolean;
   created_at: string;
@@ -233,6 +235,8 @@ export interface HostingActivityEntry {
   created_at: string;
   preview_expires_at: string;
   canceled?: boolean;
+  /** apid's verdict: never a run whose release is or was live, or one another preview uses. */
+  can_cancel?: boolean;
   /** recorded, canceled, or the worst check state. */
   state: string;
   provenance?: HostingReleaseProvenance;
@@ -261,6 +265,9 @@ export interface HostingDomainDetails {
   tls_status: string;
   records: HostingDNSRecord[];
   verified_at?: string;
+  /** The Cloudflare custom hostname this domain owns; empty until bound. */
+  provider_id?: string;
+  create_started_at?: string;
 }
 
 /** @go api.HostingDomain */
@@ -268,6 +275,7 @@ export interface HostingDomain {
   id: string;
   hostname: string;
   state: string;
+  revision: number;
   details: HostingDomainDetails;
   attempts: number;
   next_attempt_at: string;
@@ -322,6 +330,129 @@ export const listHostingDomains = (site: string) =>
 
 export const listHostingPreviews = (site: string) =>
   request<HostingPreview[]>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/previews`, { cache: 'no-store' });
+
+/* ─────────────────────────────────── Actions ──────────────────────────── */
+/*
+ * Operator writes on a site. Promotion, suspension, domain removal and
+ * recovery, and preview revocation are revision- or generation-fenced: they
+ * send what the operator saw and apid answers 409 when the site moved on.
+ * Those routes also replay an Idempotency-Key; retire and cancel take none.
+ * apid asks for an MFA session (cancel: an operator session) but no fresh
+ * step-up, so the confirm dialog is the console's guard.
+ */
+
+/** @goBody api.PromoteHostingReleaseRequest */
+export const promoteHostingRelease = (site: string, releaseId: string, expectedRevision: number, opts?: OperatorWrite) =>
+  request<HostingSite>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/promotions`, {
+    method: 'POST',
+    headers: writeHeaders(opts),
+    body: JSON.stringify({ release_id: releaseId, expected_revision: expectedRevision }),
+  });
+
+/** apid refuses the live release and releases a preview still uses (409). */
+export const retireHostingRelease = (site: string, releaseId: string) =>
+  request<void>(
+    `/v1/internal/hosting/sites/${encodeURIComponent(site)}/releases/${encodeURIComponent(releaseId)}`,
+    { method: 'DELETE' },
+    'none',
+  );
+
+/** @goBody - hosting.Service.SetSuspended decodes a handler-local struct {suspended, expected_revision} */
+export const setHostingSiteSuspended = (site: string, suspended: boolean, expectedRevision: number, opts?: OperatorWrite) =>
+  request<HostingSite>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/suspension`, {
+    method: 'PUT',
+    headers: writeHeaders(opts),
+    body: JSON.stringify({ suspended, expected_revision: expectedRevision }),
+  });
+
+export const cancelHostingRun = (site: string, runId: string) =>
+  request<void>(
+    `/v1/internal/hosting/sites/${encodeURIComponent(site)}/ci/${encodeURIComponent(runId)}/cancel`,
+    { method: 'POST' },
+    'none',
+  );
+
+/** @goBody api.RevokeHostingPreviewRequest */
+export const revokeHostingPreview = (site: string, previewId: string, expectedGeneration: number, opts?: OperatorWrite) =>
+  request<void>(
+    `/v1/internal/hosting/sites/${encodeURIComponent(site)}/previews/${encodeURIComponent(previewId)}`,
+    { method: 'DELETE', headers: writeHeaders(opts), body: JSON.stringify({ expected_generation: expectedGeneration }) },
+    'none',
+  );
+
+/** @goBody api.DeleteHostingDomainRequest */
+export const removeHostingDomain = (site: string, domainId: string, expectedRevision: number, opts?: OperatorWrite) =>
+  request<void>(
+    `/v1/internal/hosting/sites/${encodeURIComponent(site)}/domains/${encodeURIComponent(domainId)}`,
+    { method: 'DELETE', headers: writeHeaders(opts), body: JSON.stringify({ expected_revision: expectedRevision }) },
+    'none',
+  );
+
+/** @goBody api.RecoverHostingDomainRequest */
+export const recoverHostingDomain = (
+  site: string,
+  domain: Pick<HostingDomain, 'id' | 'hostname' | 'revision'>,
+  providerId: string,
+  opts?: OperatorWrite,
+) =>
+  request<void>(
+    `/v1/internal/hosting/sites/${encodeURIComponent(site)}/domains/${encodeURIComponent(domain.id)}/recover`,
+    {
+      method: 'POST',
+      headers: writeHeaders(opts),
+      body: JSON.stringify({ expected_revision: domain.revision, provider_id: providerId, expected_hostname: domain.hostname }),
+    },
+    'none',
+  );
+
+/** Which release actions apply; apid has the last word (a preview may still use a release). */
+export function releaseActions(release: Pick<HostingRelease, 'id' | 'state'>, site: Pick<HostingSite, 'active_release_id' | 'status' | 'suspended'>) {
+  const live = release.id === site.active_release_id;
+  return {
+    promote: !live && release.state === 'ready' && site.status === 'active',
+    retire: !live && (release.state === 'ready' || release.state === 'pending'),
+  };
+}
+
+/** apid waits this long after a hostname create began before it accepts a recovery (api.HostingDomainRecoveryDelay). */
+export const DOMAIN_RECOVERY_DELAY_MS = 160_000;
+
+/**
+ * Whether "Bind reviewed provider ID" applies to a domain (a hostname create
+ * whose provider ID was never recorded), and if so why it cannot run yet.
+ */
+export function domainRecovery(
+  domain: Pick<HostingDomain, 'details'>,
+  now = Date.now(),
+): { applies: false } | { applies: true; blocker: string | null } {
+  const { provider_id: providerId, create_started_at: started, verified_at: verified } = domain.details;
+  if (providerId || !started) return { applies: false };
+  if (!verified) return { applies: true, blocker: 'Hostname ownership is not verified yet.' };
+  const ready = Date.parse(started) + DOMAIN_RECOVERY_DELAY_MS;
+  if (ready > now) return { applies: true, blocker: `apid accepts a recovery from ${new Date(ready).toLocaleTimeString()}.` };
+  return { applies: true, blocker: null };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isUuid = (value: string) => UUID.test(value.trim());
+
+/**
+ * A 409 means the site moved on since the page loaded (another promotion, a
+ * domain step, a run that changed). Refresh, and say so in the error the
+ * dialog shows; it stays an ApiError so the dialog treats it as refused.
+ */
+export async function refreshOnConflict<T>(write: () => Promise<T>, refresh: () => void): Promise<T> {
+  try {
+    return await write();
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      refresh();
+      const detail = `${err.message} The page has been refreshed: review the current state before trying again.`;
+      throw new ApiError(err.problem ? { ...err.problem, detail } : null, 409, detail);
+    }
+    throw err;
+  }
+}
 
 type Tone = 'badge-success' | 'badge-warning' | 'badge-danger' | 'badge-neutral';
 
@@ -643,6 +774,7 @@ const FEATURE_OFF: Record<string, string> = {
   frontend_hosting_domains_disabled: 'Custom domains are turned off on this control plane.',
   frontend_hosting_domains_unconfigured: 'Custom domains are on but their DNS provider is not configured.',
   frontend_hosting_previews_disabled: 'Preview URLs are turned off on this control plane.',
+  frontend_hosting_cancellation_disabled: 'CI run cancellation is turned off on this control plane.',
 };
 
 /** A sentence when `err` means the feature is switched off, else null. */

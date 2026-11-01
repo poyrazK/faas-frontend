@@ -3,6 +3,10 @@
 import React, { useState } from 'react';
 import {
   formatBytes,
+  promoteHostingRelease,
+  refreshOnConflict,
+  releaseActions,
+  retireHostingRelease,
   getHostingDiagnostics,
   getHostingHistory,
   getHostingSiteStatus,
@@ -11,17 +15,36 @@ import {
   publicationSummary,
   releaseBadge,
   RETRY_ADVICE,
+  type HostingRelease,
   type HostingSite,
 } from '@/lib/ops/hosting';
 import { relativeTime } from '@/lib/format';
 import { useAsync } from '@/lib/useAsync';
 import { SectionCard } from '@/components/ui/Panels';
 import { RowMenu, copyText } from '@/components/ui/RowMenu';
+import { Mono } from '@/components/ui/bits';
 import { shortId } from '@/components/operator/EntityId';
+import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { ChecksList, QueryBody } from './shared';
 
-/** What is live and how it got there: publication, production checks, releases and promotions. */
-export function ReleasesTab({ site, nonce }: { site: HostingSite; nonce: number }) {
+type ReleaseAction = { kind: 'promote' | 'retire'; release: HostingRelease };
+
+/**
+ * What is live and how it got there: publication, production checks,
+ * releases and promotions. A ready release can be put live (a rollback is
+ * putting the previous one live again) and an unused one retired.
+ */
+export function ReleasesTab({
+  site,
+  nonce,
+  onSiteChanged,
+}: {
+  site: HostingSite;
+  nonce: number;
+  /** The site moved on (a promotion, or a conflict): take `updated` if given and reload. */
+  onSiteChanged: (updated?: HostingSite) => void;
+}) {
+  const [action, setAction] = useState<ReleaseAction | null>(null);
   const status = useAsync(() => getHostingSiteStatus(site.id), [site.id, nonce], 30_000);
   const diagnostics = useAsync(() => getHostingDiagnostics(site.id), [site.id, nonce]);
   const releases = useAsync(() => listHostingReleases(site.id), [site.id, nonce]);
@@ -91,6 +114,7 @@ export function ReleasesTab({ site, nonce }: { site: HostingSite; nonce: number 
                     .map((release) => {
                       const badge = releaseBadge(release.state);
                       const live = release.id === site.active_release_id;
+                      const can = releaseActions(release, site);
                       return (
                         <tr key={release.id}>
                           <td className="nowrap">
@@ -112,8 +136,10 @@ export function ReleasesTab({ site, nonce }: { site: HostingSite; nonce: number 
                             <RowMenu
                               label={`Actions for release ${shortId(release.id)}`}
                               items={[
+                                can.promote && { label: 'Put live…', onSelect: () => setAction({ kind: 'promote', release }) },
                                 { label: 'Copy release ID', onSelect: () => copyText(release.id) },
                                 !!release.provenance?.commit_sha && { label: 'Copy commit SHA', onSelect: () => copyText(release.provenance?.commit_sha ?? '') },
+                                can.retire && { label: 'Retire…', tone: 'danger', onSelect: () => setAction({ kind: 'retire', release }) },
                               ]}
                             />
                           </td>
@@ -196,6 +222,66 @@ export function ReleasesTab({ site, nonce }: { site: HostingSite; nonce: number 
           )}
         </QueryBody>
       </SectionCard>
+
+      {action?.kind === 'promote' && (
+        <OperatorActionDialog
+          open
+          title="Put release live"
+          tone="warning"
+          reason="none"
+          submitLabel="Put live"
+          fingerprint={`${action.release.id}|${site.revision}`}
+          impact={
+            <div className="space-y-1.5">
+              <p>
+                Serves release <Mono>{shortId(action.release.id)}</Mono>
+                {provenanceLine(action.release.provenance) && <> ({provenanceLine(action.release.provenance)})</>} on{' '}
+                <Mono>{site.hostname}</Mono>, replacing{' '}
+                {site.active_release_id ? <Mono>{shortId(site.active_release_id)}</Mono> : 'nothing (no release is live yet)'}. The edge picks it up
+                once the new routing is published.
+              </p>
+              {site.active_release_id && (
+                <p className="text-xs text-[var(--color-ink-soft)]">
+                  To undo, put <Mono>{shortId(site.active_release_id)}</Mono> live again from this list.
+                </p>
+              )}
+              {site.suspended && <p className="text-xs text-[var(--color-warning-bold)]">The site is suspended, so nothing is served until it is resumed.</p>}
+            </div>
+          }
+          onClose={() => setAction(null)}
+          onSubmit={async ({ idempotencyKey }) => {
+            const updated = await refreshOnConflict(
+              () => promoteHostingRelease(site.id, action.release.id, site.revision, { idempotencyKey }),
+              () => onSiteChanged(),
+            );
+            onSiteChanged(updated);
+            return `Release ${shortId(action.release.id)} is live on ${site.hostname}`;
+          }}
+        />
+      )}
+
+      {action?.kind === 'retire' && (
+        <OperatorActionDialog
+          open
+          title="Retire release"
+          tone="danger"
+          reason="none"
+          submitLabel="Retire release"
+          fingerprint={action.release.id}
+          impact={
+            <p>
+              Retires release <Mono>{shortId(action.release.id)}</Mono> and deletes its files once cleanup runs. It can no longer be put
+              live. apid refuses if a preview still serves it.
+            </p>
+          }
+          onClose={() => setAction(null)}
+          onSubmit={async () => {
+            await refreshOnConflict(() => retireHostingRelease(site.id, action.release.id), releases.reload);
+            releases.reload();
+            return `Retiring release ${shortId(action.release.id)}`;
+          }}
+        />
+      )}
     </div>
   );
 }
