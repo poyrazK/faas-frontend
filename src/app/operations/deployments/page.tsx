@@ -34,6 +34,7 @@ import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog
 import { appDeploymentsHref, deploymentHref, tenantHref } from '@/lib/routes';
 import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
 import { StaleRepairDialog } from './StaleRepairDialog';
+import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 
 const PAGE_SIZE = 50;
 const POLL_MS = 30000;
@@ -286,80 +287,60 @@ function DeploymentOperations() {
             <table className="dtable text-xs">
               <thead>
                 <tr>
-                  <th>Deployment</th>
                   <th>App</th>
-                  <th>Account</th>
                   <th>Status</th>
                   <th>Error</th>
+                  <th>Account</th>
                   <th>Created</th>
-                  <th />
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {page.deployments.map((d) => (
-                  <tr key={d.id}>
-                    <td>
-                      <EntityId id={d.id} kind="deployment" href={null} />
-                      <div className="text-[11px] text-[var(--color-ink-muted)]">
-                        {d.kind || 'image'} · {formatBytes(d.source_bytes)}
+                  <tr key={d.id} {...rowOpener(() => openDetail(d.id), `Open deployment ${short(d.id)} of ${d.app_slug}`)}>
+                    <td className="nowrap">
+                      <span className="cell-primary">{d.app_slug}</span>
+                      {d.app_status !== 'active' && <span className="badge badge-neutral ml-1.5">{d.app_status}</span>}
+                      <div className="font-mono text-[11px] text-[var(--color-ink-muted)]" title={d.id}>
+                        {short(d.id)} · {d.kind || 'image'} · {formatBytes(d.source_bytes)}
                       </div>
                     </td>
-                    <td>
-                      <span className="cell-primary">{d.app_slug}</span>
-                      {d.app_status !== 'active' && (
-                        <span className="badge badge-neutral ml-1.5">{d.app_status}</span>
-                      )}
-                      {app !== d.app_id && (
-                        <div>
-                          <button
-                            className="text-[11px] text-[var(--color-ink-muted)] hover:underline"
-                            onClick={() => setFilters({ account: d.account_id, app: d.app_id })}
-                          >
-                            Only this app
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <EntityId id={d.account_id} kind="account" />
-                      {account !== d.account_id && (
-                        <div>
-                          <button
-                            className="text-[11px] text-[var(--color-ink-muted)] hover:underline"
-                            onClick={() => setFilters({ account: d.account_id, app: null })}
-                          >
-                            Only this account
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                    <td>
+                    <td className="nowrap">
                       <span className={`badge ${deploymentStatusTone(d.status)}`}>{d.status}</span>
-                      {d.rollout_state && (
-                        <div className="mt-0.5 text-[11px] text-[var(--color-ink-muted)]">rollout: {d.rollout_state}</div>
-                      )}
+                      {d.rollout_state && <div className="mt-0.5 text-[11px] text-[var(--color-ink-muted)]">rollout: {d.rollout_state}</div>}
                     </td>
-                    <td className="max-w-[280px]">
+                    <td className="max-w-[320px]">
                       {d.error_code || d.error ? (
-                        <>
+                        <div className="truncate" title={[d.error_code, d.error].filter(Boolean).join(': ')}>
                           {d.error_code && <span className="font-mono text-[var(--color-danger)]">{d.error_code}</span>}
-                          {d.error && (
-                            <div className="truncate text-[var(--color-ink-muted)]" title={d.error}>
-                              {d.error}
-                            </div>
-                          )}
-                        </>
+                          {d.error_code && d.error && ' '}
+                          {d.error && <span className="text-[var(--color-ink-muted)]">{d.error}</span>}
+                        </div>
                       ) : d.cancel_reason ? (
                         <span className="text-[var(--color-ink-muted)]">cancelled: {d.cancel_reason}</span>
                       ) : (
                         <span className="text-[var(--color-ink-muted)]">—</span>
                       )}
                     </td>
-                    <td title={d.created_at}>{relativeTime(d.created_at)}</td>
-                    <td className="text-right">
-                      <button onClick={() => openDetail(d.id)} className="btn btn-secondary btn-xs">
-                        Inspect
-                      </button>
+                    <td className="nowrap">
+                      <EntityId id={d.account_id} kind="account" copy={false} />
+                    </td>
+                    <td className="nowrap" title={d.created_at}>
+                      {relativeTime(d.created_at)}
+                    </td>
+                    <td className="cell-menu">
+                      <RowMenu
+                        label={`Actions for deployment ${short(d.id)}`}
+                        items={[
+                          { label: 'Open deployment', onSelect: () => openDetail(d.id) },
+                          app !== d.app_id && { label: 'Show only this app', onSelect: () => setFilters({ account: d.account_id, app: d.app_id }) },
+                          account !== d.account_id && { label: 'Show only this account', onSelect: () => setFilters({ account: d.account_id, app: null }) },
+                          { label: 'Open tenant', href: tenantHref(d.account_id) },
+                          { label: 'Copy deployment ID', onSelect: () => copyText(d.id) },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}

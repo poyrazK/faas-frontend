@@ -193,13 +193,15 @@
   /* ── Data table ──────────────────────────────────────────────────────── */
   .dtable { @apply w-full text-left text-sm; border-collapse: collapse; }
   .dtable th {
-    @apply px-5 py-3 text-xs font-medium whitespace-nowrap;
+    /* relative: a visually hidden header label (sr-only, absolutely
+       positioned) stays inside the table's scroll area instead of widening the page. */
+    @apply relative px-5 py-3 text-xs font-medium whitespace-nowrap;
     color: var(--color-ink-muted);
     background: var(--color-surface-sunken);
     border-bottom: 1px solid var(--color-line);
   }
   .dtable td {
-    @apply px-5 py-3.5;
+    @apply px-5 py-3;
     color: var(--color-ink-soft);
     border-bottom: 1px solid var(--color-line);
     vertical-align: middle;
@@ -207,6 +209,13 @@
   .dtable tbody tr:last-child td { border-bottom: 0; }
   .dtable tbody tr:hover td { background: var(--color-surface-sunken); }
   .dtable .cell-primary { @apply font-medium; color: var(--color-ink); }
+  /* A row that opens its item (rowOpener): the whole row is the target. */
+  .dtable tr.row-link { cursor: pointer; }
+  .dtable tr.row-link:focus-visible { outline: 2px solid var(--color-brand-bright); outline-offset: -2px; }
+  /* Short values (sizes, counts, times, badges) never wrap mid-value. */
+  .dtable td.nowrap, .dtable .nowrap { white-space: nowrap; }
+  /* The trailing actions cell: as narrow as its "⋯" button. */
+  .dtable td.cell-menu { @apply w-px py-0 pl-1 pr-3 text-right; }
 
   /* Pagination / count strip under a table. */
   .table-foot {

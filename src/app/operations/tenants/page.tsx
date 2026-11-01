@@ -10,9 +10,23 @@ import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bit
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
-import { EntityId, shortId } from '@/components/operator/EntityId';
+import { shortId } from '@/components/operator/EntityId';
+import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 
 const PAGE_SIZE = 100;
+
+/**
+ * How a tenant row reads: the email once revealed, else its org, else its
+ * short account ID (so hidden-email rows stay distinguishable), with the
+ * rest on the second line.
+ */
+function tenantLines(tenant: ObsTenantRow): { primary: string; secondary: string; mono: boolean } {
+  const id = shortId(tenant.account_id);
+  const kind = tenant.is_personal ? 'Personal account' : 'Organization account';
+  if (tenant.email) return { primary: tenant.email, secondary: tenant.org_slug ? `${id} · org ${tenant.org_slug}` : id, mono: false };
+  if (tenant.org_slug) return { primary: `org ${tenant.org_slug}`, secondary: id, mono: false };
+  return { primary: id, secondary: kind, mono: true };
+}
 
 
 
@@ -259,53 +273,55 @@ function TenantsDirectory() {
             <table className="dtable text-xs">
               <thead>
                 <tr>
-                  <th>Account</th>
-                  <th>Email</th>
+                  <th>Customer</th>
                   <th>Plan</th>
                   <th>Status</th>
-                  <th>Apps / live</th>
+                  <th>Apps</th>
                   <th>MFA</th>
                   <th>Created</th>
-                  <th />
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((tenant) => (
-                  <tr key={tenant.account_id}>
-                    <td className="font-mono">
-                      <EntityId id={tenant.account_id} kind="account" />
-                      {tenant.org_slug && (
-                        <div className="text-[11px] text-[var(--color-ink-muted)]">org: {tenant.org_slug}</div>
-                      )}
-                    </td>
-                    <td>
-                      {tenant.email ? (
-                        <Link href={tenantHref(tenant.account_id)} className="cell-primary hover:underline">
-                          {tenant.email}
+                {visibleRows.map((tenant) => {
+                  const lines = tenantLines(tenant);
+                  return (
+                    <tr key={tenant.account_id} {...rowOpener(() => router.push(tenantHref(tenant.account_id)), `Open tenant ${lines.primary}`)}>
+                      <td className="nowrap" title={tenant.account_id}>
+                        <Link href={tenantHref(tenant.account_id)} className={`cell-primary hover:underline ${lines.mono ? 'font-mono' : ''}`}>
+                          {lines.primary}
                         </Link>
-                      ) : (
-                        <span className="italic text-[var(--color-ink-muted)]">hidden</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="badge badge-neutral uppercase">{tenant.plan}</span>
-                    </td>
-                    <td>
-                      <StatusBadge status={tenant.status} />
-                    </td>
-                    <td>
-                      <span className="font-semibold">{tenant.apps_count}</span> apps ·{' '}
-                      <span className="font-semibold text-[var(--color-brand-bright)]">{tenant.deployments_live_count}</span> live
-                    </td>
-                    <td>{tenant.mfa_enrolled ? 'Enrolled' : <span className="text-[var(--color-ink-muted)]">Off</span>}</td>
-                    <td>{relativeTime(tenant.created_at)}</td>
-                    <td className="text-right">
-                      <Link href={tenantHref(tenant.account_id)} className="btn btn-secondary btn-xs">
-                        Open
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                        <div className="text-[11px] text-[var(--color-ink-muted)]">{lines.secondary}</div>
+                      </td>
+                      <td className="nowrap">
+                        <span className="badge badge-neutral uppercase">{tenant.plan}</span>
+                      </td>
+                      <td className="nowrap">
+                        <StatusBadge status={tenant.status} />
+                      </td>
+                      <td className="nowrap">
+                        {tenant.apps_count} apps · <span className="text-[var(--color-brand-bright)]">{tenant.deployments_live_count} live</span>
+                      </td>
+                      <td className="nowrap">{tenant.mfa_enrolled ? 'On' : <span className="text-[var(--color-ink-muted)]">Off</span>}</td>
+                      <td className="nowrap" title={tenant.created_at}>
+                        {relativeTime(tenant.created_at)}
+                      </td>
+                      <td className="cell-menu">
+                        <RowMenu
+                          label={`Actions for tenant ${lines.primary}`}
+                          items={[
+                            { label: 'Open workspace', href: tenantHref(tenant.account_id) },
+                            { label: 'Deployments', href: `/deployments?${new URLSearchParams({ account: tenant.account_id, status: 'all' })}` },
+                            { label: 'Job runs', href: `/jobs?${new URLSearchParams({ account: tenant.account_id })}` },
+                            { label: 'Copy account ID', onSelect: () => copyText(tenant.account_id) },
+                          ]}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

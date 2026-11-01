@@ -263,8 +263,9 @@ describe('incidents page', () => {
     const html = render(IncidentsPage);
     expect(html).toContain('FaasApidDown (apid)');
     expect(html).toContain('unacked');
-    expect(html).toContain('href="/telemetry"');
-    expect(html).toContain('https://github.com/poyrazK/faas/blob/main/docs/ops/alert-cookbook.md');
+    // The row opens the incident; its console and runbook links live in the row's menu.
+    expect(html).toContain('aria-label="Open incident: FaasApidDown (apid)"');
+    expect(html).toContain('aria-label="Actions for incident FaasApidDown (apid)"');
     expect(html).toContain('Incomplete snapshot');
   });
 
@@ -290,7 +291,7 @@ describe('incidents page', () => {
     const html = render(IncidentsPage);
     expect(html).toContain('deploy failed');
     expect(html).toContain('<option value="deployment" selected="">');
-    expect(html).toContain(`href="/deployments?deployment=${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}"`);
+    expect(html).toContain('aria-label="Open incident: deploy failed"');
   });
 });
 
