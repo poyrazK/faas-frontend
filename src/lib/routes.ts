@@ -47,6 +47,7 @@ export const OPS_ROUTES: readonly OpsRoute[] = [
   { slug: 'billing', label: 'Billing catalog', icon: 'plans', group: 'Platform admin' },
   { slug: 'status', label: 'Status page', icon: 'globe', group: 'Platform admin' },
   { slug: 'github', label: 'GitHub recovery', icon: 'code', group: 'Platform admin' },
+  { slug: 'hosting', label: 'Hosting sites', icon: 'domains', group: 'Platform admin' },
 ];
 
 /** The console's name in browser tabs; the root layout's title template appends it to every page title. */
@@ -68,6 +69,9 @@ export function isRouteActive(slug: string, pathname: string): boolean {
   const clean = pathname.startsWith('/operations/') ? pathname.slice('/operations'.length) : pathname;
   return clean === `/${slug}` || clean.startsWith(`/${slug}/`);
 }
+
+/** One hosting site: its automation credentials and GitHub OIDC trusts. */
+export const hostingSiteHref = (siteId: string) => `/hosting/${encodeURIComponent(siteId.trim())}`;
 
 /** Tabs of the tenant workspace (/tenants/<id>?tab=…). */
 export const TENANT_TABS = ['overview', 'apps', 'deployments', 'jobs', 'billing', 'flags', 'activity'] as const;

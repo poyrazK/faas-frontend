@@ -7,6 +7,7 @@ export const ACCOUNT = '11111111-2222-4333-8444-555555555555';
 export const DEPLOYMENT = '7a1b2c3d-0000-4000-8000-000000000001';
 export const RELEASE_NEW = 'a3f9c2d1e8b74c6f9d0e1a2b3c4d5e6f7a8b9c0d';
 export const TOTP = '123456';
+export const HOSTING_SITE = 'd0000000-0000-4000-8000-000000000001';
 
 export interface MockRequest {
   method: string;
@@ -17,8 +18,8 @@ export interface MockRequest {
 }
 
 interface Mock {
-  /** Flips mock switches: {"enrolled": false} (no authenticator), {"expired": true} (session gone). */
-  set: (switches: { enrolled?: boolean; expired?: boolean }) => Promise<void>;
+  /** Flips mock switches: {"enrolled": false} (no authenticator), {"expired": true} (session gone), {"oidc": false} (hosting OIDC off). */
+  set: (switches: { enrolled?: boolean; expired?: boolean; oidc?: boolean }) => Promise<void>;
   /** Requests the console sent since the test started, oldest first. */
   requests: () => Promise<MockRequest[]>;
 }
