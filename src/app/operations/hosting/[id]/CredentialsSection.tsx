@@ -9,7 +9,7 @@ import {
   CREDENTIAL_LIFETIMES,
   DEFAULT_CREDENTIAL_LIFETIME,
   expiresSoon,
-  hostingFeatureOff,
+  hostingSectionOff,
   HOSTING_OPERATIONS,
   isExpired,
   revokeAutomationCredential,
@@ -45,7 +45,7 @@ export function CredentialsSection({ site, query }: { site: HostingSite; query: 
   const [issued, setIssued] = useState<HostingAutomationCredentialResponse | null>(null);
   const [revoking, setRevoking] = useState<HostingAutomationCredential | null>(null);
   const { data, error, loading, reload } = query;
-  const off = hostingFeatureOff(error);
+  const off = hostingSectionOff(error);
 
   return (
     <>

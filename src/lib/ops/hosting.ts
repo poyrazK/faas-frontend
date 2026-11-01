@@ -1060,7 +1060,27 @@ const FEATURE_OFF: Record<string, string> = {
   frontend_hosting_preview_reservations_disabled: 'Preview reservations, or the automation, preview and durable routing they need, are turned off.',
 };
 
-/** A sentence when `err` means the feature is switched off, else null. */
+/**
+ * While frontend_hosting_enabled is off, apid's hosting.HideDisabled answers
+ * every /v1/internal/hosting route with 404 "no such API route", before
+ * authentication, so a switched-off surface cannot be probed. An apid that
+ * predates a route answers the same way. A missing site or release is a 404
+ * too, but says "no such hosting resource".
+ */
+export const isHiddenRoute = (err: unknown) =>
+  err instanceof ApiError && err.status === 404 && err.code === 'not_found' && err.problem?.detail === 'no such API route';
+
+/** A sentence when `err` means hosting, or one of its features, is switched off; else null. */
 export function hostingFeatureOff(err: unknown): string | null {
+  if (isHiddenRoute(err)) return 'Static hosting is turned off on this control plane: apid hides its routes while frontend_hosting_enabled is off.';
   return err instanceof ApiError && err.status === 503 ? (FEATURE_OFF[err.code] ?? null) : null;
+}
+
+/**
+ * hostingFeatureOff for one section of a site that loaded. Hosting is on
+ * there, so a hidden route means the deployed apid does not serve it yet.
+ */
+export function hostingSectionOff(err: unknown): string | null {
+  if (isHiddenRoute(err)) return 'The deployed apid does not serve this route yet; it may be older than this console.';
+  return hostingFeatureOff(err);
 }

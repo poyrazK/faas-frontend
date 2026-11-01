@@ -22,13 +22,15 @@ export interface MockRequest {
 interface Mock {
   /**
    * Flips mock switches: {"enrolled": false} (no authenticator), {"expired": true} (session gone), {"oidc": false},
-   * {"analytics": false} or {"retention": false} (hosting features off), {"siteRevision": 9} or {"retentionRevision": 4}
+   * {"hostingEnabled": false} (apid hides every hosting route), {"analytics": false} or {"retention": false} (hosting features off),
+   * {"siteRevision": 9} or {"retentionRevision": 4}
    * (someone else changed the site or its retention policy).
    */
   set: (switches: {
     enrolled?: boolean;
     expired?: boolean;
     oidc?: boolean;
+    hostingEnabled?: boolean;
     analytics?: boolean;
     retention?: boolean;
     siteRevision?: number;

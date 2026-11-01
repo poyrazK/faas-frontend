@@ -8,6 +8,7 @@ import {
   getHostingUsage,
   hostingFeatureOff,
   hostingFeatures,
+  isHiddenRoute,
   listHostingSites,
   percentText,
   shareOf,
@@ -25,6 +26,7 @@ import { EmptyState } from '@/components/ui/States';
 import { Icon } from '@/components/ui/Icons';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 import { shortId } from '@/components/operator/EntityId';
+import { ConfigurationLink } from './ConfigurationLink';
 
 /**
  * Static sites on Gregale hosting. apid scopes the list (and the storage
@@ -72,7 +74,7 @@ export default function HostingSitesPage() {
 
       <SectionCard title="Sites">
         {off ? (
-          <EmptyState icon="domains" title="Hosting is not available" hint={off} />
+          <EmptyState icon="domains" title="Hosting is not available" hint={off} action={isHiddenRoute(error) ? <ConfigurationLink /> : undefined} />
         ) : error && !data ? (
           <div role="alert" className="p-8 text-center text-sm text-[var(--color-danger)]">
             Could not load hosting sites: {error.message}

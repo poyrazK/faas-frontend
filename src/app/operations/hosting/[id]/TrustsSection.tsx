@@ -6,7 +6,7 @@ import {
   branchOf,
   createOIDCTrust,
   EMPTY_TRUST_DRAFT,
-  hostingFeatureOff,
+  hostingSectionOff,
   oidcAudience,
   revokeOIDCTrust,
   TRUST_EVENTS,
@@ -35,7 +35,7 @@ export function TrustsSection({ site, query }: { site: HostingSite; query: Async
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<HostingOIDCTrust | null>(null);
   const { data, error, loading, reload } = query;
-  const off = hostingFeatureOff(error);
+  const off = hostingSectionOff(error);
 
   return (
     <>

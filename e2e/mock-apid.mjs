@@ -11,7 +11,7 @@
 // Test hooks (not part of apid):
 //   POST /__mock/reset              fresh state, timestamps relative to now
 //   POST /__mock/state {...}        flip switches: {"enrolled": false}, {"expired": true}, {"oidc": false},
-//                                   {"analytics": false}, {"retention": false}, {"siteRevision": 9}, {"retentionRevision": 4}
+//                                   {"hostingEnabled": false}, {"analytics": false}, {"retention": false}, {"siteRevision": 9}, {"retentionRevision": 4}
 //   GET  /__mock/requests           every request since the last reset, oldest first
 //
 // MOCK_APID_PORT sets the port (3199); MOCK_APID_LOG=1 logs each request.
@@ -48,6 +48,7 @@ function freshState() {
     configVersion: 3,
     suspended: false,
     oidc: true,
+    hostingEnabled: true,
     analytics: true,
     retention: true,
     tokens: 0,
@@ -272,7 +273,7 @@ function route(method, path, query, body) {
     return { status: 200, body: { ok: true } };
   }
   if (key === 'POST /__mock/state') {
-    for (const name of ['enrolled', 'expired', 'oidc', 'analytics', 'retention']) if (name in (body || {})) state[name] = Boolean(body[name]);
+    for (const name of ['enrolled', 'expired', 'oidc', 'hostingEnabled', 'analytics', 'retention']) if (name in (body || {})) state[name] = Boolean(body[name]);
     // Another operator changed the site, or its retention policy, after the page loaded.
     if ('siteRevision' in (body || {})) state.hosting.revision = Number(body.siteRevision);
     if ('retentionRevision' in (body || {})) state.hosting.retention.revision = Number(body.retentionRevision);
@@ -281,6 +282,8 @@ function route(method, path, query, body) {
   if (key === 'GET /__mock/requests') return { status: 200, body: state.requests };
   if (key === 'GET /healthz') return { status: 200, text: 'ok' };
 
+  // hosting.HideDisabled: before authentication, every hosting route is "no such API route" while hosting is off.
+  if (!state.hostingEnabled && /^\/v1\/internal\/hosting(\/|$)/.test(path)) return problem(404, 'not_found', 'Not found', 'no such API route');
   if (state.expired) return problem(401, 'session_expired', 'Session expired', 'the session is no longer valid');
   if (adminWrite && !state.enrolled) {
     return problem(403, 'mfa_required', 'MFA required', 'platform operators must enroll an authenticator: complete /v1/account/mfa/enroll and /v1/account/mfa/confirm');
