@@ -1,6 +1,6 @@
 'use client';
 
-import React, { use } from 'react';
+import React, { Suspense, use, useState } from 'react';
 import Link from 'next/link';
 import { ApiError } from '@/lib/api';
 import {
@@ -13,16 +13,21 @@ import {
   siteStatus,
   type HostingSite,
 } from '@/lib/ops/hosting';
-import { hostingSiteHref, opsHref } from '@/lib/routes';
+import { HOSTING_SITE_TABS, hostingSiteHref, opsHref, type HostingSiteTab } from '@/lib/routes';
 import { relativeTime } from '@/lib/format';
 import { useAsync } from '@/lib/useAsync';
+import { useUrlParams } from '@/lib/useUrlState';
 import { PageHeader } from '@/components/ui/bits';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { EmptyState, ErrorState } from '@/components/ui/States';
-import { Icon } from '@/components/ui/Icons';
+import { Icon, type IconName } from '@/components/ui/Icons';
+import { PageTabs } from '@/components/ui/PageTabs';
 import { CopyLinkButton, EntityId } from '@/components/operator/EntityId';
 import { CredentialsSection } from './CredentialsSection';
 import { TrustsSection } from './TrustsSection';
+import { ReleasesTab } from './ReleasesTab';
+import { ActivityTab } from './ActivityTab';
+import { DomainsTab } from './DomainsTab';
 
 const decode = (value: string) => {
   try {
@@ -32,20 +37,41 @@ const decode = (value: string) => {
   }
 };
 
+const TABS: readonly { key: HostingSiteTab; label: string; icon: IconName }[] = [
+  { key: 'access', label: 'Access', icon: 'keys' },
+  { key: 'releases', label: 'Releases', icon: 'deployments' },
+  { key: 'activity', label: 'CI activity', icon: 'queues' },
+  { key: 'domains', label: 'Domains & previews', icon: 'domains' },
+];
+
+const isTab = (value: string | null): value is HostingSiteTab => !!value && (HOSTING_SITE_TABS as readonly string[]).includes(value);
+
 /**
- * One hosting site: who can deploy to it. Issuing or revoking a credential
- * or trust asks for a fresh authenticator code (the transport prompts on
- * step_up_required); API keys cannot do either.
+ * One hosting site: who can deploy to it, what is live, its CI runs, and its
+ * domains and previews. Each view has its own URL (?tab=…). Issuing or
+ * revoking a credential or trust asks for a fresh authenticator code (the
+ * transport prompts on step_up_required); API keys cannot do either.
  */
 export default function HostingSitePage({ params }: { params: Promise<{ id: string }> }) {
-  const siteId = decode(use(params).id).trim();
+  const { id } = use(params);
+  return (
+    <Suspense>
+      <HostingSiteView id={id} />
+    </Suspense>
+  );
+}
+
+function HostingSiteView({ id }: { id: string }) {
+  const siteId = decode(id).trim();
+  const [params, setParams] = useUrlParams();
+  const requested = params.get('tab');
+  const tab: HostingSiteTab = isTab(requested) ? requested : 'access';
+  // Bumped by Refresh so the open view reloads its own sections too.
+  const [nonce, setNonce] = useState(0);
   const site = useAsync(() => getHostingSite(siteId), [siteId], 60_000);
-  const credentials = useAsync(() => listAutomationCredentials(siteId), [siteId]);
-  const trusts = useAsync(() => listOIDCTrusts(siteId), [siteId]);
   const reloadAll = () => {
     site.reload();
-    credentials.reload();
-    trusts.reload();
+    setNonce((n) => n + 1);
   };
 
   const off = hostingFeatureOff(site.error);
@@ -62,10 +88,10 @@ export default function HostingSitePage({ params }: { params: Promise<{ id: stri
       </Link>
       <PageHeader
         title={site.data?.name ?? 'Hosting site'}
-        subtitle={site.data ? site.data.hostname : 'Who can deploy to this site: automation credentials and GitHub OIDC trusts.'}
+        subtitle={site.data ? site.data.hostname : 'Who can deploy to this site, what is live, and its CI runs and domains.'}
         actions={
           <>
-            <CopyLinkButton href={hostingSiteHref(siteId)} />
+            <CopyLinkButton href={hostingSiteHref(siteId, tab)} />
             <button onClick={reloadAll} className="btn btn-secondary btn-sm">
               <Icon name="refresh" size={14} />
               Refresh
@@ -99,12 +125,34 @@ export default function HostingSitePage({ params }: { params: Promise<{ id: stri
         <div className="card p-8 text-center text-sm text-[var(--color-ink-muted)]">Loading hosting site…</div>
       ) : (
         <>
-          <SnapshotFreshness snapshots={[site, credentials, trusts]} />
+          <SnapshotFreshness snapshots={[site]} />
           <SiteFacts site={site.data} />
-          <CredentialsSection site={site.data} query={credentials} />
-          <TrustsSection site={site.data} query={trusts} />
+          <div className="mt-6">
+            <PageTabs
+              tabs={TABS}
+              value={tab}
+              label="Hosting site views"
+              onChange={(next) => setParams({ tab: next === 'access' ? null : next, run: null })}
+            />
+          </div>
+          {tab === 'access' && <AccessTab site={site.data} nonce={nonce} />}
+          {tab === 'releases' && <ReleasesTab site={site.data} nonce={nonce} />}
+          {tab === 'activity' && <ActivityTab site={site.data} nonce={nonce} />}
+          {tab === 'domains' && <DomainsTab site={site.data} nonce={nonce} />}
         </>
       )}
+    </div>
+  );
+}
+
+/** Who can deploy: automation credentials and GitHub OIDC trusts. */
+function AccessTab({ site, nonce }: { site: HostingSite; nonce: number }) {
+  const credentials = useAsync(() => listAutomationCredentials(site.id), [site.id, nonce]);
+  const trusts = useAsync(() => listOIDCTrusts(site.id), [site.id, nonce]);
+  return (
+    <div className="space-y-6">
+      <CredentialsSection site={site} query={credentials} />
+      <TrustsSection site={site} query={trusts} />
     </div>
   );
 }

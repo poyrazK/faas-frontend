@@ -1,4 +1,4 @@
-import { expect, HOSTING_SITE, stepUp, test } from './fixtures';
+import { expect, HOSTING_RUN_EXPIRED, HOSTING_RUN_OK, HOSTING_SITE, stepUp, test } from './fixtures';
 
 const CREDENTIALS = `/v1/internal/hosting/sites/${HOSTING_SITE}/automation-credentials`;
 
@@ -84,4 +84,47 @@ test('switched-off OIDC is explained instead of shown as an error', async ({ pag
 test('a site the operator does not own says so', async ({ page }) => {
   await page.goto('/hosting/d0000000-0000-4000-8000-00000000ffff');
   await expect(page.getByRole('heading', { name: 'No such site' })).toBeVisible();
+});
+
+test('site views are tabs with their own URL, starting with what is live', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}`);
+  const tabs = page.getByRole('tablist', { name: 'Hosting site views' });
+  await expect(tabs.getByRole('tab', { name: 'Access' })).toHaveAttribute('aria-selected', 'true');
+
+  await tabs.getByRole('tab', { name: 'Releases' }).click();
+  await expect(page).toHaveURL(/[?&]tab=releases/);
+  await expect(page.getByText('Generation 8 is waiting to publish (7 is live). 2 retries so far, last error provider_timeout.')).toBeVisible();
+  await expect(page.getByText('Nothing needs retrying.')).toBeVisible();
+  await expect(page.getByRole('row', { name: /f1a00000/ }).first()).toContainText('Live');
+  await expect(page.getByRole('row', { name: /f2b00000/ }).first()).toContainText('Uploading');
+  await expect(page.getByRole('row', { name: /6 → 7/ })).toContainText('Session');
+
+  await page.reload();
+  await expect(tabs.getByRole('tab', { name: 'Releases' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('a CI run opens its diagnostics, and the run is in the URL', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=activity`);
+  await page.getByRole('row', { name: 'Open run b2b00000…' }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${HOSTING_RUN_EXPIRED}`));
+  const dialog = page.getByRole('dialog', { name: 'CI run b2b00000…' });
+  await expect(dialog).toContainText('The original CI preview window has expired.');
+  await expect(dialog).toContainText('Inspect the blocked or unknown checks before retrying anything.');
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(page).not.toHaveURL(/run=/);
+
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=activity&run=${HOSTING_RUN_OK}`);
+  await expect(page.getByRole('dialog', { name: 'CI run b1a00000…' })).toContainText('Nothing needs retrying.');
+});
+
+test('domains show the DNS records still to set, and previews their state', async ({ page }) => {
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=domains`);
+  const pending = page.getByRole('row', { name: /docs\.gregale\.dev/ }).first();
+  await expect(pending).toContainText('Pending DNS');
+  await expect(pending).toContainText('dns_not_found');
+  await expect(page.getByText('Still to set in DNS:')).toBeVisible();
+  await expect(page.getByText('_gregale-challenge.docs.gregale.dev')).toBeVisible();
+  await expect(page.getByRole('row', { name: /www\.gregale\.dev/ })).toContainText('Active');
+  await expect(page.getByRole('row', { name: /redesign-b1a00000/ })).toContainText('Live');
+  await expect(page.getByRole('row', { name: /main-b2b00000/ })).toContainText('Expired');
 });

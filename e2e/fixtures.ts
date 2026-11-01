@@ -8,6 +8,8 @@ export const DEPLOYMENT = '7a1b2c3d-0000-4000-8000-000000000001';
 export const RELEASE_NEW = 'a3f9c2d1e8b74c6f9d0e1a2b3c4d5e6f7a8b9c0d';
 export const TOTP = '123456';
 export const HOSTING_SITE = 'd0000000-0000-4000-8000-000000000001';
+export const HOSTING_RUN_EXPIRED = 'b2b00000-0000-4000-8000-000000000002';
+export const HOSTING_RUN_OK = 'b1a00000-0000-4000-8000-000000000001';
 
 export interface MockRequest {
   method: string;

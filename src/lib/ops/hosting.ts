@@ -15,6 +15,10 @@
    These writes take no Idempotency-Key: the token is returned once and is
    never kept in a replay receipt. A create that timed out may still have
    issued a credential, so the page reloads the list rather than retrying.
+
+   The rest is read-only: publication status, releases, promotion history,
+   CI activity, diagnostics, custom domains and previews. apid states plainly
+   what it did not check (serving health, DNS, TLS), and so does the console.
    ========================================================================== */
 
 import { ApiError, request } from '@/lib/api';
@@ -120,6 +124,307 @@ export const revokeOIDCTrust = (site: string, trust: string) =>
     { method: 'DELETE' },
     'none',
   );
+
+/* ──────────────────────────────── Read models ─────────────────────────── */
+
+/** @go api.HostingPublicationStatus */
+export interface HostingPublicationStatus {
+  /** published, pending, or untracked (a site without durable routing). */
+  state: string;
+  generation?: number;
+  published_generation?: number;
+  published_at?: string;
+  pending_since?: string;
+  next_attempt_at?: string;
+  retry_count: number;
+  last_error_code?: string;
+}
+
+/** @go api.HostingSiteStatus */
+export interface HostingSiteStatus {
+  site: HostingSite;
+  publication: HostingPublicationStatus;
+}
+
+/** Caller-provided labels, not a verified attestation. @go api.HostingReleaseProvenance */
+export interface HostingReleaseProvenance {
+  repository?: string;
+  commit_sha?: string;
+  branch?: string;
+  description?: string;
+}
+
+/** @go api.HostingManifest */
+export interface HostingManifestSummary {
+  files: unknown[];
+  spa_fallback: boolean;
+}
+
+/** @go api.HostingRelease */
+export interface HostingRelease {
+  id: string;
+  site_id: string;
+  /** pending (uploading), ready, retiring or deleted. */
+  state: string;
+  manifest: HostingManifestSummary;
+  artifact_bytes: number;
+  created_at: string;
+  last_activity_at: string;
+  first_promoted_at?: string;
+  retired_at?: string;
+  provenance?: HostingReleaseProvenance;
+}
+
+/** @go api.HostingPromotionActor */
+export interface HostingPromotionActor {
+  account_id: string;
+  key_id?: string;
+}
+
+/** @go api.HostingPromotionEvent */
+export interface HostingPromotionEvent {
+  site_id: string;
+  revision: number;
+  previous_revision: number;
+  release_id: string;
+  previous_release_id?: string;
+  actor: HostingPromotionActor;
+  accepted_at: string;
+  provenance?: HostingReleaseProvenance;
+}
+
+/** @go api.HostingHistoryPage */
+export interface HostingHistoryPage {
+  events: HostingPromotionEvent[];
+  next_before_revision?: number;
+  retention_limit: number;
+}
+
+/** @go api.HostingDiagnosticCheck */
+export interface HostingDiagnosticCheck {
+  /** site, run, release, preview, publication, observation or serving. */
+  step: string;
+  /** ok, pending, blocked, unknown or not_checked. */
+  state: string;
+  code: string;
+  summary: string;
+  action: string;
+  next_attempt_at?: string;
+}
+
+/** @go api.HostingDiagnostics */
+export interface HostingDiagnostics {
+  site_id: string;
+  run_id?: string;
+  release_id?: string;
+  preview_id?: string;
+  observed_at: string;
+  serving_health: string;
+  /** none, retry_same_run or inspect_before_retry. */
+  retry_advice: string;
+  checks: HostingDiagnosticCheck[];
+}
+
+/** One CI run: stored intent and observations, not GitHub job health. @go api.HostingActivityEntry */
+export interface HostingActivityEntry {
+  run_id: string;
+  release_id: string;
+  preview_id: string;
+  created_at: string;
+  preview_expires_at: string;
+  canceled?: boolean;
+  /** recorded, canceled, or the worst check state. */
+  state: string;
+  provenance?: HostingReleaseProvenance;
+  checks: HostingDiagnosticCheck[];
+}
+
+/** @go api.HostingActivityPage */
+export interface HostingActivityPage {
+  site_id: string;
+  entries: HostingActivityEntry[];
+  next_cursor?: string;
+  observed_at: string;
+  serving_health: string;
+  source_labels_included: boolean;
+}
+
+/** @go api.HostingDNSRecord */
+export interface HostingDNSRecord {
+  type: string;
+  name: string;
+  value: string;
+}
+
+/** @go api.HostingDomainDetails */
+export interface HostingDomainDetails {
+  tls_status: string;
+  records: HostingDNSRecord[];
+  verified_at?: string;
+}
+
+/** @go api.HostingDomain */
+export interface HostingDomain {
+  id: string;
+  hostname: string;
+  state: string;
+  details: HostingDomainDetails;
+  attempts: number;
+  next_attempt_at: string;
+  last_error_code?: string;
+  published_at?: string;
+  created_at: string;
+}
+
+/** @go api.HostingPreview */
+export interface HostingPreview {
+  id: string;
+  release_id: string;
+  hostname: string;
+  expires_at: string;
+  revoked: boolean;
+  generation: number;
+  published_generation: number;
+  last_error_code?: string;
+  created_at: string;
+}
+
+export const getHostingSiteStatus = (site: string) =>
+  request<HostingSiteStatus>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/status`, { cache: 'no-store' });
+
+export const listHostingReleases = (site: string) =>
+  request<HostingRelease[]>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/releases`, { cache: 'no-store' });
+
+export const getHostingHistory = (site: string, beforeRevision?: number) => {
+  const query = beforeRevision ? `before_revision=${beforeRevision}` : '';
+  return request<HostingHistoryPage>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/history${query ? `?${query}` : ''}`, {
+    cache: 'no-store',
+  });
+};
+
+export const getHostingActivity = (site: string, before?: string) => {
+  const query = before ? `before=${encodeURIComponent(before)}` : '';
+  return request<HostingActivityPage>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/runs${query ? `?${query}` : ''}`, {
+    cache: 'no-store',
+  });
+};
+
+/** The site's production path, or one CI run's path when `runId` is given. */
+export const getHostingDiagnostics = (site: string, runId?: string) => {
+  const query = runId ? `run_id=${encodeURIComponent(runId)}` : '';
+  return request<HostingDiagnostics>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/diagnostics${query ? `?${query}` : ''}`, {
+    cache: 'no-store',
+  });
+};
+
+export const listHostingDomains = (site: string) =>
+  request<HostingDomain[]>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/domains`, { cache: 'no-store' });
+
+export const listHostingPreviews = (site: string) =>
+  request<HostingPreview[]>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/previews`, { cache: 'no-store' });
+
+type Tone = 'badge-success' | 'badge-warning' | 'badge-danger' | 'badge-neutral';
+
+/** A diagnostic check, or a CI run's worst check. */
+export function checkBadge(state: string): { label: string; tone: Tone } {
+  switch (state) {
+    case 'ok':
+      return { label: 'OK', tone: 'badge-success' };
+    case 'pending':
+      return { label: 'Pending', tone: 'badge-warning' };
+    case 'blocked':
+      return { label: 'Blocked', tone: 'badge-danger' };
+    case 'unknown':
+      return { label: 'Unknown', tone: 'badge-warning' };
+    case 'not_checked':
+      return { label: 'Not checked', tone: 'badge-neutral' };
+    case 'recorded':
+      return { label: 'Recorded', tone: 'badge-neutral' };
+    case 'canceled':
+      return { label: 'Canceled', tone: 'badge-neutral' };
+    default:
+      return { label: state || 'Unknown', tone: 'badge-neutral' };
+  }
+}
+
+export function releaseBadge(state: string): { label: string; tone: Tone } {
+  switch (state) {
+    case 'ready':
+      return { label: 'Ready', tone: 'badge-success' };
+    case 'pending':
+      return { label: 'Uploading', tone: 'badge-warning' };
+    case 'retiring':
+      return { label: 'Retiring', tone: 'badge-neutral' };
+    case 'deleted':
+      return { label: 'Deleted', tone: 'badge-neutral' };
+    default:
+      return { label: state || 'Unknown', tone: 'badge-neutral' };
+  }
+}
+
+export function domainBadge(state: string): { label: string; tone: Tone } {
+  switch (state) {
+    case 'active':
+      return { label: 'Active', tone: 'badge-success' };
+    case 'pending':
+      return { label: 'Pending DNS', tone: 'badge-warning' };
+    case 'deleting':
+      return { label: 'Deleting', tone: 'badge-neutral' };
+    case 'failed':
+      return { label: 'Failed', tone: 'badge-danger' };
+    default:
+      return { label: state || 'Unknown', tone: 'badge-neutral' };
+  }
+}
+
+/** Whether the edge has the site's latest routing, in one line. */
+export function publicationSummary(publication: HostingPublicationStatus): { label: string; tone: Tone; detail: string } {
+  const { state, generation = 0, published_generation: published = 0, retry_count: retries, last_error_code: error } = publication;
+  if (state === 'published') {
+    return { label: 'Published', tone: 'badge-success', detail: `Generation ${generation} is published.` };
+  }
+  if (state === 'pending') {
+    const behind = `Generation ${generation} is waiting to publish (${published ? `${published} is live` : 'nothing published yet'}).`;
+    const retry = retries ? ` ${retries} ${retries === 1 ? 'retry' : 'retries'} so far${error ? `, last error ${error}` : ''}.` : '';
+    return { label: 'Publishing', tone: error ? 'badge-danger' : 'badge-warning', detail: behind + retry };
+  }
+  if (state === 'untracked') {
+    return { label: 'Not tracked', tone: 'badge-neutral', detail: 'The site has no durable routing, so publication is not tracked.' };
+  }
+  return { label: state || 'Unknown', tone: 'badge-neutral', detail: '' };
+}
+
+/** What apid advises after diagnosing. */
+export const RETRY_ADVICE: Record<string, string> = {
+  none: 'Nothing needs retrying.',
+  retry_same_run: 'Resume the same CI run with unchanged files; do not start a new one.',
+  inspect_before_retry: 'Inspect the blocked or unknown checks before retrying anything.',
+};
+
+/** "gregale/website@main · a1b2c3d", or null without labels. */
+export function provenanceLine(provenance?: HostingReleaseProvenance): string | null {
+  if (!provenance) return null;
+  const where = [provenance.repository, provenance.branch].filter(Boolean).join('@');
+  const parts = [where, provenance.commit_sha?.slice(0, 7)].filter(Boolean);
+  return parts.length ? parts.join(' · ') : (provenance.description ?? null);
+}
+
+/** A preview URL's state: revoked and expired win over publication. */
+export function previewBadge(preview: Pick<HostingPreview, 'revoked' | 'expires_at' | 'generation' | 'published_generation' | 'last_error_code'>, now = Date.now()): { label: string; tone: Tone } {
+  if (preview.revoked) return { label: 'Revoked', tone: 'badge-neutral' };
+  if (Date.parse(preview.expires_at) <= now) return { label: 'Expired', tone: 'badge-neutral' };
+  if (preview.published_generation < preview.generation) {
+    return { label: 'Publishing', tone: preview.last_error_code ? 'badge-danger' : 'badge-warning' };
+  }
+  return { label: 'Live', tone: 'badge-success' };
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
 
 /* ─────────────────────────────────── Sites ────────────────────────────── */
 
@@ -331,6 +636,13 @@ const FEATURE_OFF: Record<string, string> = {
   frontend_hosting_automation_disabled: 'Site automation is turned off, so no automation credentials can be issued.',
   frontend_hosting_automation_unconfigured: 'Site automation is waiting for every API writer to be upgraded before it can be enabled.',
   frontend_hosting_oidc_disabled: 'GitHub OIDC for hosting is turned off or not configured on this control plane.',
+  frontend_hosting_activity_disabled: 'CI activity is turned off on this control plane.',
+  frontend_hosting_history_disabled: 'Promotion history is turned off on this control plane.',
+  frontend_hosting_history_unconfigured: 'Promotion history is not configured on this control plane.',
+  frontend_hosting_diagnostics_disabled: 'Deployment diagnostics are turned off or not configured on this control plane.',
+  frontend_hosting_domains_disabled: 'Custom domains are turned off on this control plane.',
+  frontend_hosting_domains_unconfigured: 'Custom domains are on but their DNS provider is not configured.',
+  frontend_hosting_previews_disabled: 'Preview URLs are turned off on this control plane.',
 };
 
 /** A sentence when `err` means the feature is switched off, else null. */

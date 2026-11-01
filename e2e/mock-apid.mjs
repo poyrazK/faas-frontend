@@ -27,6 +27,11 @@ const APP_ID = 'b0000000-0000-4000-8000-000000000001';
 const RELEASE_NEW = 'a3f9c2d1e8b74c6f9d0e1a2b3c4d5e6f7a8b9c0d';
 const RELEASE_OLD = '9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d';
 const SITE_ID = 'd0000000-0000-4000-8000-000000000001';
+const SITE_RELEASE_LIVE = 'f1a00000-0000-4000-8000-000000000001';
+const SITE_RELEASE_STAGED = 'f2b00000-0000-4000-8000-000000000002';
+const SITE_RELEASE_OLD = 'f3c00000-0000-4000-8000-000000000003';
+const RUN_OK = 'b1a00000-0000-4000-8000-000000000001';
+const RUN_EXPIRED = 'b2b00000-0000-4000-8000-000000000002';
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 const now = () => new Date().toISOString();
@@ -85,9 +90,32 @@ const depIncident = () => ({
 
 const site = () => ({
   id: SITE_ID, account_id: 'op-1', project_id: 'gregale', environment: 'production', name: 'website', hostname: 'website.gregale.site',
-  origin_id: 'origin-1', status: 'active', active_release_id: 'f0000000-0000-4000-8000-000000000001', revision: 7, durable_routing: true,
+  origin_id: 'origin-1', status: 'active', active_release_id: SITE_RELEASE_LIVE, revision: 7, durable_routing: true,
   suspended: false, created_at: ago(60 * 24 * 30),
 });
+
+const siteRelease = (id, state, minutesAgo, extra = {}) => ({
+  id, site_id: SITE_ID, state, manifest: { files: [{ path: 'index.html' }, { path: 'app.js' }, { path: 'app.css' }], spa_fallback: true },
+  artifact_bytes: 2_621_440, created_at: ago(minutesAgo), last_activity_at: ago(minutesAgo), ...extra,
+});
+const check = (step, state, code, summary, action) => ({ step, state, code, summary, action });
+const SERVING_NOT_CHECKED = check('serving', 'not_checked', 'serving_not_checked', 'Serving health, DNS, TLS and Access sign-in were not tested.', 'After publication, allow edge refresh and check the URL through the normal Access flow.');
+
+function siteDiagnostics(runId) {
+  const base = { site_id: SITE_ID, started_at: now(), observed_at: now(), serving_health: 'not_checked' };
+  const site = check('site', 'ok', 'site_active', 'Site intent is active.', 'This does not establish that traffic is being served.');
+  const publication = check('publication', 'pending', 'publication_pending', 'Generation 8 is not yet published.', 'Wait for the next attempt; do not change routing meanwhile.');
+  if (!runId) {
+    return { ...base, release_id: SITE_RELEASE_LIVE, retry_advice: 'none', checks: [site, check('release', 'ok', 'release_ready', 'The release is verified.', 'A verified release can remain staged; production promotion is a separate operator action.'), publication, SERVING_NOT_CHECKED] };
+  }
+  if (runId === RUN_EXPIRED) {
+    return { ...base, run_id: runId, release_id: SITE_RELEASE_OLD, retry_advice: 'inspect_before_retry', checks: [site, check('run', 'blocked', 'run_expired', 'The original CI preview window has expired.', 'This run cannot extend or recreate its preview. Review retained resources before explicitly starting a new intent.'), publication, SERVING_NOT_CHECKED] };
+  }
+  if (runId === RUN_OK) {
+    return { ...base, run_id: runId, release_id: SITE_RELEASE_STAGED, preview_id: 'a7a00000-0000-4000-8000-000000000001', retry_advice: 'none', checks: [site, check('run', 'ok', 'run_retained', 'The original CI intent is retained.', 'Keep this run ID, its unchanged files, source labels and original preview TTL.'), publication, SERVING_NOT_CHECKED] };
+  }
+  return { ...base, run_id: runId, retry_advice: 'inspect_before_retry', checks: [site, check('run', 'unknown', 'run_not_found', 'No retained intent was found for this site and run ID.', 'Confirm the exact site and run IDs from CI output before retrying or creating an intent.'), publication, SERVING_NOT_CHECKED] };
+}
 
 /** apid decodes these bodies with DisallowUnknownFields: an unexpected key is a 400. */
 const unknownKeys = (body, allowed) => Object.keys(body || {}).filter((k) => !allowed.includes(k));
@@ -343,6 +371,36 @@ function route(method, path, query, body) {
       state.trusts = state.trusts.filter((t) => t.id !== id);
       return { status: 204 };
     }
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/status`:
+      return { status: 200, body: { site: site(), publication: { state: 'pending', generation: 8, published_generation: 7, published_at: ago(60), pending_since: ago(3), next_attempt_at: ago(-1), last_attempt_at: ago(1), retry_count: 2, last_error_code: 'provider_timeout' } } };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/releases`:
+      return { status: 200, body: [
+        siteRelease(SITE_RELEASE_OLD, 'ready', 60 * 24 * 4, { first_promoted_at: ago(60 * 24 * 4), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: '0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6' } }),
+        siteRelease(SITE_RELEASE_LIVE, 'ready', 70, { first_promoted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } }),
+        siteRelease(SITE_RELEASE_STAGED, 'pending', 30, { provenance: { repository: 'gregale/website', branch: 'redesign', commit_sha: 'c0ffee1234567890abcdef1234567890abcdef12' } }),
+      ] };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/history`:
+      return { status: 200, body: { retention_limit: 50, events: [
+        { site_id: SITE_ID, revision: 7, previous_revision: 6, release_id: SITE_RELEASE_LIVE, previous_release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1' }, accepted_at: ago(60), provenance: { repository: 'gregale/website', branch: 'main', commit_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' } },
+        { site_id: SITE_ID, revision: 6, previous_revision: 5, release_id: SITE_RELEASE_OLD, actor: { account_id: 'op-1', key_id: 'k0000000-0000-4000-8000-000000000001' }, accepted_at: ago(60 * 24 * 4) },
+      ] } };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/runs`:
+      return { status: 200, body: { site_id: SITE_ID, observed_at: now(), serving_health: 'not_checked', source_labels_included: true, entries: [
+        { run_id: RUN_OK, release_id: SITE_RELEASE_STAGED, preview_id: 'a7a00000-0000-4000-8000-000000000001', created_at: ago(30), preview_expires_at: ago(-60 * 23), state: 'pending', provenance: { repository: 'gregale/website', branch: 'redesign', commit_sha: 'c0ffee1234567890abcdef1234567890abcdef12' }, checks: [] },
+        { run_id: RUN_EXPIRED, release_id: SITE_RELEASE_OLD, preview_id: 'a7b00000-0000-4000-8000-000000000002', created_at: ago(60 * 24 * 4), preview_expires_at: ago(60 * 24 * 3), state: 'blocked', checks: [] },
+      ] } };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/diagnostics`:
+      return { status: 200, body: siteDiagnostics(query.get('run_id')) };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/domains`:
+      return { status: 200, body: [
+        { id: 'dd000000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, hostname: 'www.gregale.dev', provider_origin_id: 'po-1', challenge: '', state: 'active', revision: 2, generation: 2, published_generation: 2, published_at: ago(60 * 24 * 19), details: { tls_status: 'active', records: [] }, next_attempt_at: ago(60 * 24 * 19), attempts: 1, created_at: ago(60 * 24 * 20) },
+        { id: 'dd000000-0000-4000-8000-000000000002', account_id: 'op-1', site_id: SITE_ID, hostname: 'docs.gregale.dev', provider_origin_id: 'po-1', challenge: 'a1b2c3', state: 'pending', revision: 1, generation: 1, published_generation: 0, details: { tls_status: 'pending_validation', records: [{ type: 'CNAME', name: 'docs.gregale.dev', value: 'website.gregale.site' }, { type: 'TXT', name: '_gregale-challenge.docs.gregale.dev', value: 'a1b2c3' }] }, next_attempt_at: ago(-10), attempts: 4, last_error_code: 'dns_not_found', created_at: ago(60 * 5) },
+      ] };
+    case key === `GET /v1/internal/hosting/sites/${SITE_ID}/previews`:
+      return { status: 200, body: [
+        { id: 'a7b00000-0000-4000-8000-000000000002', account_id: 'op-1', site_id: SITE_ID, release_id: SITE_RELEASE_OLD, hostname: 'main-b2b00000.preview.gregale.site', origin_id: 'origin-1', expires_at: ago(60 * 24 * 3), revoked: false, generation: 1, published_generation: 1, next_attempt_at: ago(60 * 24 * 4), created_at: ago(60 * 24 * 4) },
+        { id: 'a7a00000-0000-4000-8000-000000000001', account_id: 'op-1', site_id: SITE_ID, release_id: SITE_RELEASE_STAGED, hostname: 'redesign-b1a00000.preview.gregale.site', origin_id: 'origin-1', expires_at: ago(-60 * 23), revoked: false, generation: 1, published_generation: 1, next_attempt_at: ago(29), created_at: ago(29) },
+      ] };
 
     default:
       return problem(503, 'mock_unavailable', 'Not available in the local mock', `${method} ${path} has no fixture`);
