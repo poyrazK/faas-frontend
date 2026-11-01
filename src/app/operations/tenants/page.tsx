@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { listObsTenants, type ObsTenantRow } from '@/lib/api';
 import { isAccountId, tenantHref } from '@/lib/routes';
 import { findTenantsByEmail, looksLikeEmail, type EmailSearchResult } from '@/lib/ops/tenantSearch';
+import { tenantRowLabel } from '@/lib/ops/tenantNames';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
@@ -14,21 +15,6 @@ import { shortId } from '@/components/operator/EntityId';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 
 const PAGE_SIZE = 100;
-
-/**
- * How a tenant row reads: the email once revealed, else its org, else its
- * short account ID (so hidden-email rows stay distinguishable), with the
- * rest on the second line.
- */
-function tenantLines(tenant: ObsTenantRow): { primary: string; secondary: string; mono: boolean } {
-  const id = shortId(tenant.account_id);
-  const kind = tenant.is_personal ? 'Personal account' : 'Organization account';
-  if (tenant.email) return { primary: tenant.email, secondary: tenant.org_slug ? `${id} · org ${tenant.org_slug}` : id, mono: false };
-  if (tenant.org_slug) return { primary: `org ${tenant.org_slug}`, secondary: id, mono: false };
-  return { primary: id, secondary: kind, mono: true };
-}
-
-
 
 export default function TenantsPage() {
   return (
@@ -286,7 +272,7 @@ function TenantsDirectory() {
               </thead>
               <tbody>
                 {visibleRows.map((tenant) => {
-                  const lines = tenantLines(tenant);
+                  const lines = tenantRowLabel(tenant);
                   return (
                     <tr key={tenant.account_id} {...rowOpener(() => router.push(tenantHref(tenant.account_id)), `Open tenant ${lines.primary}`)}>
                       <td className="nowrap" title={tenant.account_id}>

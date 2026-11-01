@@ -168,7 +168,8 @@ function route(method, path, query, body) {
     case key === 'GET /v1/admin/obs/tenants':
       return { status: 200, body: { limit: Number(query.get('limit') || 100), next_cursor: '', items: [
         tenantRow(ACCOUNT, query.get('include_pii') ? 'ada@customer.test' : undefined, 'pro', state.suspended ? 'suspended' : 'active', 4),
-        tenantRow(ACCOUNT2, query.get('include_pii') ? 'grace@customer.test' : undefined, 'hobby', 'past_due', 2),
+        // Every account owns a personal org whose slug apid derives from the account ID.
+        { ...tenantRow(ACCOUNT2, query.get('include_pii') ? 'grace@customer.test' : undefined, 'hobby', 'past_due', 2), org_slug: 'u-0123456789ab' },
       ].filter((t) => (!query.get('plan') || t.plan === query.get('plan')) && (!query.get('status') || t.status === query.get('status'))) } };
     case /^GET \/v1\/admin\/obs\/tenants\/[^/]+\/activity$/.test(key):
       return { status: 200, body: { account_id: ACCOUNT, generated_at: now(), limit: 50,
@@ -177,7 +178,7 @@ function route(method, path, query, body) {
     case /^GET \/v1\/admin\/obs\/tenants\/[^/]+(\/360)?$/.test(key): {
       const detail = { account: tenantRow(ACCOUNT, query.get('include_pii') ? 'ada@customer.test' : undefined, 'pro', state.suspended ? 'suspended' : 'active', 2),
         apps: [{ id: 'app-1', slug: 'checkout-api', status: 'active', deployments: 18 }, { id: 'app-2', slug: 'nightly-report', status: 'evicted_cold', deployments: 3 }],
-        orgs: [{ id: 'org-1', slug: 'ada-labs', role: 'owner' }], api_keys: { active: 2, revoked: 1 }, sessions: { active: 1, revoked: 4 } };
+        orgs: [{ id: 'org-0', slug: 'u-1a2b3c4d5e6f', role: 'owner' }, { id: 'org-1', slug: 'ada-labs', role: 'owner' }], api_keys: { active: 2, revoked: 1 }, sessions: { active: 1, revoked: 4 } };
       if (!path.endsWith('/360')) return { status: 200, body: detail };
       return { status: 200, body: { ...detail,
         usage: { month: '2026-10', used_gb_hours: 212.5, included_gb_hours: 250, overage_gb_hours: 0, overage_cents: 0, used_cpu_hours: 40, used_egress_gb: 3.2, used_ingress_gb: 1.1, cold_boots: 37, requests: 1840221,
