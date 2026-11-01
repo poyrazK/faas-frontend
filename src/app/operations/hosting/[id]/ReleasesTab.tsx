@@ -26,13 +26,14 @@ import { Mono } from '@/components/ui/bits';
 import { shortId } from '@/components/operator/EntityId';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { ChecksList, QueryBody } from './shared';
+import { RetentionSection } from './RetentionSection';
 
 type ReleaseAction = { kind: 'promote' | 'retire'; release: HostingRelease };
 
 /**
  * What is live and how it got there: publication, production checks,
- * releases and promotions. A ready release can be put live (a rollback is
- * putting the previous one live again) and an unused one retired.
+ * releases, retention and promotions. A ready release can be put live (a
+ * rollback is putting the previous one live again) and an unused one retired.
  */
 export function ReleasesTab({
   site,
@@ -152,6 +153,8 @@ export function ReleasesTab({
           )}
         </QueryBody>
       </SectionCard>
+
+      <RetentionSection site={site} nonce={nonce} />
 
       <SectionCard
         title="Promotion history"
@@ -276,8 +279,9 @@ export function ReleasesTab({
           }
           onClose={() => setAction(null)}
           onSubmit={async () => {
-            await refreshOnConflict(() => retireHostingRelease(site.id, action.release.id), releases.reload);
-            releases.reload();
+            // Reloads the whole site, so the retention plan sees the release retiring too.
+            await refreshOnConflict(() => retireHostingRelease(site.id, action.release.id), () => onSiteChanged());
+            onSiteChanged();
             return `Retiring release ${shortId(action.release.id)}`;
           }}
         />

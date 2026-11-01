@@ -71,10 +71,10 @@ export function isRouteActive(slug: string, pathname: string): boolean {
 }
 
 /** Tabs of a hosting site (/hosting/<id>?tab=…). */
-export const HOSTING_SITE_TABS = ['access', 'releases', 'activity', 'domains'] as const;
+export const HOSTING_SITE_TABS = ['access', 'releases', 'activity', 'domains', 'traffic'] as const;
 export type HostingSiteTab = (typeof HOSTING_SITE_TABS)[number];
 
-/** One hosting site: who can deploy to it, what is live, its CI runs and domains. */
+/** One hosting site: who can deploy to it, what is live, its CI runs, domains and traffic. */
 export function hostingSiteHref(siteId: string, tab?: HostingSiteTab): string {
   const base = `/hosting/${encodeURIComponent(siteId.trim())}`;
   return tab && tab !== 'access' ? `${base}?tab=${tab}` : base;

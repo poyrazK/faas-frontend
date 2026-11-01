@@ -32,6 +32,7 @@ import { TrustsSection } from './TrustsSection';
 import { ReleasesTab } from './ReleasesTab';
 import { ActivityTab } from './ActivityTab';
 import { DomainsTab } from './DomainsTab';
+import { TrafficTab } from './TrafficTab';
 
 const decode = (value: string) => {
   try {
@@ -46,15 +47,17 @@ const TABS: readonly { key: HostingSiteTab; label: string; icon: IconName }[] = 
   { key: 'releases', label: 'Releases', icon: 'deployments' },
   { key: 'activity', label: 'CI activity', icon: 'queues' },
   { key: 'domains', label: 'Domains & previews', icon: 'domains' },
+  { key: 'traffic', label: 'Traffic', icon: 'metrics' },
 ];
 
 const isTab = (value: string | null): value is HostingSiteTab => !!value && (HOSTING_SITE_TABS as readonly string[]).includes(value);
 
 /**
- * One hosting site: who can deploy to it, what is live, its CI runs, and its
- * domains and previews. Each view has its own URL (?tab=…). Issuing or
- * revoking a credential or trust asks for a fresh authenticator code (the
- * transport prompts on step_up_required); API keys cannot do either.
+ * One hosting site: who can deploy to it, what is live, its CI runs, its
+ * domains and previews, and its traffic. Each view has its own URL
+ * (?tab=…). Issuing or revoking a credential or trust asks for a fresh
+ * authenticator code (the transport prompts on step_up_required); API keys
+ * cannot do either.
  */
 export default function HostingSitePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -98,7 +101,7 @@ function HostingSiteView({ id }: { id: string }) {
       </Link>
       <PageHeader
         title={site.data?.name ?? 'Hosting site'}
-        subtitle={site.data ? site.data.hostname : 'Who can deploy to this site, what is live, and its CI runs and domains.'}
+        subtitle={site.data ? site.data.hostname : 'Who can deploy to this site, what is live, its CI runs, domains and traffic.'}
         actions={
           <>
             <CopyLinkButton href={hostingSiteHref(siteId, tab)} />
@@ -165,6 +168,7 @@ function HostingSiteView({ id }: { id: string }) {
           {tab === 'releases' && <ReleasesTab site={site.data} nonce={nonce} onSiteChanged={siteChanged} />}
           {tab === 'activity' && <ActivityTab site={site.data} nonce={nonce} />}
           {tab === 'domains' && <DomainsTab site={site.data} nonce={nonce} />}
+          {tab === 'traffic' && <TrafficTab site={site.data} nonce={nonce} />}
         </>
       )}
 

@@ -2,7 +2,19 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
-import { hostingFeatureOff, listHostingSites, siteStatus, type HostingSite } from '@/lib/ops/hosting';
+import {
+  formatBytes,
+  getHostingCapabilities,
+  getHostingUsage,
+  hostingFeatureOff,
+  hostingFeatures,
+  listHostingSites,
+  percentText,
+  shareOf,
+  siteStatus,
+  type HostingSite,
+  type HostingUsage,
+} from '@/lib/ops/hosting';
 import { hostingSiteHref } from '@/lib/routes';
 import { relativeTime } from '@/lib/format';
 import { useAsync } from '@/lib/useAsync';
@@ -15,20 +27,28 @@ import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 import { shortId } from '@/components/operator/EntityId';
 
 /**
- * Static sites on Gregale hosting. apid scopes the list to the signed-in
- * operator account; each row opens the site's credentials and GitHub trusts.
+ * Static sites on Gregale hosting. apid scopes the list (and the storage
+ * usage above it) to the signed-in operator account; each row opens the
+ * site. Below the list: what this control plane has switched on.
  */
 export default function HostingSitesPage() {
   const router = useRouter();
   const query = useAsync(listHostingSites, [], 60_000);
-  const { data, error, loading, reload } = query;
+  const usage = useAsync(getHostingUsage, [], 60_000);
+  const capabilities = useAsync(getHostingCapabilities, []);
+  const { data, error, loading } = query;
   const off = hostingFeatureOff(error);
+  const reload = () => {
+    query.reload();
+    usage.reload();
+    capabilities.reload();
+  };
 
   return (
     <div>
       <PageHeader
         title="Hosting sites"
-        subtitle="Static sites owned by your operator account, and the credentials and GitHub trusts that deploy them."
+        subtitle="Static sites owned by your operator account: who deploys them, what is live, and what they store and serve."
         actions={
           <button onClick={reload} className="btn btn-secondary btn-sm">
             <Icon name="refresh" size={14} />
@@ -38,6 +58,17 @@ export default function HostingSitesPage() {
       />
 
       <SnapshotFreshness snapshots={[query]} />
+
+      {!off &&
+        (usage.data ? (
+          <UsageTiles usage={usage.data} />
+        ) : (
+          usage.error && (
+            <div role="alert" className="card mb-6 p-4 text-xs text-[var(--color-danger)]">
+              Could not load storage usage: {usage.error.message}
+            </div>
+          )
+        ))}
 
       <SectionCard title="Sites">
         {off ? (
@@ -89,7 +120,7 @@ export default function HostingSitesPage() {
                         <RowMenu
                           label={`Actions for ${site.name}`}
                           items={[
-                            { label: 'Credentials and trusts', onSelect: open },
+                            { label: 'Open site', onSelect: open },
                             { label: `Visit ${site.hostname}`, href: `https://${site.hostname}`, external: true },
                             { label: 'Copy site ID', onSelect: () => copyText(site.id) },
                           ]}
@@ -108,6 +139,92 @@ export default function HostingSitesPage() {
           </div>
         )}
       </SectionCard>
+
+      {!off && capabilities.data && (
+        <div className="mt-6">
+          <SectionCard title="Features on this control plane">
+            <ul className="grid gap-x-6 gap-y-2 px-5 py-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
+              {hostingFeatures(capabilities.data).map((feature) => (
+                <li key={feature.label} className="flex items-center gap-2">
+                  <span className={`badge ${feature.on ? 'badge-success' : 'badge-neutral'} w-9 justify-center`}>{feature.on ? 'On' : 'Off'}</span>
+                  <span>{feature.label}</span>
+                  {feature.on && feature.detail && <span className="text-[var(--color-ink-muted)]">· {feature.detail}</span>}
+                </li>
+              ))}
+            </ul>
+            <div className="table-foot">
+              <span>
+                Up to {capabilities.data.sites_per_account} sites per account and {capabilities.data.releases_per_site} releases per site.
+                {capabilities.data.domains_enabled && capabilities.data.domain_cname_target && (
+                  <>
+                    {' '}
+                    Custom domains point a CNAME at <span className="font-mono">{capabilities.data.domain_cname_target}</span>.
+                  </>
+                )}
+              </span>
+            </div>
+          </SectionCard>
+        </div>
+      )}
     </div>
   );
 }
+
+/** Storage and uploads against the account's limits; catalog accounting, not a provider bill. */
+function UsageTiles({ usage }: { usage: HostingUsage }) {
+  return (
+    <div className="mb-6 grid gap-4 sm:grid-cols-3">
+      <UsageTile
+        label="Storage reserved"
+        value={formatBytes(usage.reserved_bytes)}
+        limit={`of ${formatBytes(usage.storage_limit_bytes)}`}
+        share={shareOf(usage.reserved_bytes, usage.storage_limit_bytes)}
+        sub={`${formatBytes(usage.payload_bytes)} of files; each release is stored twice plus a manifest.`}
+      />
+      <UsageTile
+        label="Uploads in progress"
+        value={usage.pending_uploads.toLocaleString()}
+        limit={`of ${usage.pending_uploads_limit.toLocaleString()}`}
+        share={shareOf(usage.pending_uploads, usage.pending_uploads_limit)}
+        sub="Releases still uploading count against this until finalized or retired."
+      />
+      <UsageTile
+        label="Releases"
+        value={usage.releases.toLocaleString()}
+        sub={
+          usage.retiring_reserved_bytes > 0
+            ? `${formatBytes(usage.retiring_reserved_bytes)} is retiring and freed once cleanup runs.`
+            : `${formatBytes(usage.ready_payload_bytes)} of files in ready releases.`
+        }
+      />
+    </div>
+  );
+}
+
+function UsageTile({ label, value, limit, share, sub }: { label: string; value: string; limit?: string; share?: number; sub: string }) {
+  const fill = share === undefined ? '' : share >= 0.9 ? 'var(--color-danger)' : share >= 0.75 ? 'var(--color-warning)' : 'var(--color-brand)';
+  return (
+    <div className="card p-4">
+      <div className="text-xs font-medium text-[var(--color-ink-muted)]">{label}</div>
+      <div className="mt-1.5 flex items-baseline gap-1.5">
+        <span className="text-xl font-bold leading-none">{value}</span>
+        {limit && <span className="text-xs text-[var(--color-ink-muted)]">{limit}</span>}
+        {share !== undefined && <span className="ml-auto text-xs font-medium">{percentText(share)}</span>}
+      </div>
+      {share !== undefined && (
+        <span
+          className="meter mt-2 block"
+          role="meter"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(share * 100)}
+        >
+          <span style={{ width: `${share * 100}%`, background: fill }} />
+        </span>
+      )}
+      <p className="mt-2 text-[11px] text-[var(--color-ink-muted)]">{sub}</p>
+    </div>
+  );
+}
+

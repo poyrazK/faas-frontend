@@ -17,8 +17,9 @@
    issued a credential, so the page reloads the list rather than retrying.
 
    The rest is read-only: publication status, releases, promotion history,
-   CI activity, diagnostics, custom domains and previews. apid states plainly
-   what it did not check (serving health, DNS, TLS), and so does the console.
+   CI activity, diagnostics, custom domains and previews, sampled traffic,
+   storage usage and the retention cleanup plan. apid states plainly what it
+   did not check (serving health, DNS, TLS), and so does the console.
    ========================================================================== */
 
 import { ApiError, request, writeHeaders, type OperatorWrite } from '@/lib/api';
@@ -331,14 +332,171 @@ export const listHostingDomains = (site: string) =>
 export const listHostingPreviews = (site: string) =>
   request<HostingPreview[]>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/previews`, { cache: 'no-store' });
 
+/* ─────────────────────── Traffic, usage and capacity ──────────────────── */
+
+/** @go api.HostingTrafficCounters */
+export interface HostingTrafficCounters {
+  requests: number;
+  payload_bytes: number;
+  cache_hits: number;
+  cache_misses: number;
+  client_errors: number;
+  server_errors: number;
+}
+
+/** One hour of traffic. @go api.HostingTrafficBucket */
+export interface HostingTrafficBucket extends HostingTrafficCounters {
+  start: string;
+}
+
+/** Failed requests in one hour, grouped by status and edge code. @go api.HostingTrafficFailure */
+export interface HostingTrafficFailure {
+  start: string;
+  status: number;
+  code: string;
+  requests: number;
+}
+
+/**
+ * The last 24 hours at the edge, from weighted Analytics Engine samples:
+ * approximate, and not billing or health evidence. @go api.HostingTraffic
+ */
+export interface HostingTraffic extends HostingTrafficCounters {
+  site_id: string;
+  source: string;
+  approximate: boolean;
+  period_start: string;
+  period_end: string;
+  observed_at: string;
+  /** The largest sampling weight behind these counts; 1 means every request was recorded. */
+  max_sample_interval: number;
+  buckets: HostingTrafficBucket[];
+  failures: HostingTrafficFailure[];
+}
+
+/** Catalog accounting for the operator account, not a provider bill. @go api.HostingUsage */
+export interface HostingUsage {
+  account_id: string;
+  /** Two stored copies of every release plus a maximum-size manifest each. */
+  reserved_bytes: number;
+  storage_limit_bytes: number;
+  payload_bytes: number;
+  ready_payload_bytes: number;
+  retiring_reserved_bytes: number;
+  pending_uploads: number;
+  pending_uploads_limit: number;
+  releases: number;
+  observed_at: string;
+}
+
+/** Preview slots: stored admission capacity, not edge health. @go api.HostingPreviewCapacity */
+export interface HostingPreviewCapacity {
+  site_id: string;
+  limit: number;
+  previews: number;
+  /** Slots CI runs have claimed for previews they have not published yet. */
+  reservations: number;
+  available: number;
+  observed_at: string;
+}
+
+/** What this control plane has switched on, and its pilot limits. @go api.HostingCapabilities */
+export interface HostingCapabilities {
+  automation_enabled: boolean;
+  automation_credentials_per_site: number;
+  oidc_enabled: boolean;
+  ci_setup_enabled: boolean;
+  activity_enabled: boolean;
+  ci_runs_per_site: number;
+  cancellation_enabled: boolean;
+  diagnostics_enabled: boolean;
+  history_enabled: boolean;
+  history_per_site: number;
+  previews_enabled: boolean;
+  previews_per_site: number;
+  preview_reservations_enabled: boolean;
+  domains_enabled: boolean;
+  domains_per_site: number;
+  domain_cname_target?: string;
+  analytics_enabled: boolean;
+  retention_enabled: boolean;
+  retention_age_default_seconds: number;
+  retention_age_min_seconds: number;
+  retention_age_max_seconds: number;
+  config_enabled: boolean;
+  sites_per_account: number;
+  releases_per_site: number;
+  account_storage_max_bytes: number;
+  account_pending_uploads_max: number;
+}
+
+export const getHostingTraffic = (site: string) =>
+  request<HostingTraffic>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/traffic`, { cache: 'no-store' });
+
+export const getHostingUsage = () => request<HostingUsage>('/v1/internal/hosting/usage', { cache: 'no-store' });
+
+export const getHostingCapabilities = () => request<HostingCapabilities>('/v1/internal/hosting/capabilities', { cache: 'no-store' });
+
+export const getHostingPreviewCapacity = (site: string) =>
+  request<HostingPreviewCapacity>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/preview-capacity`, { cache: 'no-store' });
+
+/* ──────────────────────────────── Retention ───────────────────────────── */
+
+/** @go api.HostingRetentionRules */
+export interface HostingRetentionRules {
+  /** How long an unfinished upload is kept after its last activity. */
+  pending_age_seconds: number;
+  /** How long a CI release that was never put live is kept after its last activity (never inside its run's retry window). */
+  staged_age_seconds: number;
+}
+
+/** A site without a stored policy reports revision 0, off, with the default ages. @go api.HostingRetentionPolicy */
+export interface HostingRetentionPolicy extends HostingRetentionRules {
+  site_id: string;
+  revision: number;
+  enabled: boolean;
+  updated_at?: string;
+}
+
+/** @go api.HostingCleanupEntry */
+export interface HostingCleanupEntry {
+  release_id: string;
+  state: string;
+  eligible: boolean;
+  reason: string;
+  reserved_bytes: number;
+  eligible_at?: string;
+}
+
+/** An observation of what retention would retire now, never an authorization. @go api.HostingCleanupPlan */
+export interface HostingCleanupPlan {
+  policy: HostingRetentionPolicy;
+  /** The rules this plan was evaluated with: the policy's, or proposed ones. */
+  rules: HostingRetentionRules;
+  proposed: boolean;
+  evaluated_at: string;
+  entries: HostingCleanupEntry[];
+  reclaimable_reserved_bytes: number;
+  retiring_reserved_bytes: number;
+}
+
+/** The site's cleanup plan under its policy, or under `rules` to preview a change. */
+export const getHostingCleanupPlan = (site: string, rules?: HostingRetentionRules) => {
+  const query = rules ? `pending_age_seconds=${rules.pending_age_seconds}&staged_age_seconds=${rules.staged_age_seconds}` : '';
+  return request<HostingCleanupPlan>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/cleanup${query ? `?${query}` : ''}`, {
+    cache: 'no-store',
+  });
+};
+
 /* ─────────────────────────────────── Actions ──────────────────────────── */
 /*
- * Operator writes on a site. Promotion, suspension, domain removal and
- * recovery, and preview revocation are revision- or generation-fenced: they
- * send what the operator saw and apid answers 409 when the site moved on.
- * Those routes also replay an Idempotency-Key; retire and cancel take none.
- * apid asks for an MFA session (cancel: an operator session) but no fresh
- * step-up, so the confirm dialog is the console's guard.
+ * Operator writes on a site. Promotion, suspension, retention, domain
+ * removal and recovery, and preview revocation are revision- or
+ * generation-fenced: they send what the operator saw and apid answers 409
+ * when the site moved on. All but retention also replay an Idempotency-Key;
+ * retention, retire and cancel take none. apid asks for an MFA session
+ * (cancel and retention: an operator session) but no fresh step-up, so the
+ * confirm dialog is the console's guard.
  */
 
 /** @goBody api.PromoteHostingReleaseRequest */
@@ -404,6 +562,23 @@ export const recoverHostingDomain = (
     },
     'none',
   );
+
+/**
+ * Sets the site's retention policy. Revision-fenced (409 when someone else
+ * changed it, or the site is not active with durable routing); the route
+ * replays no Idempotency-Key, and a repeated identical PUT is harmless.
+ * @goBody api.SetHostingRetentionRequest
+ */
+export const setHostingRetention = (site: string, input: { enabled: boolean; rules: HostingRetentionRules; expectedRevision: number }) =>
+  request<HostingRetentionPolicy>(`/v1/internal/hosting/sites/${encodeURIComponent(site)}/retention`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      enabled: input.enabled,
+      pending_age_seconds: input.rules.pending_age_seconds,
+      staged_age_seconds: input.rules.staged_age_seconds,
+      expected_revision: input.expectedRevision,
+    }),
+  });
 
 /** Which release actions apply; apid has the last word (a preview may still use a release). */
 export function releaseActions(release: Pick<HostingRelease, 'id' | 'state'>, site: Pick<HostingSite, 'active_release_id' | 'status' | 'suspended'>) {
@@ -555,6 +730,109 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+/* ─────────────────────────── Traffic and usage ────────────────────────── */
+
+/** Share of cacheable requests served from cache, or null when none were cacheable. */
+export function cacheHitRate(counters: Pick<HostingTrafficCounters, 'cache_hits' | 'cache_misses'>): number | null {
+  const cacheable = counters.cache_hits + counters.cache_misses;
+  return cacheable ? counters.cache_hits / cacheable : null;
+}
+
+/** "42%", "0.4%" or "—". */
+export function percentText(share: number | null): string {
+  if (share === null || !Number.isFinite(share)) return '—';
+  const pct = share * 100;
+  return `${pct > 0 && pct < 1 ? pct.toFixed(1) : Math.round(pct)}%`;
+}
+
+/** "09:00": the local hour a traffic bucket starts. */
+export const hourLabel = (iso: string) => `${String(new Date(iso).getHours()).padStart(2, '0')}:00`;
+
+/** Hourly request counts for a bar chart, labelled with the local hour. */
+export function trafficPoints(buckets: Pick<HostingTrafficBucket, 'start' | 'requests'>[]): { date: Date; label: string; value: number }[] {
+  return buckets.map((bucket) => ({ date: new Date(bucket.start), label: hourLabel(bucket.start), value: bucket.requests }));
+}
+
+/** What an edge code in the failures table means (pkg/hosting trafficCodeStatus). */
+export const TRAFFIC_CODES: Record<string, string> = {
+  method_not_allowed: 'A method other than GET or HEAD',
+  hosting_file_not_found: 'No such file in the live release',
+  hosting_route_unavailable: 'The edge had no route for the site',
+  hosting_unavailable: 'Hosting was unavailable at the edge',
+  hosting_artifact_unavailable: 'The release files could not be read',
+};
+
+/** How full a limit is, 0–1; a missing limit reads as empty. */
+export const shareOf = (used: number, limit: number) => (limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0);
+
+/** What this control plane has on, with the per-site limit where one applies. */
+export function hostingFeatures(caps: HostingCapabilities): { label: string; on: boolean; detail?: string }[] {
+  const perSite = (n: number) => (n > 0 ? `${n} per site` : undefined);
+  return [
+    { label: 'Automation credentials', on: caps.automation_enabled, detail: perSite(caps.automation_credentials_per_site) },
+    { label: 'GitHub OIDC', on: caps.oidc_enabled },
+    { label: 'CI setup', on: caps.ci_setup_enabled },
+    { label: 'CI activity', on: caps.activity_enabled, detail: caps.ci_runs_per_site > 0 ? `${caps.ci_runs_per_site} runs kept per site` : undefined },
+    { label: 'Run cancellation', on: caps.cancellation_enabled },
+    { label: 'Diagnostics', on: caps.diagnostics_enabled },
+    { label: 'Promotion history', on: caps.history_enabled, detail: caps.history_per_site > 0 ? `last ${caps.history_per_site} per site` : undefined },
+    { label: 'Preview URLs', on: caps.previews_enabled, detail: perSite(caps.previews_per_site) },
+    { label: 'Preview reservations', on: caps.preview_reservations_enabled },
+    { label: 'Custom domains', on: caps.domains_enabled, detail: perSite(caps.domains_per_site) },
+    { label: 'Redirects and headers', on: caps.config_enabled },
+    { label: 'Traffic analytics', on: caps.analytics_enabled },
+    { label: 'Release retention', on: caps.retention_enabled },
+  ];
+}
+
+/* ──────────────────────────────── Retention ───────────────────────────── */
+
+/** Bounds apid enforces on both ages (api.HostingRetentionAgeMin / Max), in hours. */
+export const RETENTION_HOURS_MIN = 1;
+export const RETENTION_HOURS_MAX = 30 * 24;
+
+/** "1 hour", "36 hours", "7 days". */
+export function durationText(seconds: number): string {
+  const hours = seconds / 3600;
+  if (hours >= 48 && Number.isInteger(hours / 24)) return `${hours / 24} days`;
+  if (hours === 24) return '1 day';
+  if (Number.isInteger(hours)) return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  return `${Math.round(seconds / 60)} minutes`;
+}
+
+/** Why apid would refuse this age in hours, or null. */
+export function retentionHoursError(value: string): string | null {
+  const hours = Number(value);
+  if (!value.trim() || !Number.isInteger(hours)) return 'Whole hours.';
+  if (hours < RETENTION_HOURS_MIN || hours > RETENTION_HOURS_MAX) return `Between ${RETENTION_HOURS_MIN} and ${RETENTION_HOURS_MAX} hours (30 days).`;
+  return null;
+}
+
+/** Why apid keeps or retires a release (pkg/hosting cleanupEntry). */
+export const CLEANUP_REASONS: Record<string, string> = {
+  site_ineligible: 'The site is not active with durable routing, so retention leaves it alone.',
+  awaiting_retirement_publication: 'Retiring: waiting for routing without it to publish.',
+  retirement_grace_period: 'Retiring: in the grace period before its files are deleted.',
+  awaiting_artifact_cleanup: 'Retiring: waiting for its files to be deleted.',
+  active_release: 'Live in production.',
+  previously_published: 'Was live before, so it is kept for rollback.',
+  active_preview: 'A live preview serves it.',
+  preview_cleanup_pending: 'An expired or revoked preview still references it.',
+  ci_retry_window: 'Its CI run can still be retried.',
+  manual_staging: 'Staged without a CI run, so retention never removes it.',
+  activity_unknown: 'Its last activity is unknown, so it is kept.',
+  recent_activity: 'Recently active.',
+  abandoned_upload: 'An upload that was never finished.',
+  expired_ci_release: 'A CI release that was never put live, past its retry window.',
+};
+
+/** A cleanup verdict for a badge: retiring, eligible (only acted on while the policy is on), or kept. */
+export function cleanupBadge(entry: Pick<HostingCleanupEntry, 'eligible' | 'state'>, enabled: boolean): { label: string; tone: Tone } {
+  if (entry.state === 'retiring') return { label: 'Retiring', tone: 'badge-neutral' };
+  if (entry.eligible) return enabled ? { label: 'Will retire', tone: 'badge-warning' } : { label: 'Eligible', tone: 'badge-warning' };
+  return { label: 'Kept', tone: 'badge-success' };
 }
 
 /* ─────────────────────────────────── Sites ────────────────────────────── */
@@ -775,6 +1053,11 @@ const FEATURE_OFF: Record<string, string> = {
   frontend_hosting_domains_unconfigured: 'Custom domains are on but their DNS provider is not configured.',
   frontend_hosting_previews_disabled: 'Preview URLs are turned off on this control plane.',
   frontend_hosting_cancellation_disabled: 'CI run cancellation is turned off on this control plane.',
+  frontend_hosting_analytics_disabled: 'Traffic analytics are turned off on this control plane.',
+  frontend_hosting_analytics_unconfigured: 'Traffic analytics are on but their Analytics Engine reader is not configured.',
+  frontend_hosting_retention_disabled: 'Release retention is turned off on this control plane.',
+  frontend_hosting_retention_unconfigured: 'Release retention is waiting for every API writer to be upgraded before it can be enabled.',
+  frontend_hosting_preview_reservations_disabled: 'Preview reservations, or the automation, preview and durable routing they need, are turned off.',
 };
 
 /** A sentence when `err` means the feature is switched off, else null. */
