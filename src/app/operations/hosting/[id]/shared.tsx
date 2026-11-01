@@ -1,14 +1,14 @@
 'use client';
 
 import React from 'react';
-import { checkBadge, hostingFeatureOff, type HostingDiagnosticCheck } from '@/lib/ops/hosting';
+import { checkBadge, hostingSectionOff, type HostingDiagnosticCheck } from '@/lib/ops/hosting';
 import type { AsyncState } from '@/lib/useAsync';
 import { EmptyState } from '@/components/ui/States';
 import type { IconName } from '@/components/ui/Icons';
 
 /**
  * The states every hosting section shares: switched off on this control
- * plane, failed, loading, empty, or its rows, plus a note when a refresh
+ * plane (or not served by this apid), failed, loading, empty, or its rows, plus a note when a refresh
  * failed and the rows are the last good snapshot.
  */
 export function QueryBody<T>({
@@ -28,7 +28,7 @@ export function QueryBody<T>({
   children: (data: T) => React.ReactNode;
 }) {
   const { data, error, loading } = query;
-  const off = hostingFeatureOff(error);
+  const off = hostingSectionOff(error);
   if (off) return <EmptyState icon={icon} title="Not available on this control plane" hint={off} />;
   if (error && data === null) {
     return (

@@ -7,6 +7,7 @@ import {
   credentialBlocker,
   getHostingSite,
   hostingFeatureOff,
+  isHiddenRoute,
   listAutomationCredentials,
   listOIDCTrusts,
   oidcAudience,
@@ -32,6 +33,7 @@ import { TrustsSection } from './TrustsSection';
 import { ReleasesTab } from './ReleasesTab';
 import { ActivityTab } from './ActivityTab';
 import { DomainsTab } from './DomainsTab';
+import { ConfigurationLink } from '../ConfigurationLink';
 import { TrafficTab } from './TrafficTab';
 
 const decode = (value: string) => {
@@ -131,7 +133,7 @@ function HostingSiteView({ id }: { id: string }) {
 
       {off ? (
         <div className="card">
-          <EmptyState icon="domains" title="Hosting is not available" hint={off} />
+          <EmptyState icon="domains" title="Hosting is not available" hint={off} action={isHiddenRoute(site.error) ? <ConfigurationLink /> : undefined} />
         </div>
       ) : missing ? (
         <div className="card">

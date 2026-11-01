@@ -250,6 +250,21 @@ test('traffic shows the sampled last 24 hours, with failures grouped by edge cod
   await expect(card).toContainText('not billing or health evidence');
 });
 
+test('hosting switched off reads as off, not as a failed request', async ({ page, mock }) => {
+  await mock.set({ hostingEnabled: false });
+  await page.goto('/hosting');
+  await expect(page.getByText('Hosting is not available')).toBeVisible();
+  await expect(page.getByText(/apid hides its routes while frontend_hosting_enabled is off/)).toBeVisible();
+  await expect(page.getByText(/Could not load/)).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Features on this control plane' })).toHaveCount(0);
+  await page.getByRole('main').getByRole('link', { name: 'Runtime configuration' }).click();
+  await expect(page).toHaveURL(/\/configuration$/);
+
+  await page.goto(`/hosting/${HOSTING_SITE}?tab=traffic`);
+  await expect(page.getByText(/frontend_hosting_enabled is off/)).toBeVisible();
+  await expect(page.getByRole('main').getByRole('link', { name: 'Runtime configuration' })).toBeVisible();
+});
+
 test('switched-off traffic analytics are explained instead of shown as an error', async ({ page, mock }) => {
   await mock.set({ analytics: false });
   await page.goto(`/hosting/${HOSTING_SITE}?tab=traffic`);

@@ -28,6 +28,8 @@ import {
   EMPTY_TRUST_DRAFT,
   expiresSoon,
   hostingFeatureOff,
+  hostingSectionOff,
+  isHiddenRoute,
   isExpired,
   siteStatus,
   trustDraftErrors,
@@ -157,6 +159,19 @@ describe('hostingFeatureOff', () => {
     expect(hostingFeatureOff(problem(503, 'frontend_hosting_unavailable'))).toBeNull();
     expect(hostingFeatureOff(problem(404, 'not_found'))).toBeNull();
     expect(hostingFeatureOff(new Error('boom'))).toBeNull();
+  });
+
+  it('reads a hidden hosting route as hosting turned off, but not a missing site', () => {
+    const hidden = new ApiError({ title: 'Not found', status: 404, code: 'not_found', detail: 'no such API route' }, 404, 'x');
+    const missing = new ApiError({ title: 'Not found', status: 404, code: 'not_found', detail: 'no such hosting resource' }, 404, 'x');
+    expect(isHiddenRoute(hidden)).toBe(true);
+    expect(isHiddenRoute(missing)).toBe(false);
+    expect(hostingFeatureOff(hidden)).toMatch(/frontend_hosting_enabled is off/);
+    expect(hostingFeatureOff(missing)).toBeNull();
+    // Inside a site that loaded, hosting is on: the route is what is missing.
+    expect(hostingSectionOff(hidden)).toMatch(/does not serve this route/);
+    expect(hostingSectionOff(missing)).toBeNull();
+    expect(hostingSectionOff(problem(503, 'frontend_hosting_analytics_disabled'))).toMatch(/Traffic analytics/);
   });
 });
 
