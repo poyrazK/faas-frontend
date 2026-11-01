@@ -18,6 +18,32 @@ test('the overview leads with what needs attention, and each row opens it', asyn
   await expect(page.getByRole('dialog', { name: 'Incident · Deployment' })).toBeVisible();
 });
 
+test('deployments failing the same way share one row, which opens them on the Deployments page', async ({ page }) => {
+  // apid's summary for a failure without an error code, on three deployments.
+  const failed = (n: number, slug: string) => ({
+    id: `deployment/fa11ed0${n}-0000-4000-8000-000000000000`, type: 'deployment', severity: 'error', status: 'failed', summary: 'deployment failed',
+    account_id: `acc0000${n}-0000-4000-8000-000000000000`, resource_id: `fa11ed0${n}-0000-4000-8000-000000000000`, resource_name: slug,
+    observed_at: new Date(Date.now() - n * 60_000).toISOString(), dedupe_key: `deployment/fa11ed0${n}`,
+  });
+  await page.route((url) => url.pathname === '/v1/admin/obs/incidents', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.items.push(failed(1, 'h14-fn'), failed(2, 'h14-py'), failed(3, 'h14-fn'));
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto('/overview');
+  await expect(page.getByText('4 things need attention')).toBeVisible();
+  const row = page.getByRole('link', { name: /3 deployments failed/ });
+  await expect(row).toContainText('Deployments · h14-fn, h14-py');
+  await expect(row).toHaveAttribute('href', '/deployments?status=failed');
+  // The deployment with its own failure keeps its own row.
+  await expect(page.getByRole('link', { name: /checkout-api deployment failed: build_failed/ })).toBeVisible();
+
+  await row.click();
+  await expect(page).toHaveURL('/deployments?status=failed');
+  await expect(page.getByRole('heading', { name: 'Failure causes' })).toBeVisible();
+});
+
 test('a missing signal is reported instead of an all-clear', async ({ page }) => {
   await page.route('**/v1/admin/obs/incidents/platform_alert/summary', (route) =>
     route.fulfill({ status: 503, contentType: 'application/problem+json', body: JSON.stringify({ title: 'Unavailable', status: 503, code: 'capacity', detail: 'alert store is down' }) }),

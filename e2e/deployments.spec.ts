@@ -45,3 +45,25 @@ test('failure causes stay out of views without failed deployments', async ({ pag
   await expect(page.getByRole('row', { name: /Open deployment/ })).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'Failure causes' })).toHaveCount(0);
 });
+
+test('failure causes are read on open and on Refresh, not on a timer: apid audits every read', async ({ page, mock }) => {
+  await page.clock.install();
+  await page.goto('/deployments');
+  await expect(page.getByRole('heading', { name: 'Failure causes' })).toBeVisible();
+  await expect(page.getByText(/10 failed deployments · as of /)).toBeVisible();
+  const reads = async () => {
+    const lists = (await mock.requests()).filter((r) => r.path === '/v1/admin/ops/deployments');
+    const causes = lists.filter((r) => /status=failed/.test(r.search) && /limit=200/.test(r.search)).length;
+    return { causes, rows: lists.length - causes };
+  };
+  const before = await reads();
+  expect(before.causes).toBe(1);
+
+  // The table keeps polling; the causes are not read again.
+  await page.clock.fastForward('02:30');
+  await expect.poll(async () => (await reads()).rows).toBeGreaterThan(before.rows);
+  expect((await reads()).causes).toBe(1);
+
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect.poll(async () => (await reads()).causes).toBe(2);
+});
