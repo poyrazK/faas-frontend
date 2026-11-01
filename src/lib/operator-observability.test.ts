@@ -230,12 +230,10 @@ describe('incidents page', () => {
     expect(html).not.toContain('No incidents match these filters');
   });
 
-  it('reports unknown alert workload and unavailable pipeline numbers instead of zeros', () => {
+  it('reports unknown alert workload instead of zeros', () => {
     const html = render(IncidentsPage);
     expect(html).toContain('Not collected');
     expect(html).toContain('counts are unknown');
-    expect(html).toContain('Telemetry unavailable');
-    expect(html).toContain('query failed');
     expect(html).toContain('No cohort statistics');
     expect(html).toContain('missing evidence, not a quiet fleet');
   });
@@ -296,6 +294,13 @@ describe('incidents page', () => {
 });
 
 describe('telemetry page', () => {
+  it('shows unavailable pipeline numbers as unavailable, not zero', () => {
+    const html = render(TelemetryHealthPage);
+    expect(html).toContain('Observability pipeline health');
+    expect(html).toContain('Telemetry unavailable');
+    expect(html).toContain('query failed');
+  });
+
   it('asks for explicit selections and keeps unavailable signals unknown', () => {
     const html = render(TelemetryHealthPage);
     expect(html).toContain('Choose the expected set');

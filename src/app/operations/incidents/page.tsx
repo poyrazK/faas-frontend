@@ -2,9 +2,8 @@
 
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ApiError, searchObsAuditLog } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAsync } from '@/lib/useAsync';
-import { relativeTime } from '@/lib/format';
 import {
   ALERT_STATUSES,
   INCIDENT_SEVERITIES,
@@ -39,7 +38,7 @@ import {
   type ObsIncident,
   type TriageOption,
 } from '@/lib/ops/incidents';
-import { badgeClass, formatSeconds, getObsHealthDetail, humanize } from '@/lib/ops/telemetry';
+import { badgeClass, formatSeconds, humanize } from '@/lib/ops/telemetry';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { FilterSelect, PageHeader } from '@/components/ui/bits';
 import { SectionCard, StatTile } from '@/components/ui/Panels';
@@ -48,8 +47,6 @@ import { Icon } from '@/components/ui/Icons';
 import { OperatorActionDialog, type OperatorActionContext } from '@/components/operator/OperatorActionDialog';
 import { IncidentDetail, type IncidentDetailState } from './IncidentDetail';
 import { AlertInsights } from './AlertInsights';
-import { PipelineHealth } from './PipelineHealth';
-import { FleetEventStream } from './FleetEventStream';
 import { EmptyRow, ErrorRow, LoadingRow, Notice, RefreshFailed, StateBadge, When } from './parts';
 import { useUrlParams } from '@/lib/useUrlState';
 import { EntityId } from '@/components/operator/EntityId';
@@ -124,8 +121,6 @@ function Incidents() {
   const inboxKey = incidentFiltersKey(filters);
   const inbox = useAsync(() => loadIncidentInbox(filters), [inboxKey], 30000);
   const summary = useAsync(getAlertWorkloadSummary, [], 30000);
-  const health = useAsync(getObsHealthDetail, [], 30000);
-  const audit = useAsync(() => searchObsAuditLog({ limit: 8, operator_only: true }), [], 30000);
 
   // A page answers exactly one query: after a filter change the previous
   // page is never shown under the new filters, even while it is the only data.
@@ -309,8 +304,6 @@ function Incidents() {
   const refreshAll = () => {
     inbox.reload();
     summary.reload();
-    health.reload();
-    audit.reload();
     setInsightsToken((value) => value + 1);
   };
 
@@ -347,7 +340,7 @@ function Incidents() {
         }
       />
 
-      <SnapshotFreshness snapshots={[inbox, summary, health]} />
+      <SnapshotFreshness snapshots={[inbox, summary]} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
@@ -553,39 +546,6 @@ function Incidents() {
 
       <div className="mt-6">
         <AlertInsights refreshToken={insightsToken} onOpenEpisode={(episodeId) => openIncidentId(`platform_alert/${episodeId}`)} />
-      </div>
-
-      <div className="mt-6">
-        <PipelineHealth health={health} />
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <FleetEventStream />
-        <SectionCard title="Recent operator actions" action={<Link href="/audit-log" className="btn btn-secondary btn-xs">Audit trail</Link>}>
-          {audit.error && !audit.data ? (
-            <ErrorRow message={`Could not load operator audit: ${audit.error.message}`} />
-          ) : audit.loading && !audit.data ? (
-            <LoadingRow label="Loading operator audit" />
-          ) : !audit.data?.items.length ? (
-            <EmptyRow>No operator actions in the audit window.</EmptyRow>
-          ) : (
-            <div className="divide-y divide-[var(--color-line)]">
-              {audit.data.items.map((row) => (
-                <div key={row.id} className="flex items-center justify-between gap-4 p-4 text-xs">
-                  <div className="min-w-0">
-                    <div className="truncate font-mono font-semibold">{row.kind}</div>
-                    <div className="truncate text-[var(--color-ink-muted)]">
-                      {row.actor || 'system'}
-                      {row.account_email ? ` · ${row.account_email}` : ''}
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-[var(--color-ink-muted)]">{relativeTime(row.received_at)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {audit.error && audit.data && <RefreshFailed error={audit.error} />}
-        </SectionCard>
       </div>
 
       <Modal

@@ -48,7 +48,7 @@ test('stale deployments are found in a dry run, then cancelled as one batch', as
 });
 
 test('the release check shows which active nodes lag behind', async ({ page }) => {
-  await page.goto('/nodes');
+  await page.goto('/nodes?view=release');
   await page.getByTitle(`Check against ${RELEASE_NEW}`).click();
   await expect(page).toHaveURL(new RegExp(`[?&]release=${RELEASE_NEW}`));
   await expect(page.getByText('1 of 2 active nodes are not ready on a3f9c2d1e8…')).toBeVisible();

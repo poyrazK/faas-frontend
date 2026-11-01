@@ -149,7 +149,9 @@ function route(method, path, query, body) {
         alert_history: { state: 'current', collection_state: 'collected', diagnostics_path: '/v1/admin/obs/rule-health' },
         alert_retention: { state: 'current', expired_episodes: 0 } } };
     case key === 'GET /v1/admin/obs/rule-health':
-      return { status: 200, body: { state: 'healthy', truncated: false, generated_at: now(), groups: [] } };
+      return { status: 200, body: { generated_at: now(), scope: 'loaded_rules', state: 'healthy', max_age_seconds: 300, clock_skew_tolerance_seconds: 30,
+        totals: { rules: 12, groups: 3, healthy: 12, failed: 0, stale: 0, unavailable: 0, invalid: 0, invalid_groups: 0, invalid_clock: 0 },
+        items: [], total_items: 0, limit: 200, truncated: false, limitations: [] } };
     case key === 'GET /v1/admin/obs/incidents/platform_alert/summary':
       return { status: 200, body: { as_of: now(), scope: 'retained_platform_alert_episodes', age_basis: 'episode_started_at',
         collection: { state: 'current', collection_state: 'collected', last_attempt_at: ago(1), last_success_at: ago(1) },

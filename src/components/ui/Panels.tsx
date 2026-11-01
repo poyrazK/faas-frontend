@@ -89,9 +89,40 @@ export function SectionCard({
           {action}
         </div>
       )}
-      <div className={bodyClassName}>{children}</div>
+      <div className={bodyClassName}>
+        <SectionBoundary>{children}</SectionBoundary>
+      </div>
     </div>
   );
+}
+
+/**
+ * Keeps one section's render failure inside that section (a field the
+ * backend left out, an unexpected shape) instead of replacing the whole page
+ * with the error screen. The failure is logged and the section can retry.
+ */
+class SectionBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Operations section failed to render', error);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-4 text-xs text-[var(--color-danger)]">
+        <span>This section could not be shown ({this.state.error.message}). The rest of the page is unaffected.</span>
+        <button type="button" className="btn btn-secondary btn-xs" onClick={() => this.setState({ error: null })}>
+          Try again
+        </button>
+      </div>
+    );
+  }
 }
 
 /* ──────────────────────────── Table footer ────────────────────────────── */
