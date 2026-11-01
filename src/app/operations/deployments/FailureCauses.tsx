@@ -19,6 +19,8 @@ export function FailureCauses({
   causes,
   total,
   truncated,
+  observedAt,
+  refreshError,
   selected,
   onSelect,
 }: {
@@ -27,6 +29,10 @@ export function FailureCauses({
   total: number;
   /** apid had more failed deployments than one request returns. */
   truncated: boolean;
+  /** When the failed deployments were read; they are not polled. */
+  observedAt: number | null;
+  /** The last reload failed; the causes shown are from observedAt. */
+  refreshError: string | null;
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
@@ -39,9 +45,15 @@ export function FailureCauses({
       action={
         <span className="text-[11px] text-[var(--color-ink-muted)]">
           {truncated ? `The latest ${total} failed deployments` : plural(total, 'failed deployment')}
+          {observedAt !== null && ` · as of ${new Date(observedAt).toLocaleTimeString()}`}
         </span>
       }
     >
+      {refreshError && (
+        <div role="alert" className="border-b border-[var(--color-line)] px-5 py-2 text-xs text-[var(--color-warning-bold)]">
+          Refresh failed: {refreshError}. These causes are from the last successful read.
+        </div>
+      )}
       <ul className="divide-y divide-[var(--color-line)]">
         {shown.map((cause) => {
           const count = cause.deployments.length;

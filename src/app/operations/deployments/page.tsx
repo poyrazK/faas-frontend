@@ -125,6 +125,9 @@ function DeploymentOperations() {
 
   // Failure causes come from their own request: the latest failed
   // deployments under the same scope, not just the page of rows below.
+  // apid audits every read of the deployment list as an operator view, so
+  // this one is not polled: it loads on open, on Refresh and when the
+  // filters change. Retry and cancel leave failed deployments as they are.
   const showsFailed = FAILED_PRESETS.includes(preset);
   const causesKey = [account, app, age, includeDeleted ? 'deleted' : '', showsFailed ? 'failed' : ''].join('|');
   const causesQuery = useAsync(
@@ -141,7 +144,6 @@ function DeploymentOperations() {
       return { key: causesKey, page: failedPage };
     },
     [causesKey],
-    POLL_MS * 2,
   );
   const failedPage = causesQuery.data && causesQuery.data.key === causesKey ? causesQuery.data.page : null;
   const causes = failedPage ? groupFailureCauses(failedPage.deployments) : null;
@@ -241,7 +243,8 @@ function DeploymentOperations() {
 
       <StaleRepairDialog open={repairOpen} onClose={() => setRepairOpen(false)} onRepaired={reloadAll} />
 
-      <SnapshotFreshness snapshots={showsFailed ? [query, causesQuery] : [query]} />
+      {/* The failure causes card dates its own snapshot, which is not polled. */}
+      <SnapshotFreshness snapshots={[rowsQuery]} />
 
       {scopeAccount && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3 text-xs">
@@ -306,6 +309,8 @@ function DeploymentOperations() {
           causes={causes}
           total={failedPage.deployments.length}
           truncated={failedPage.next_offset > 0}
+          observedAt={causesQuery.lastSuccessAt}
+          refreshError={causesQuery.error?.message ?? null}
           selected={byCause ? causeParam : null}
           onSelect={(id) => setParams({ cause: id, offset: null })}
         />
