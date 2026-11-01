@@ -90,6 +90,11 @@ const deployment = (id, status, extra = {}) => ({
 const DISK_FULL = (available) => `vm spawn: builderd: create drive1: builderd: insufficient host free space for build drive: available=${available} bytes, required=21474836480 bytes`;
 const NO_NODE_FITS = 'snapshot prime failed: sched: prime: create instance: capacity_unavailable: placement: no active compute_node fits 2056 MB billable across 2 candidates';
 
+/** A crash log as apid records it: the guest's whole startup output, many lines long. */
+const NGINX_CRASH = 'snapshot prime failed: sched: prime: cold boot: app_startup_crash: workload stopped during startup (guest e4946ae2-94a3-4d05-b841-623b672546ba exited before becoming ready): '
+  + Array.from({ length: 3 }, (_, i) => `2026/10/25 08:03:1${i} [emerg] 67${i}#67${i}: mkdir() "/var/cache/nginx/client_temp" failed (30: Read-only file system) nginx: [emerg] mkdir() "/var/cache/nginx/client_temp" failed (30: Read-only file system) guest-init: sidecar web crashed (restart ${i + 1}/3): run sidecar web: exit status 1`).join(' ')
+  + ' guest-init: app crash-looped after 3 restart(s): run sidecar web: exit status 1';
+
 /** Failed deployments as production shows them: a few causes, repeated with only numbers changed. */
 const failedDeployments = () => {
   const failed = (n, slug, minutesAgo, extra) =>
@@ -101,10 +106,10 @@ const failedDeployments = () => {
     failed(4, 'bazaar-grpc', 60 * 5, { error_code: 'capacity_unavailable', error: NO_NODE_FITS }),
     failed(5, 'h14-py', 60 * 80, { error_code: 'capacity_unavailable', error: NO_NODE_FITS }),
     failed(6, 'h14-fn', 60 * 90, { error: 'build exited 1' }),
-    failed(7, 'h14-grpc', 60 * 95, { error: 'build exited 2' }),
+    failed(7, 'h14-grpc', 60 * 95, { error: 'build exited 1' }),
     failed(8, 'h14-py', 60 * 40, { error: 'vm wait: builderd: destroy: rpc error: code = PermissionDenied desc = only schedd may call instance destruction' }),
     failed(9, 'h14-grpc', 60 * 100, { error_code: 'validation_failed', error: 'snapshot prime failed: sched: prime: cold boot: validation_failed: healthcheck_path and healthcheck_grpc are mutually exclusive' }),
-    failed(10, 'h14-fn', 60 * 110, { error_code: 'source_unavailable', error: 'source download: 404 Not Found' }),
+    failed(10, 'h14-py', 60 * 110, { error_code: 'app_startup_crash', error: NGINX_CRASH }),
   ];
 };
 

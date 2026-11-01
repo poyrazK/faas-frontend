@@ -25,14 +25,24 @@ export interface FailureCause {
 }
 
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+/** RFC 3339 times, as Go and guest logs write them ("2026-10-14T07:14:45.514973340"). */
+const TIMESTAMP = /\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;
 /** Commit SHAs, image digests and other hex IDs: a digit and a letter, so words and plain numbers stay. */
 const HEX_ID = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b/gi;
-/** Sizes, counts and codes, but not digits inside a name ("drive1", "p95"). */
-const NUMBER = /(?<![\w.])\d+(?:\.\d+)?(?![A-Za-z_])/g;
+/** Sizes and counts as whole tokens, not digits inside a name ("drive1", "p95", "P-256"). */
+const NUMBER = /(?<![\w.]|[A-Za-z]-)\d+(?:\.\d+)?(?!\.?\w)/g;
+/** What comes before an exit status, which names the failure (124 is a timeout) and so stays. */
+const EXIT_STATUS = /\b(?:exited(?: with)?(?: (?:status|code))?|exit (?:status|code))[:=]? ?$/i;
 
 /** apid's error with what varies between occurrences replaced. */
 export function failureSignature(error: string): string {
-  return error.replace(UUID, '<id>').replace(HEX_ID, '<id>').replace(NUMBER, 'N').replace(/\s+/g, ' ').trim();
+  return error
+    .replace(/\s+/g, ' ')
+    .replace(UUID, '<id>')
+    .replace(TIMESTAMP, '<time>')
+    .replace(HEX_ID, '<id>')
+    .replace(NUMBER, (number, offset: number, text: string) => (EXIT_STATUS.test(text.slice(Math.max(0, offset - 24), offset)) ? number : 'N'))
+    .trim();
 }
 
 /** FNV-1a: a short ID that stays the same for the same signature. */

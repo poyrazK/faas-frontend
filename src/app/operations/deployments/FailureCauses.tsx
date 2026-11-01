@@ -54,7 +54,8 @@ export function FailureCauses({
               <span className="text-lg font-semibold leading-none sm:w-10 sm:shrink-0 sm:text-right">{count}</span>
               <span className="min-w-0 flex-1 space-y-0.5">
                 {cause.code && <span className="block font-mono text-[var(--color-danger)]">{cause.code}</span>}
-                <span className="block break-words font-mono text-[11px]" title={cause.example || undefined}>
+                {/* A crash log can run to pages; the tooltip and "Show" have it in full. */}
+                <span className="line-clamp-3 break-words font-mono text-[11px]" title={cause.example || undefined}>
                   {cause.message || <span className="font-sans text-[var(--color-ink-muted)]">No error was recorded</span>}
                 </span>
                 <span className="block text-[var(--color-ink-muted)]">
@@ -74,7 +75,7 @@ export function FailureCauses({
         })}
       </ul>
       <div className="table-foot">
-        <span>Grouped by error code and message; sizes, IDs and counts are ignored.</span>
+        <span>Grouped by error code and message; sizes, counts, IDs and times are ignored.</span>
         {causes.length > COLLAPSED && (
           <button type="button" className="btn btn-secondary btn-xs" onClick={() => setExpanded((value) => !value)}>
             {expanded ? 'Show fewer' : `Show all ${causes.length} causes`}
