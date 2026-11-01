@@ -89,10 +89,10 @@ export default function OverviewPage() {
                 ))}
               </ul>
             )}
-            {report.incidentCount > LIST_LIMIT && (
+            {report.hiddenIncidents > 0 && (
               <div className="table-foot">
                 <Link href="/incidents" className="hover:underline">
-                  {report.incidentCount - LIST_LIMIT} more incident{report.incidentCount - LIST_LIMIT === 1 ? '' : 's'} in the inbox
+                  {report.hiddenIncidents} more incident{report.hiddenIncidents === 1 ? '' : 's'} in the inbox
                 </Link>
               </div>
             )}

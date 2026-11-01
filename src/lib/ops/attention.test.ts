@@ -58,7 +58,52 @@ describe('buildAttention', () => {
     const report = buildAttention({ incidents: inbox(many) }, 8);
     expect(report.items).toHaveLength(8);
     expect(report.incidentCount).toBe(12);
+    expect(report.hiddenIncidents).toBe(4);
     expect(report.headline.text).toBe('12 things need attention');
+  });
+
+  it('gives deployments failing or waiting the same way one row, where its most urgent one would be', () => {
+    // apid's summaries: "deployment <status>", with the error code when a failure has one.
+    const deployment = (id: string, summary: string, minutesAgo: number, extra: Partial<ObsIncident> = {}) =>
+      ({ ...incident(id, 'error', minutesAgo), summary, account_id: 'acct-1', ...extra }) as ObsIncident;
+    const report = buildAttention({
+      incidents: inbox([
+        deployment('d1', 'deployment failed', 10, { resource_name: 'h14-fn' }),
+        deployment('d2', 'deployment failed (capacity_unavailable)', 5, { resource_name: 'bazaar-grpc' }),
+        deployment('d3', 'deployment failed', 30, { resource_name: 'h14-py', account_id: 'acct-2' }),
+        deployment('d4', 'deployment failed', 50, { resource_name: 'h14-fn' }),
+        { ...incident('j1', 'error', 1, 'job_run'), summary: 'job run failed' },
+        { ...incident('j2', 'error', 2, 'job_run'), summary: 'job run failed' },
+        deployment('b1', 'deployment building', 3, { severity: 'warning', status: 'building' }),
+        deployment('b2', 'deployment building', 4, { severity: 'warning', status: 'building' }),
+      ]),
+    });
+    expect(report.items.map((item) => item.title)).toEqual([
+      'job run failed',
+      'job run failed',
+      'deployment failed (capacity_unavailable)',
+      '3 deployments failed',
+      '2 deployments building',
+    ]);
+    expect(report.items[3]).toMatchObject({
+      tone: 'danger',
+      detail: 'Deployments · h14-fn, h14-py',
+      href: '/deployments?status=failed',
+    });
+    expect(Date.parse(report.items[3].at!)).toBe(Date.parse('2026-11-01T11:50:00Z'));
+    // Deployments of one account open with that account's filter.
+    expect(report.items[4]).toMatchObject({ tone: 'warning', href: '/deployments?status=in_flight&account=acct-1' });
+    expect(report.incidentCount).toBe(8);
+    expect(report.headline.text).toBe('5 things need attention');
+  });
+
+  it('caps rows, not incidents, and counts the incidents in hidden rows', () => {
+    const failed = Array.from({ length: 6 }, (_, i) => ({ ...incident(`f${i}`, 'error', i), summary: 'deployment failed' }) as ObsIncident);
+    const others = Array.from({ length: 4 }, (_, i) => incident(`n${i}`, 'warning', i, 'compute_node'));
+    const report = buildAttention({ incidents: inbox([...failed, ...others]) }, 3);
+    expect(report.items.map((item) => item.title)).toEqual(['6 deployments failed', 'n0 warning', 'n1 warning']);
+    expect(report.hiddenIncidents).toBe(2);
+    expect(report.headline.text).toBe('5 things need attention');
   });
 
   it('flags alerts needing an owner and active nodes with stale heartbeats', () => {

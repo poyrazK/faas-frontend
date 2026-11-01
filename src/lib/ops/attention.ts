@@ -6,6 +6,10 @@
    actions. Deployment and job-run lists are not read here: apid audits every
    read of them as an operator view, so the overview never polls them.
 
+   Deployments that fail or wait the same way ("deployment failed
+   (capacity_unavailable)") share one row with a count, so a burst of them
+   cannot push every other incident off the list.
+
    Missing evidence is never an all-clear: a source that could not be read is
    reported as unknown and keeps the headline from saying "All clear".
    ========================================================================== */
@@ -44,8 +48,10 @@ export interface AttentionInput {
 
 export interface AttentionReport {
   items: AttentionItem[];
-  /** Total incidents in the inbox; items shows at most `limit` of them. */
+  /** Total incidents in the inbox; items shows at most `limit` rows of them. */
   incidentCount: number;
+  /** Incidents in rows beyond `limit`, counted but not listed. */
+  hiddenIncidents: number;
   /** Sources that could not be read or are incomplete: the list may be missing problems. */
   unknown: string[];
   headline: { tone: 'ok' | 'warning' | 'danger' | 'unknown'; text: string };
@@ -58,11 +64,66 @@ const byUrgency = (a: ObsIncident, b: ObsIncident) =>
 
 const isError = (value: unknown): value is Error => value instanceof Error;
 
-/** Builds the list, most urgent first; incidents beyond `limit` are counted, not listed. */
+const groupKey = (incident: ObsIncident) => `${incident.severity}|${incident.status}|${incident.summary}`;
+
+/**
+ * The sorted inbox as rows: deployments sharing a summary make one row, at
+ * the place of its most urgent (and most recent) member; the rest stay single.
+ */
+function incidentRows(sorted: ObsIncident[]): ObsIncident[][] {
+  const groups = new Map<string, ObsIncident[]>();
+  for (const incident of sorted) {
+    if (incident.type !== 'deployment') continue;
+    const group = groups.get(groupKey(incident));
+    if (group) group.push(incident);
+    else groups.set(groupKey(incident), [incident]);
+  }
+  const rows: ObsIncident[][] = [];
+  for (const incident of sorted) {
+    const group = incident.type === 'deployment' ? groups.get(groupKey(incident)) : undefined;
+    if (!group || group.length === 1) rows.push([incident]);
+    else if (group[0] === incident) rows.push(group);
+  }
+  return rows;
+}
+
+function incidentItem(incident: ObsIncident): AttentionItem {
+  return {
+    key: `incident:${incident.id}`,
+    tone: incident.severity === 'warning' ? 'warning' : 'danger',
+    title: incident.summary,
+    detail: `${INCIDENT_TYPE_LABELS[incident.type] ?? incident.type}${incident.resource_name ? ` · ${incident.resource_name}` : ''}`,
+    href: incidentHref(incident.id),
+    at: incident.observed_at,
+  };
+}
+
+/** One row for deployments sharing a summary; it opens them on the Deployments page. */
+function deploymentGroupItem(group: ObsIncident[]): AttentionItem {
+  const [first] = group;
+  const apps = [...new Set(group.map((incident) => incident.resource_name || incident.app_id || incident.resource_id))];
+  const accounts = new Set(group.map((incident) => incident.account_id));
+  const query = new URLSearchParams({ status: first.status === 'failed' ? 'failed' : 'in_flight' });
+  if (accounts.size === 1 && first.account_id) query.set('account', first.account_id);
+  return {
+    key: `deployments:${groupKey(first)}`,
+    tone: first.severity === 'warning' ? 'warning' : 'danger',
+    // apid's summary is "deployment <status>", with " (<error code>)" when a failure has one.
+    title: first.summary.startsWith('deployment ')
+      ? `${group.length} deployments ${first.summary.slice('deployment '.length)}`
+      : `${group.length} × ${first.summary}`,
+    detail: `Deployments · ${apps.slice(0, 3).join(', ')}${apps.length > 3 ? ` and ${apps.length - 3} more` : ''}`,
+    href: `/deployments?${query}`,
+    at: first.observed_at,
+  };
+}
+
+/** Builds the list, most urgent first; incident rows beyond `limit` are counted, not listed. */
 export function buildAttention(input: AttentionInput, limit = 8): AttentionReport {
   const items: AttentionItem[] = [];
   const unknown: string[] = [];
   let incidentCount = 0;
+  let hiddenIncidents = 0;
 
   // Actions the operator started that failed come first: they are the operator's own loose ends.
   for (const intent of input.intents ?? []) {
@@ -81,16 +142,9 @@ export function buildAttention(input: AttentionInput, limit = 8): AttentionRepor
   else if (input.incidents) {
     const sorted = [...input.incidents.items].sort(byUrgency);
     incidentCount = sorted.length;
-    for (const incident of sorted.slice(0, limit)) {
-      items.push({
-        key: `incident:${incident.id}`,
-        tone: incident.severity === 'warning' ? 'warning' : 'danger',
-        title: incident.summary,
-        detail: `${INCIDENT_TYPE_LABELS[incident.type] ?? incident.type}${incident.resource_name ? ` · ${incident.resource_name}` : ''}`,
-        href: incidentHref(incident.id),
-        at: incident.observed_at,
-      });
-    }
+    const rows = incidentRows(sorted);
+    for (const row of rows.slice(0, limit)) items.push(row.length === 1 ? incidentItem(row[0]) : deploymentGroupItem(row));
+    for (const row of rows.slice(limit)) hiddenIncidents += row.length;
     for (const source of input.incidents.unavailable_sources ?? []) unknown.push(`Incident source ${source.replace(/_/g, ' ')} is unavailable`);
   }
 
@@ -126,7 +180,7 @@ export function buildAttention(input: AttentionInput, limit = 8): AttentionRepor
   }
 
   const danger = items.filter((item) => item.tone === 'danger').length;
-  const total = items.length + Math.max(0, incidentCount - limit);
+  const total = items.length + hiddenIncidents;
   const headline: AttentionReport['headline'] =
     danger > 0
       ? { tone: 'danger', text: `${total} thing${total === 1 ? '' : 's'} need${total === 1 ? 's' : ''} attention` }
@@ -136,5 +190,5 @@ export function buildAttention(input: AttentionInput, limit = 8): AttentionRepor
           ? { tone: 'unknown', text: 'No known problems, but some signals are unavailable' }
           : { tone: 'ok', text: 'All clear' };
 
-  return { items, incidentCount, unknown, headline };
+  return { items, incidentCount, hiddenIncidents, unknown, headline };
 }
