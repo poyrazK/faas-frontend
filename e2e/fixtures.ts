@@ -20,8 +20,8 @@ export interface MockRequest {
 }
 
 interface Mock {
-  /** Flips mock switches: {"enrolled": false} (no authenticator), {"expired": true} (session gone), {"oidc": false} (hosting OIDC off). */
-  set: (switches: { enrolled?: boolean; expired?: boolean; oidc?: boolean }) => Promise<void>;
+  /** Flips mock switches: {"enrolled": false} (no authenticator), {"expired": true} (session gone), {"oidc": false} (hosting OIDC off), {"siteRevision": 9} (someone else changed the site). */
+  set: (switches: { enrolled?: boolean; expired?: boolean; oidc?: boolean; siteRevision?: number }) => Promise<void>;
   /** Requests the console sent since the test started, oldest first. */
   requests: () => Promise<MockRequest[]>;
 }

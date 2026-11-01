@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
 import {
   branchOf,
+  DOMAIN_RECOVERY_DELAY_MS,
+  domainRecovery,
+  isUuid,
+  refreshOnConflict,
+  releaseActions,
   checkBadge,
   domainBadge,
   formatBytes,
@@ -180,5 +185,49 @@ describe('read models', () => {
   it('formats artifact sizes', () => {
     expect(formatBytes(512)).toBe('512 B');
     expect(formatBytes(2_621_440)).toBe('2.5 MB');
+  });
+});
+
+describe('actions', () => {
+  const site = { active_release_id: 'live', status: 'active', suspended: false };
+
+  it('offers put live and retire only where apid would accept them', () => {
+    expect(releaseActions({ id: 'live', state: 'ready' }, site)).toEqual({ promote: false, retire: false });
+    expect(releaseActions({ id: 'old', state: 'ready' }, site)).toEqual({ promote: true, retire: true });
+    expect(releaseActions({ id: 'new', state: 'pending' }, site)).toEqual({ promote: false, retire: true });
+    expect(releaseActions({ id: 'gone', state: 'retiring' }, site)).toEqual({ promote: false, retire: false });
+    expect(releaseActions({ id: 'old', state: 'ready' }, { ...site, status: 'deleting' }).promote).toBe(false);
+  });
+
+  it('offers domain recovery only for an unbound create, and says when it can run', () => {
+    const started = '2026-11-01T11:59:00Z';
+    const details = { tls_status: '', records: [], create_started_at: started, verified_at: started };
+    expect(domainRecovery({ details: { ...details, provider_id: 'bound' } }, NOW)).toEqual({ applies: false });
+    expect(domainRecovery({ details: { tls_status: '', records: [] } }, NOW)).toEqual({ applies: false });
+    expect(domainRecovery({ details: { ...details, verified_at: undefined } }, NOW)).toEqual({ applies: true, blocker: 'Hostname ownership is not verified yet.' });
+    const early = domainRecovery({ details }, NOW);
+    expect(early.applies && early.blocker).toMatch(/accepts a recovery from/);
+    expect(domainRecovery({ details }, Date.parse(started) + DOMAIN_RECOVERY_DELAY_MS)).toEqual({ applies: true, blocker: null });
+  });
+
+  it('checks a provider ID is a UUID', () => {
+    expect(isUuid(' 0f8fad5b-d9cb-469f-a165-70867728950e ')).toBe(true);
+    expect(isUuid('0f8fad5b')).toBe(false);
+  });
+
+  it('refreshes and explains on a conflict, and passes other errors through', async () => {
+    let refreshed = 0;
+    const refresh = () => (refreshed += 1);
+    const conflict = new ApiError({ title: 'Hosting state changed', status: 409, code: 'hosting_release_conflict', detail: 'refresh the site revision' }, 409, 'x');
+    const err = await refreshOnConflict(() => Promise.reject(conflict), refresh).catch((e) => e);
+    expect(refreshed).toBe(1);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    expect(err.message).toBe('refresh the site revision The page has been refreshed: review the current state before trying again.');
+
+    const other = new ApiError({ title: 'x', status: 503, code: 'frontend_hosting_unavailable' }, 503, 'x');
+    await expect(refreshOnConflict(() => Promise.reject(other), refresh)).rejects.toBe(other);
+    expect(refreshed).toBe(1);
+    await expect(refreshOnConflict(() => Promise.resolve('ok'), refresh)).resolves.toBe('ok');
   });
 });

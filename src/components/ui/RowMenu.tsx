@@ -40,11 +40,14 @@ export function RowMenu({
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  // Where the button was when the menu was placed.
+  const anchor = useRef<{ top: number; left: number } | null>(null);
   const menuId = useId();
 
   useLayoutEffect(() => {
     if (!open || !button.current) return;
     const rect = button.current.getBoundingClientRect();
+    anchor.current = { top: rect.top, left: rect.left };
     const height = menu.current?.offsetHeight ?? 0;
     const below = rect.bottom + 4 + height <= window.innerHeight;
     setPlace({
@@ -60,12 +63,20 @@ export function RowMenu({
     const onPointer = (event: PointerEvent) => {
       if (!menu.current?.contains(event.target as Node) && !button.current?.contains(event.target as Node)) close();
     };
+    // Close only when a scroll moved the button: the menu would float away
+    // from it. A late scroll event that moved nothing (from scrolling the
+    // button into view just before the click) leaves the menu open.
+    const onScroll = () => {
+      const rect = button.current?.getBoundingClientRect();
+      const was = anchor.current;
+      if (!rect || !was || Math.abs(rect.top - was.top) > 1 || Math.abs(rect.left - was.left) > 1) close();
+    };
     document.addEventListener('pointerdown', onPointer);
-    window.addEventListener('scroll', close, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', close);
     return () => {
       document.removeEventListener('pointerdown', onPointer);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', close);
     };
   }, [open]);

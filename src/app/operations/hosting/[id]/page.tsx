@@ -10,6 +10,8 @@ import {
   listAutomationCredentials,
   listOIDCTrusts,
   oidcAudience,
+  refreshOnConflict,
+  setHostingSiteSuspended,
   siteStatus,
   type HostingSite,
 } from '@/lib/ops/hosting';
@@ -17,12 +19,14 @@ import { HOSTING_SITE_TABS, hostingSiteHref, opsHref, type HostingSiteTab } from
 import { relativeTime } from '@/lib/format';
 import { useAsync } from '@/lib/useAsync';
 import { useUrlParams } from '@/lib/useUrlState';
-import { PageHeader } from '@/components/ui/bits';
+import { Mono, PageHeader } from '@/components/ui/bits';
+import { RowMenu } from '@/components/ui/RowMenu';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { EmptyState, ErrorState } from '@/components/ui/States';
 import { Icon, type IconName } from '@/components/ui/Icons';
 import { PageTabs } from '@/components/ui/PageTabs';
 import { CopyLinkButton, EntityId } from '@/components/operator/EntityId';
+import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { CredentialsSection } from './CredentialsSection';
 import { TrustsSection } from './TrustsSection';
 import { ReleasesTab } from './ReleasesTab';
@@ -68,10 +72,16 @@ function HostingSiteView({ id }: { id: string }) {
   const tab: HostingSiteTab = isTab(requested) ? requested : 'access';
   // Bumped by Refresh so the open view reloads its own sections too.
   const [nonce, setNonce] = useState(0);
+  const [suspending, setSuspending] = useState(false);
   const site = useAsync(() => getHostingSite(siteId), [siteId], 60_000);
   const reloadAll = () => {
     site.reload();
     setNonce((n) => n + 1);
+  };
+  /** A write changed the site: show what apid returned at once, then reload everything. */
+  const siteChanged = (updated?: HostingSite) => {
+    if (updated) site.setData(updated);
+    reloadAll();
   };
 
   const off = hostingFeatureOff(site.error);
@@ -96,6 +106,22 @@ function HostingSiteView({ id }: { id: string }) {
               <Icon name="refresh" size={14} />
               Refresh
             </button>
+            {site.data && site.data.status === 'active' && (
+              <RowMenu
+                label="More site actions"
+                trigger={
+                  <>
+                    More
+                    <Icon name="chevronDown" size={12} />
+                  </>
+                }
+                items={[
+                  site.data.suspended
+                    ? { label: 'Resume site…', onSelect: () => setSuspending(true) }
+                    : { label: 'Suspend site…', tone: 'danger', onSelect: () => setSuspending(true), title: 'Stops serving the site and its previews' },
+                ]}
+              />
+            )}
           </>
         }
       />
@@ -136,12 +162,66 @@ function HostingSiteView({ id }: { id: string }) {
             />
           </div>
           {tab === 'access' && <AccessTab site={site.data} nonce={nonce} />}
-          {tab === 'releases' && <ReleasesTab site={site.data} nonce={nonce} />}
+          {tab === 'releases' && <ReleasesTab site={site.data} nonce={nonce} onSiteChanged={siteChanged} />}
           {tab === 'activity' && <ActivityTab site={site.data} nonce={nonce} />}
           {tab === 'domains' && <DomainsTab site={site.data} nonce={nonce} />}
         </>
       )}
+
+      {suspending && site.data && <SuspensionDialog site={site.data} onClose={() => setSuspending(false)} onChanged={siteChanged} />}
     </div>
+  );
+}
+
+/** Suspend stops serving the site (and its previews); resume serves the live release again. */
+function SuspensionDialog({
+  site,
+  onClose,
+  onChanged,
+}: {
+  site: HostingSite;
+  onClose: () => void;
+  onChanged: (updated?: HostingSite) => void;
+}) {
+  const suspend = !site.suspended;
+  return (
+    <OperatorActionDialog
+      open
+      title={suspend ? 'Suspend site' : 'Resume site'}
+      tone={suspend ? 'danger' : 'warning'}
+      reason="none"
+      confirmText={suspend ? site.name : undefined}
+      submitLabel={suspend ? 'Suspend site' : 'Resume site'}
+      fingerprint={`${suspend}|${site.revision}`}
+      impact={
+        suspend ? (
+          <p>
+            Stops serving <Mono>{site.hostname}</Mono>, its custom domains and its previews. CI runs cannot deploy to it while it is
+            suspended. Releases are kept; resuming serves the live release again.
+          </p>
+        ) : (
+          <p>
+            Serves <Mono>{site.hostname}</Mono> again with the live release
+            {site.active_release_id ? (
+              <>
+                {' '}
+                <Mono>{site.active_release_id.slice(0, 8)}…</Mono>
+              </>
+            ) : null}
+            , and lets CI runs deploy to it.
+          </p>
+        )
+      }
+      onClose={onClose}
+      onSubmit={async ({ idempotencyKey }) => {
+        const updated = await refreshOnConflict(
+          () => setHostingSiteSuspended(site.id, suspend, site.revision, { idempotencyKey }),
+          () => onChanged(),
+        );
+        onChanged(updated);
+        return suspend ? `Suspended ${site.name}` : `Resumed ${site.name}`;
+      }}
+    />
   );
 }
 
