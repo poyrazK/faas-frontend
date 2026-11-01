@@ -12,10 +12,14 @@ test('failed deployments are grouped by cause, and a cause lists only its deploy
   await expect(disk).toContainText('insufficient host free space for build drive: available=N bytes, required=N bytes');
   await expect(disk).toContainText('3 apps · 2 accounts');
   await expect(items.nth(1)).toContainText('capacity_unavailable');
-  await expect(items.nth(2)).toContainText('build exited N');
+  // Exit statuses name the failure, so they are kept.
+  await expect(items.nth(2)).toContainText('build exited 1');
   await causes.getByRole('button', { name: 'Show all 6 causes' }).click();
   await expect(items).toHaveCount(6);
-  await expect(items.last()).toContainText('source_unavailable');
+  // A crash log is cut to three lines; the tooltip has the whole error.
+  const crash = items.last().locator('[title^="app_startup_crash: snapshot prime failed"]');
+  await expect(crash).toContainText('workload stopped during startup (guest <id> exited before becoming ready)');
+  expect((await crash.boundingBox())!.height).toBeLessThan(60);
 
   await disk.getByRole('button', { name: 'Show all 3' }).click();
   await expect(page).toHaveURL(/[?&]cause=[0-9a-f]{8}/);

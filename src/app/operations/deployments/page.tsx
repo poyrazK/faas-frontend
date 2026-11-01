@@ -316,7 +316,7 @@ function DeploymentOperations() {
           <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-5 py-2.5 text-xs">
             <Icon name="filter" size={13} />
             {selectedCause ? (
-              <span className="min-w-0 flex-1">
+              <span className="line-clamp-2 min-w-0 flex-1" title={selectedCause.example || undefined}>
                 Failed deployments with one cause:{' '}
                 <span className="break-words font-mono">{[selectedCause.code, selectedCause.message].filter(Boolean).join(' ') || 'no error recorded'}</span>
               </span>
