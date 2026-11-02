@@ -25,12 +25,12 @@ import { Icon } from '@/components/ui/Icons';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { jobRunHref, tenantHref } from '@/lib/routes';
+import { AUDITED_POLL_MS, hasJobRunInFlight } from '@/lib/ops/auditedReads';
 import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 
 const PAGE_SIZE = 50;
 const TASK_PAGE_SIZE = 50;
-const POLL_MS = 15000;
 
 interface RunDetail {
   runId: string;
@@ -65,7 +65,9 @@ function JobRunOperations() {
       return { key, page };
     },
     [key],
-    POLL_MS,
+    // An audited read: refreshed on a timer only while a listed run is queued or running.
+    AUDITED_POLL_MS,
+    { pollWhile: (data) => hasJobRunInFlight(data?.page?.runs) },
   );
   const page = query.data && query.data.key === key ? query.data.page : null;
 
@@ -119,7 +121,7 @@ function JobRunOperations() {
         }
       />
 
-      <SnapshotFreshness snapshots={[query]} />
+      <SnapshotFreshness snapshots={[query]} note="refreshes on its own only while a run is queued or running" />
 
       {scopeAccount && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3 text-xs">

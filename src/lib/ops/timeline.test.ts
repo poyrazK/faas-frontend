@@ -71,6 +71,21 @@ describe('buildTimeline', () => {
   });
 });
 
+describe('operator views', () => {
+  it('are their own kind, naming the list that was read, so a page can leave them out', () => {
+    const entries = buildTimeline(ACCOUNT, {
+      operatorActions: [
+        { id: 'v1', kind: 'operator.action.view', received_at: '2026-10-30T10:00:00Z', actor: 'op-1', data: { endpoint: 'deployments.active' } },
+        { id: 'a1', kind: 'operator.action.node_drain', received_at: '2026-10-30T09:00:00Z', actor: 'op-1' },
+      ],
+    });
+    expect(entries.map((e) => [e.kind, e.title, e.detail])).toEqual([
+      ['view', 'Operator viewed', 'deployments.active'],
+      ['operator', 'Node drain', 'operator.action.node_drain'],
+    ]);
+  });
+});
+
 describe('helpers', () => {
   it('humanizes audit kinds', () => {
     expect(humanizeKind('operator.action.account.revoke_sessions')).toBe('Account revoke sessions');

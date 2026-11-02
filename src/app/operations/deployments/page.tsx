@@ -35,12 +35,12 @@ import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog
 import { appDeploymentsHref, deploymentHref, tenantHref } from '@/lib/routes';
 import { CopyLinkButton, EntityId, shortId as short } from '@/components/operator/EntityId';
 import { groupFailureCauses } from '@/lib/ops/deploymentFailures';
+import { AUDITED_POLL_MS, hasDeploymentInFlight } from '@/lib/ops/auditedReads';
 import { StaleRepairDialog } from './StaleRepairDialog';
 import { FailureCauses } from './FailureCauses';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 
 const PAGE_SIZE = 50;
-const POLL_MS = 30000;
 
 /** `statuses` undefined = the handler's incident default (in flight + failed). */
 const STATUS_PRESETS: Record<string, { label: string; statuses?: 'all' | OperatorDeploymentStatus[] }> = {
@@ -118,7 +118,9 @@ function DeploymentOperations() {
       return { key, page };
     },
     [key],
-    POLL_MS,
+    // An audited read: refreshed on a timer only while a listed deployment is in flight.
+    AUDITED_POLL_MS,
+    { pollWhile: (data) => hasDeploymentInFlight(data?.page?.deployments) },
   );
   const current = query.data && query.data.key === key ? query.data : null;
   const page = current?.page ?? null;
@@ -244,7 +246,7 @@ function DeploymentOperations() {
       <StaleRepairDialog open={repairOpen} onClose={() => setRepairOpen(false)} onRepaired={reloadAll} />
 
       {/* The failure causes card dates its own snapshot, which is not polled. */}
-      <SnapshotFreshness snapshots={[rowsQuery]} />
+      <SnapshotFreshness snapshots={[rowsQuery]} note="refreshes on its own only while a deployment is in flight" />
 
       {scopeAccount && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3 text-xs">

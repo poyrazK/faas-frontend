@@ -1,7 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiError } from './api';
+
+export interface AsyncOptions<T> {
+  /**
+   * Polls only while this holds for the last answer; checked at each tick, so
+   * turning polling on or off never costs a read of its own. For audited
+   * reads that only need refreshing while something is in flight.
+   */
+  pollWhile?: (data: T | null) => boolean;
+}
 
 export interface AsyncState<T> {
   data: T | null;
@@ -22,6 +31,7 @@ export function useAsync<T>(
   fetcher: () => Promise<T>,
   deps: unknown[] = [],
   pollIntervalMs?: number,
+  options: AsyncOptions<T> = {},
 ): AsyncState<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,6 +39,11 @@ export function useAsync<T>(
   const [nonce, setNonce] = useState(0);
   const [lastSuccessAt, setLastSuccessAt] = useState<number | null>(null);
   const [now, setNow] = useState(0);
+  // The timer reads these at each tick instead of restarting when they change.
+  const latest = useRef({ data, pollWhile: options.pollWhile });
+  useEffect(() => {
+    latest.current = { data, pollWhile: options.pollWhile };
+  });
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
@@ -67,8 +82,13 @@ export function useAsync<T>(
     // audited as an operator viewing the account, so a background tab must
     // not keep recording views nobody made. Coming back refreshes at once.
     const hidden = () => typeof document !== 'undefined' && document.hidden;
+    const wanted = () => {
+      const { data: last, pollWhile } = latest.current;
+      return !pollWhile || pollWhile(last);
+    };
     let missedTick = false;
     const tick = () => {
+      if (!wanted()) return;
       if (hidden()) {
         missedTick = true;
         return;
@@ -92,6 +112,7 @@ export function useAsync<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nonce, pollIntervalMs, ...deps]);
 
-  const stale = data !== null && (error !== null || (!!pollIntervalMs && lastSuccessAt !== null && now - lastSuccessAt > 2 * pollIntervalMs));
+  const polling = !!pollIntervalMs && (!options.pollWhile || options.pollWhile(data));
+  const stale = data !== null && (error !== null || (polling && lastSuccessAt !== null && now - lastSuccessAt > 2 * pollIntervalMs));
   return { data, loading, error, reload, setData, lastSuccessAt, stale };
 }

@@ -1,6 +1,13 @@
 import type { AsyncState } from '@/lib/useAsync';
 
-export function SnapshotFreshness({ snapshots }: { snapshots: Pick<AsyncState<unknown>, 'lastSuccessAt' | 'stale'>[] }) {
+/** `note` says how the data refreshes when it is not simply on a timer. */
+export function SnapshotFreshness({
+  snapshots,
+  note,
+}: {
+  snapshots: Pick<AsyncState<unknown>, 'lastSuccessAt' | 'stale'>[];
+  note?: string;
+}) {
   const observed = snapshots.map((snapshot) => snapshot.lastSuccessAt).filter((time): time is number => time !== null);
   if (observed.length === 0) return null;
   const stale = snapshots.some((snapshot) => snapshot.stale);
@@ -13,6 +20,7 @@ export function SnapshotFreshness({ snapshots }: { snapshots: Pick<AsyncState<un
   ) : (
     <div role="status" className="-mt-2 mb-4 text-[11px] text-[var(--color-ink-faint)]">
       Updated {time}
+      {note && ` · ${note}`}
     </div>
   );
 }

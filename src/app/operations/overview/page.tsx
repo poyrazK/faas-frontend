@@ -8,6 +8,7 @@ import { relativeTime } from '@/lib/format';
 import { nodeHref } from '@/lib/routes';
 import { DEFAULT_INCIDENT_FILTERS, getAlertWorkloadSummary, listIncidents } from '@/lib/ops/incidents';
 import { buildAttention, type AttentionItem, type AttentionReport } from '@/lib/ops/attention';
+import { INCIDENT_INBOX_POLL_MS } from '@/lib/ops/auditedReads';
 import { PageHeader } from '@/components/ui/bits';
 import { SectionCard, StatTile } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
@@ -27,7 +28,8 @@ const LIST_LIMIT = 8;
  */
 export default function OverviewPage() {
   const overview = useAsync(getObsOverview, [], POLL_MS);
-  const incidents = useAsync(() => listIncidents(DEFAULT_INCIDENT_FILTERS), [], POLL_MS);
+  // apid audits every read of the incident inbox, so it refreshes less often than the rest.
+  const incidents = useAsync(() => listIncidents(DEFAULT_INCIDENT_FILTERS), [], INCIDENT_INBOX_POLL_MS);
   const alerts = useAsync(getAlertWorkloadSummary, [], POLL_MS);
   const { intents } = useOperatorIntents();
 
