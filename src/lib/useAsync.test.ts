@@ -44,4 +44,24 @@ describe('operator snapshot refresh', () => {
     expect(snapshot!.data).toBe(7);
     expect(snapshot!.stale).toBe(true);
   });
+
+  it('polls only while pollWhile holds for the last answer, without a read of its own when it changes', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    // Answers: in flight, still in flight, settled; nothing is read after that.
+    const fetcher = vi.fn<() => Promise<string>>().mockResolvedValueOnce('building').mockResolvedValueOnce('building').mockResolvedValue('live');
+    let snapshot: AsyncState<string>;
+    function Probe() { snapshot = useAsync(fetcher, [], 1000, { pollWhile: (status) => status === 'building' }); return null; }
+    await act(async () => { renderer = create(React.createElement(Probe)); });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(snapshot!.data).toBe('live');
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    // Not polling, so an old answer is not overdue.
+    expect(snapshot!.stale).toBe(false);
+    await act(async () => { snapshot!.reload(); });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
 });

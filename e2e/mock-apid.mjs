@@ -500,6 +500,11 @@ function route(method, path, query, body) {
         timeline_limit: Number(query.get('history_limit')) || 25, timeline_truncated: false, unavailable_sources: [] } };
     case key === 'GET /v1/admin/obs/audit-log/search':
       return { status: 200, body: { generated_at: now(), limit: 200, include_anonymous: false, window_hours: 0, items: [
+        // Operators' audited reads of lists, as apid records them since faas ADR-20261102071817.
+        ...['deployments.active', 'obs.incidents', 'jobs.active'].map((endpoint, i) => ({
+          id: `au-view-${i}`, kind: 'operator.action.view', account_id: 'op-1', actor: 'op-1', received_at: ago(2 + i), is_operator_action: true,
+          data: { endpoint, target_account_id: ACCOUNT },
+        })),
         { id: 'au-1', kind: 'operator.action.account.credit', account_id: ACCOUNT, actor: 'operator@ops.test', received_at: ago(60 * 26), is_operator_action: true },
         { id: 'au-2', kind: 'operator.action.app.force_cold_boot', account_id: ACCOUNT, actor: 'operator@ops.test', received_at: ago(45), is_operator_action: true },
       ] } };

@@ -751,13 +751,15 @@ function FlagsTab({ accountId }: TabContext) {
 
 /* ─────────────────────────────── Activity ──────────────────────────────── */
 
-const ALL_KINDS: TimelineKind[] = ['operator', 'audit', 'deployment', 'incident', 'invocation'];
+const ALL_KINDS: TimelineKind[] = ['operator', 'view', 'audit', 'deployment', 'incident', 'invocation'];
+/** Operator views are every audited read of a list: shown only when asked for. */
+const DEFAULT_KINDS = ALL_KINDS.filter((kind) => kind !== 'view');
 
 function ActivityTab({ accountId, data }: TabContext) {
   const operator = useKeyed(accountId, (id) => searchObsAuditLog({ target_account_id: id, operator_only: true, limit: 200 }));
   const deployments = useKeyed(accountId, (id) => listOperatorDeployments({ accountId: id, statuses: 'all', limit: 100 }));
   const incidents = useKeyed(accountId, () => listIncidents({ ...DEFAULT_INCIDENT_FILTERS, windowHours: 168, limit: 200 }));
-  const [kinds, setKinds] = useState<Set<TimelineKind>>(new Set(ALL_KINDS));
+  const [kinds, setKinds] = useState<Set<TimelineKind>>(new Set(DEFAULT_KINDS));
 
   const sources: TimelineSources = {
     operatorActions: operator.data?.items,
@@ -838,6 +840,7 @@ function ActivityTab({ accountId, data }: TabContext) {
 
 const KIND_ICON: Record<TimelineKind, IconName> = {
   operator: 'shield',
+  view: 'search',
   audit: 'logs',
   deployment: 'deployments',
   incident: 'alerts',

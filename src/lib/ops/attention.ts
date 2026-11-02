@@ -3,8 +3,9 @@
    anything wrong right now?" from data the console already polls — the
    incident inbox (failed deployments, job runs, nodes and alerts in one
    list), the alert workload summary, node heartbeats, and the operator's own
-   actions. Deployment and job-run lists are not read here: apid audits every
-   read of them as an operator view, so the overview never polls them.
+   actions. Deployment and job-run lists are not read here, and the incident
+   inbox is read every 2 minutes: apid audits every read of these lists as an
+   operator view (see auditedReads.ts).
 
    Deployments that fail or wait the same way ("deployment failed
    (capacity_unavailable)") share one row with a count, so a burst of them

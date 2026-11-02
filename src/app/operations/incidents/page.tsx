@@ -52,6 +52,7 @@ import { useUrlParams } from '@/lib/useUrlState';
 import { EntityId } from '@/components/operator/EntityId';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 import { incidentHref } from '@/lib/routes';
+import { INCIDENT_INBOX_POLL_MS } from '@/lib/ops/auditedReads';
 
 const errorMessage = (err: unknown) => (err as Error)?.message || 'Request failed';
 
@@ -119,7 +120,8 @@ function Incidents() {
   const incidentParam = params.get('incident');
   const [insightsToken, setInsightsToken] = useState(0);
   const inboxKey = incidentFiltersKey(filters);
-  const inbox = useAsync(() => loadIncidentInbox(filters), [inboxKey], 30000);
+  // apid audits every read of the inbox, so it refreshes every 2 minutes, not every 30 s.
+  const inbox = useAsync(() => loadIncidentInbox(filters), [inboxKey], INCIDENT_INBOX_POLL_MS);
   const summary = useAsync(getAlertWorkloadSummary, [], 30000);
 
   // A page answers exactly one query: after a filter change the previous

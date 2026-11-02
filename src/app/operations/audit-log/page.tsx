@@ -16,6 +16,7 @@ import { PageHeader, SearchInput } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { relativeTime } from '@/lib/format';
+import { splitOperatorViews, viewCount } from '@/lib/ops/auditedReads';
 
 const LOG_VIEWS = ['audit', 'events', 'global'] as const;
 type LogView = (typeof LOG_VIEWS)[number];
@@ -43,6 +44,9 @@ function GlobalAuditLog() {
   const { draft: kindPrefix, setDraft: setKindPrefix } = kindText;
   const operatorOnly = params.get('operator') === '1';
   const setOperatorOnly = (on: boolean) => setParams({ operator: on });
+  // Operators' audited reads of lists outnumber everything else; they are hidden unless asked for.
+  const showViews = params.get('views') === '1';
+  const setShowViews = (on: boolean) => setParams({ views: on });
   const [olderAudit, setOlderAudit] = useState<GlobalAuditLogEntry[]>([]);
   const [olderAuditFilterKey, setOlderAuditFilterKey] = useState<string | null>(null);
   const [nextBefore, setNextBefore] = useState<string | null>(null);
@@ -102,7 +106,7 @@ function GlobalAuditLog() {
 
   const visibleOlderAudit = olderAuditFilterKey === auditFilterKey ? olderAudit : [];
   const visibleOlderError = olderErrorFilterKey === auditFilterKey ? olderError : null;
-  const filteredAudit = [...(auditQuery.data?.items || []), ...visibleOlderAudit]
+  const matchedAudit = [...(auditQuery.data?.items || []), ...visibleOlderAudit]
     .filter((entry: GlobalAuditLogEntry, index, rows) =>
       rows.findIndex((candidate) => candidate.id === entry.id) === index,
     )
@@ -117,7 +121,10 @@ function GlobalAuditLog() {
       );
     });
 
-  const filteredEvents = (eventsQuery.data?.items || []).filter((event: ObsEventRow) => {
+  const auditViews = splitOperatorViews(matchedAudit);
+  const filteredAudit = showViews ? matchedAudit : auditViews.others;
+
+  const matchedEvents = (eventsQuery.data?.items || []).filter((event: ObsEventRow) => {
     if (!search.trim()) return true;
     const s = search.toLowerCase();
     return (
@@ -126,6 +133,8 @@ function GlobalAuditLog() {
       (event.subject && event.subject.toLowerCase().includes(s))
     );
   });
+  const eventViews = splitOperatorViews(matchedEvents);
+  const filteredEvents = showViews ? matchedEvents : eventViews.others;
 
   const filteredGlobal = [...(globalQuery.data?.entries || []), ...olderGlobal]
     .filter((entry: GlobalAuditLogEntry, index, rows) =>
@@ -312,6 +321,19 @@ function GlobalAuditLog() {
               </label>
             </div>
           )}
+          {(view === 'audit' || view === 'events') && (
+            <div className="flex flex-col justify-end">
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer mb-2">
+                <input
+                  type="checkbox"
+                  checked={showViews}
+                  onChange={(e) => setShowViews(e.target.checked)}
+                  className="h-4 w-4 rounded border-[var(--color-line)]"
+                />
+                <span>Show operator views</span>
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="pt-2 border-t border-[var(--color-line)]">
@@ -326,6 +348,7 @@ function GlobalAuditLog() {
 
       {view === 'audit' ? (
         <SectionCard title="Regulator Audit Log Records">
+          {!showViews && <HiddenViews count={auditViews.views} onShow={() => setShowViews(true)} />}
           {auditQuery.loading && !auditQuery.data ? (
             <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
               Searching Global Audit Log…
@@ -407,6 +430,7 @@ function GlobalAuditLog() {
         </SectionCard>
       ) : view === 'events' ? (
         <SectionCard title="Live Diagnostic Events Stream">
+          {!showViews && <HiddenViews count={eventViews.views} onShow={() => setShowViews(true)} />}
           {eventsQuery.loading && !eventsQuery.data ? (
             <div className="p-8 text-center text-sm text-[var(--color-ink-muted)]">
               Fetching Live Platform Events…
@@ -516,6 +540,19 @@ function GlobalAuditLog() {
           )}
         </SectionCard>
       )}
+    </div>
+  );
+}
+
+/** Says how many operator views the list leaves out, with a way to show them. */
+function HiddenViews({ count, onShow }: { count: number; onShow: () => void }) {
+  if (count === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-4 py-2 text-xs text-[var(--color-ink-muted)]">
+      <span>{viewCount(count)} hidden: apid records every operator read of the deployment, job-run and incident lists.</span>
+      <button type="button" className="btn btn-ghost btn-xs" onClick={onShow}>
+        Show them
+      </button>
     </div>
   );
 }

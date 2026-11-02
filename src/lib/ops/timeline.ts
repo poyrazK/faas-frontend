@@ -8,11 +8,13 @@
 import type { GlobalAuditLogEntry, ObsAuditActivityRow, ObsInvocationRow } from '@/lib/api';
 import type { ObsIncident } from './incidents';
 import type { OperatorDeployment } from './workloads';
+import { isOperatorView } from './auditedReads';
 
-export type TimelineKind = 'operator' | 'audit' | 'deployment' | 'incident' | 'invocation';
+export type TimelineKind = 'operator' | 'view' | 'audit' | 'deployment' | 'incident' | 'invocation';
 
 export const TIMELINE_KIND_LABELS: Record<TimelineKind, string> = {
   operator: 'Operator actions',
+  view: 'Operator views',
   audit: 'Account events',
   deployment: 'Deployments',
   incident: 'Incidents',
@@ -75,6 +77,12 @@ export function buildTimeline(accountId: string, sources: TimelineSources): Time
   };
 
   for (const row of sources.operatorActions ?? []) {
+    // An operator's audited read of a list (apid records each one) is its own kind, so it can be left out.
+    if (isOperatorView(row.kind)) {
+      const endpoint = typeof row.data?.endpoint === 'string' ? row.data.endpoint : undefined;
+      add({ key: `audit:${row.id}`, kind: 'view', at: row.received_at, title: 'Operator viewed', actor: row.actor, detail: endpoint ?? row.kind, tone: 'neutral' });
+      continue;
+    }
     add({
       key: `audit:${row.id}`,
       kind: 'operator',
