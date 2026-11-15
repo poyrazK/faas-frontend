@@ -4,8 +4,10 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { listObsTenants, type ObsTenantRow } from '@/lib/api';
-import { isAccountId, tenantHref } from '@/lib/routes';
+import { isAccountId, tenantHref, traceHref } from '@/lib/routes';
 import { findTenantsByEmail, looksLikeEmail, type EmailSearchResult } from '@/lib/ops/tenantSearch';
+import { LOOKUP_QUERY_MAX, lookupAccount, type ObsLookupResponse } from '@/lib/ops/accountHealth';
+import { AccountLookupResults } from '@/components/operator/AccountLookup';
 import { tenantRowLabel } from '@/lib/ops/tenantNames';
 import { PageHeader, Mono, SearchInput, FilterSelect } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
@@ -78,8 +80,36 @@ function TenantsDirectory() {
     if (jumpQuery && isAccountId(jumpQuery)) router.replace(tenantHref(jumpQuery));
   }, [jumpQuery, router]);
 
-  // Email search: emails come back only with the audited PII opt-in, so the
-  // operator starts it explicitly; it pages the whole directory.
+  // Every-account search (GET /v1/admin/obs/lookup): exact email, app slug,
+  // domain, URL or any ID in one request. An email lookup is audited as PII
+  // access, so it runs when the operator asks, or arrives from the jump box.
+  const [lookup, setLookup] = useState<{ query: string; data?: ObsLookupResponse; error?: string } | null>(null);
+  const lookupSeq = useRef(0);
+  const runLookup = async (text: string) => {
+    const seq = ++lookupSeq.current;
+    setLookup({ query: text });
+    try {
+      const data = await lookupAccount(text);
+      if (seq !== lookupSeq.current) return;
+      const accounts = new Set(data.matches.map((m) => m.account_id));
+      if (accounts.size === 1 && data.matches.every((m) => m.kind === 'account')) {
+        router.push(tenantHref(data.matches[0].account_id));
+        return;
+      }
+      setLookup({ query: text, data });
+    } catch (err) {
+      if (seq === lookupSeq.current) setLookup({ query: text, error: (err as Error).message });
+    }
+  };
+  useEffect(() => {
+    const text = jumpQuery?.trim();
+    if (text && !isAccountId(text) && text.length <= LOOKUP_QUERY_MAX) queueMicrotask(() => void runLookup(text));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpQuery]);
+  const lookupState = lookup && lookup.query === searchTextOf(search) ? lookup : null;
+
+  // Partial email search: emails come back only with the audited PII opt-in,
+  // so this pages the whole directory, and only when the operator asks.
   const [emailSearch, setEmailSearch] = useState<
     { query: string; scanned: number; result?: EmailSearchResult; error?: string } | null
   >(null);
@@ -160,7 +190,7 @@ function TenantsDirectory() {
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder="Filter loaded tenants by ID, email or org…"
+          placeholder="Email, app slug, domain, URL or ID…"
           className="w-full sm:w-80"
         />
         <FilterSelect
@@ -187,16 +217,50 @@ function TenantsDirectory() {
         />
       </div>
 
-      {looksLikeEmail(searchText) && (
+      {searchText !== '' && !isAccountId(searchText) && (
+        <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] text-xs">
+          {!lookupState ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3">
+              <span className="text-[var(--color-ink-soft)]">
+                The list below only filters loaded tenants. Search every account for an exact email, app slug, domain, URL or ID.
+              </span>
+              <button
+                className="btn btn-secondary btn-xs"
+                disabled={searchText.length > LOOKUP_QUERY_MAX}
+                onClick={() => void runLookup(searchText)}
+              >
+                <Icon name="search" size={12} />
+                {looksLikeEmail(searchText) ? 'Search every account (records PII access)' : 'Search every account'}
+              </button>
+            </div>
+          ) : lookupState.error ? (
+            <div role="alert" className="p-3 text-[var(--color-danger)]">
+              Search failed: {lookupState.error}{' '}
+              <button className="underline" onClick={() => void runLookup(searchText)}>
+                Retry
+              </button>
+            </div>
+          ) : !lookupState.data ? (
+            <div className="p-3 text-[var(--color-ink-muted)]">Searching every account…</div>
+          ) : (
+            <div>
+              <div className="border-b border-[var(--color-line)] px-3 py-2 font-medium">Every account matching “{searchText}”</div>
+              <AccountLookupResults data={lookupState.data} onOpenTrace={(id) => router.push(traceHref(id))} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {looksLikeEmail(searchText) && lookupState?.data?.matches.length === 0 && (
         <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3 text-xs">
           {!emailState ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="text-[var(--color-ink-soft)]">
-                Emails are only returned with PII access, so the list below can&apos;t match <strong>{searchText}</strong>.
+                No account uses exactly <strong>{searchText}</strong>. A partial match needs a scan of the whole directory.
               </span>
               <button className="btn btn-secondary btn-xs" onClick={() => void runEmailSearch()}>
                 <Icon name="search" size={12} />
-                Search every tenant by email (records PII access)
+                Scan for partial email matches (records PII access)
               </button>
             </div>
           ) : emailState.error ? (
@@ -331,6 +395,8 @@ function TenantsDirectory() {
     </div>
   );
 }
+
+const searchTextOf = (value: string) => value.trim();
 
 function StatusBadge({ status }: { status: string }) {
   const tone = status === 'active' ? 'badge-success' : status === 'past_due' ? 'badge-warning' : 'badge-danger';

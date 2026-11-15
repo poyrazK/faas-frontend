@@ -21,7 +21,7 @@ Warnings (not failures): a field the console treats as always present that Go
 marks `omitempty` or as a pointer, and request bodies without a `@goBody` tag.
 `--verbose` also lists apid fields the console does not read yet.
 
-It reads `pkg/api`, `pkg/apid/apidserver`, `pkg/state` and `pkg/platformflags`.
+It reads `pkg/api`, `pkg/apid/apidserver`, `pkg/apid/support`, `pkg/state` and `pkg/platformflags`.
 CI runs it on every PR and daily against apid's `main`
 (`.github/workflows/contract.yml`).
 

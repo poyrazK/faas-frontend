@@ -72,6 +72,11 @@ describe('Go scanner', () => {
     expect(fields.get('id')).toMatchObject({ omitempty: false, nullable: false });
   });
 
+  it('reads a field named like its type', () => {
+    const own = indexGoTypes([{ path: 'pkg/apid/support/types.go', text: 'package support\n\ntype StaffTicket struct {\n\tPriority string  `json:"priority"`\n\tEpisode  Episode `json:"episode"`\n}\n' }]);
+    expect([...jsonFields(own, 'support.StaffTicket').keys()]).toEqual(['priority', 'episode']);
+  });
+
   it('keeps reading after a one-line struct{} and inside type ( … ) groups', () => {
     expect(jsonFields(index, 'api.Empty').size).toBe(0);
     expect([...jsonFields(index, 'api.AfterEmpty').keys()]).toEqual(['seen']);

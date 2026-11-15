@@ -25,6 +25,9 @@ const CSRF = 'csrf-mock';
 const ACCOUNT = '11111111-2222-4333-8444-555555555555';
 const ACCOUNT2 = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 const APP_ID = 'b0000000-0000-4000-8000-000000000001';
+const DEPLOYMENT = '7a1b2c3d-0000-4000-8000-000000000001';
+const TICKET_OPEN = 'a1000000-0000-4000-8000-000000000001';
+const TICKET_STAFF = 'a1000000-0000-4000-8000-000000000042';
 const RELEASE_NEW = 'a3f9c2d1e8b74c6f9d0e1a2b3c4d5e6f7a8b9c0d';
 const RELEASE_OLD = '9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d';
 const SITE_ID = 'd0000000-0000-4000-8000-000000000001';
@@ -49,7 +52,12 @@ function freshState() {
     suspended: false,
     oidc: true,
     signals: [attentionSignal(1, ACCOUNT, 'app_oom', 'checkout-api', 'open'), attentionSignal(2, ACCOUNT2, 'deploy_failing', 'billing-api', 'open'),
-      attentionSignal(3, ACCOUNT2, 'refused_burst', 'api_key_revoked', 'dismissed')],
+      attentionSignal(3, ACCOUNT2, 'refused_burst', 'api_key_revoked', 'dismissed'),
+      { ...attentionSignal(4, ACCOUNT, 'deploy_failing', 'checkout-api', 'dismissed'), outcome: 'contacted', dismissed_by: 'op-1', ticket_id: TICKET_STAFF },
+      { ...attentionSignal(5, ACCOUNT, 'domain_not_serving', 'shop.example', 'resolved'), resolved_at: ago(600) }],
+    tickets: supportTickets(),
+    messages: supportMessages(),
+    unread: 2,
     hostingEnabled: true,
     analytics: true,
     retention: true,
@@ -78,6 +86,37 @@ function freshState() {
 }
 
 let state = freshState();
+
+
+function episode(extra = {}) {
+  return { id: 'e1', started_at: ago(120), plan: 'pro', priority: 'high', category: 'deployment',
+  first_response_due: ago(-45), resolution_due: ago(-60 * 24), resolution_breached: false, remaining_us: 0, paused_us: 0,
+  next_reply_completed: 0, next_reply_met: 0, policy: {}, ...extra };
+}
+
+function supportTickets() {
+  return [
+    { ticket: { id: TICKET_OPEN, subject: 'Deploys fail with npm ci', category: 'deployment', status: 'open', revision: 3,
+      context: { deployment_id: DEPLOYMENT, request_id: 'req_7f3a' }, created_at: ago(120), updated_at: ago(20), can_reopen: false, unread_count: 2 },
+    priority: 'high', episode: episode(), required_skills: ['node'], customer_reopens: 0 },
+    { ticket: { id: TICKET_STAFF, subject: 'Your app checkout-api keeps running out of memory', category: 'deployment', status: 'pending', revision: 2,
+      context: {}, created_at: ago(60 * 26), updated_at: ago(60 * 25), can_reopen: false },
+    priority: 'normal', assignee_id: 'op-1', episode: episode({ priority: 'normal', first_response_at: ago(60 * 26), wait_since: ago(60 * 25) }),
+    required_skills: [], customer_reopens: 0 },
+  ];
+}
+
+function supportMessages() {
+  return {
+    [TICKET_OPEN]: [
+      { id: 'm1', sequence: 1, author: 'customer', body: 'Every deploy of checkout-api fails at npm ci since this morning.', redacted: false, created_at: ago(120) },
+      { id: 'm2', sequence: 2, author: 'note', body: 'Lockfile was generated with npm 11; see the deployment error.', redacted: false, created_at: ago(30) },
+    ],
+    [TICKET_STAFF]: [
+      { id: 'm3', sequence: 1, author: 'staff', body: 'We noticed checkout-api was stopped for exceeding its memory limit.', redacted: false, created_at: ago(60 * 26) },
+    ],
+  };
+}
 
 function attentionSignal(id, accountId, kind, subject, state) {
   return { id, account_id: accountId, kind, subject, state, observed: 3, detail: kind === 'app_oom' ? 'OOM-killed 3 times; peak 512 MB of a 512 MB plan' : '',
@@ -311,7 +350,9 @@ function route(method, path, query, body) {
   // requireAdminCredentialMutation: the same step-up policy as admin writes.
   const adminWrite =
     (path.startsWith('/v1/admin/') || /^\/v1\/internal\/hosting\/sites\/[^/]+\/(automation-credentials|oidc-trusts)/.test(path)) &&
-    method !== 'GET';
+    method !== 'GET' &&
+    // Marking support notifications read needs only the trusted origin, not step-up.
+    !/^\/v1\/admin\/support\/tickets\/[^/]+\/read$/.test(path);
 
   if (key === 'POST /__mock/reset') {
     state = freshState();
@@ -426,7 +467,65 @@ function route(method, path, query, body) {
           domain_issues: [{ domain: 'shop.customer.test', app_slug: 'checkout-api', problem: 'certificate issuance failed', cert_status: 'failed', cert_last_error: 'CAA record forbids issuance' }],
           customer_errors: { window_hours: 24, total: 3, by_code: [{ code: 'api_key_revoked', count: 3, last_at: ago(5) }],
             recent: [{ occurred_at: ago(5), route: 'GET /v1/apps', code: 'api_key_revoked', request_id: 'req-123', trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' }] },
-          attention_signals: state.signals.filter((sig) => sig.account_id === ACCOUNT) } } };
+          attention_signals: state.signals.filter((sig) => sig.account_id === ACCOUNT && sig.state === 'open') } } };
+    }
+    /* ── Support inbox ── */
+    case key === 'GET /v1/admin/support/tickets': {
+      const status = query.get('status');
+      const search = (query.get('search') || '').toLowerCase();
+      const assignee = query.get('assignee_id');
+      const items = state.tickets.filter((t) => (!status || t.ticket.status === status) && (!assignee || t.assignee_id === assignee)
+        && (!search || t.ticket.subject.toLowerCase().includes(search) || (state.messages[t.ticket.id] || []).some((m) => m.body.toLowerCase().includes(search))));
+      return { status: 200, body: { items } };
+    }
+    case key === 'GET /v1/admin/support/notifications':
+      return { status: 200, body: { items: state.unread ? [{ id: 'n1', sequence: 7, ticket_id: TICKET_OPEN, kind: 'customer_reply', created_at: ago(20) }] : [], unread_count: state.unread } };
+    case /^POST \/v1\/admin\/support\/tickets\/[^/]+\/read$/.test(key): {
+      const t = state.tickets.find((x) => x.ticket.id === path.split('/')[5]);
+      if (t) t.ticket.unread_count = 0;
+      state.unread = 0;
+      return { status: 202, body: { ticket_id: path.split('/')[5], unread_count: 0, unread_total: 0 } };
+    }
+    case /^GET \/v1\/admin\/support\/tickets\/[^/]+(\/messages|\/customer)?$/.test(key): {
+      const id = path.split('/')[5];
+      const t = state.tickets.find((x) => x.ticket.id === id);
+      if (!t) return problem(404, 'support_not_found', 'Support resource not found', 'The ticket does not exist or is not visible.');
+      if (path.endsWith('/messages')) return { status: 200, body: { items: state.messages[id] || [] } };
+      if (path.endsWith('/customer')) {
+        return { status: 200, body: { ticket_id: id, account_id: ACCOUNT, plan: 'pro', status: 'past_due', apps: 3, added: ['email_unverified'],
+          diagnosis: { generated_at: now(), restrictions: [{ kind: 'account_past_due', reason: 'invoice unpaid' }, { kind: 'email_unverified' }],
+            failed_deployments: [{ deployment_id: DEPLOYMENT, app_id: APP_ID, app_slug: 'checkout-api', status: 'failed', error_code: 'build_failed', error: 'npm ci exited 1', created_at: ago(40) }],
+            domain_issues: [], healthy_domains: 1, enabled_flags: [], customer_errors: { window_hours: 24, total: 0, by_code: [], recent: [] }, attention_signals: [] },
+          ...(id === TICKET_OPEN ? { snapshot: { captured_at: ago(120), plan: 'pro', status: 'past_due', request_id: 'req_7f3a',
+            request: { occurred_at: ago(125), route: 'POST /v1/apps/{app}/deployments', code: 'deploy_failed', trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' },
+            health: { generated_at: ago(120), attention: 1, restrictions: [{ kind: 'account_past_due', title: 'A payment failed', detail: 'Update your payment method.' }], signals: [] } } } : {}) } };
+      }
+      return { status: 200, body: t };
+    }
+    case /^POST \/v1\/admin\/support\/tickets\/[^/]+\/(messages|notes|close|reopen|pause|resume|triage)$/.test(key): {
+      const id = path.split('/')[5];
+      const op = path.split('/')[6];
+      const t = state.tickets.find((x) => x.ticket.id === id);
+      if (!t) return problem(404, 'support_not_found', 'Support resource not found', 'The ticket does not exist or is not visible.');
+      if (body?.expected_revision !== t.ticket.revision) return problem(409, 'support_conflict', 'Support conflict', 'ticket revision changed; reload before applying this action');
+      const msgs = (state.messages[id] = state.messages[id] || []);
+      const add = (author) => msgs.push({ id: `m${msgs.length + 10}`, sequence: msgs.length + 1, author, body: body.body, redacted: false, created_at: now() });
+      if ((op === 'messages' || op === 'notes' || op === 'reopen') && !body?.body) return problem(400, 'support_invalid', 'Invalid support request', 'body is required');
+      if (op === 'messages') { add('staff'); t.episode.first_response_at = t.episode.first_response_at || now(); }
+      if (op === 'notes') add('note');
+      if (op === 'close') { t.ticket.status = 'resolved'; t.ticket.resolved_at = now(); }
+      if (op === 'reopen') { add('staff'); t.ticket.status = 'open'; }
+      if (op === 'pause') { t.ticket.status = 'pending'; t.episode.wait_since = now(); }
+      if (op === 'resume') { t.ticket.status = 'open'; delete t.episode.wait_since; }
+      if (op === 'triage') {
+        if (!body?.reason) return problem(400, 'support_invalid', 'Invalid support request', 'handoff requires a reason, priority and valid skills');
+        t.priority = body.priority;
+        if (body.assignee_id) t.assignee_id = body.assignee_id; else delete t.assignee_id;
+        t.required_skills = body.required_skills || [];
+      }
+      t.ticket.revision += 1;
+      t.ticket.updated_at = now();
+      return { status: 202, body: { ticket_id: id, submission_id: `s${t.ticket.revision}`, revision: t.ticket.revision } };
     }
     case key === 'GET /v1/admin/obs/attention/summary':
       return { status: 200, body: { window_days: 30, items: [

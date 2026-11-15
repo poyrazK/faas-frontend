@@ -9,6 +9,7 @@ import { nodeHref } from '@/lib/routes';
 import { DEFAULT_INCIDENT_FILTERS, getAlertWorkloadSummary, listIncidents } from '@/lib/ops/incidents';
 import { buildAttention, type AttentionItem, type AttentionReport } from '@/lib/ops/attention';
 import { INCIDENT_INBOX_POLL_MS } from '@/lib/ops/auditedReads';
+import { formatStuck, useCustomerQueues } from '@/lib/ops/customerQueues';
 import { PageHeader } from '@/components/ui/bits';
 import { SectionCard, StatTile } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
@@ -19,6 +20,39 @@ import { FleetEventStream } from '../incidents/FleetEventStream';
 import { RecentOperatorActions } from './RecentOperatorActions';
 
 const POLL_MS = 30_000;
+
+/* Customers who may be stuck and support updates waiting for this operator. */
+function CustomerQueuesCard() {
+  const { stuck, unread } = useCustomerQueues();
+  return (
+    <SectionCard title="Customers">
+      <ul className="divide-y divide-[var(--color-line)] text-xs">
+        <li>
+          <Link href="/attention" className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-subtle)]">
+            <span>Stuck customers</span>
+            <span className={stuck && stuck.signals > 0 ? 'font-semibold text-[var(--color-warning-bold)]' : 'text-[var(--color-ink-muted)]'}>
+              {stuck === null
+                ? 'unknown'
+                : stuck.signals === 0
+                  ? 'none'
+                  : `${formatStuck(stuck)} open signal${stuck.signals === 1 ? '' : 's'} on ${stuck.accounts} account${stuck.accounts === 1 ? '' : 's'}`}
+            </span>
+          </Link>
+        </li>
+        {unread !== null && (
+          <li>
+            <Link href="/support" className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-subtle)]">
+              <span>Support inbox</span>
+              <span className={unread > 0 ? 'font-semibold text-[var(--color-brand-bright)]' : 'text-[var(--color-ink-muted)]'}>
+                {unread === 0 ? 'no unread updates' : `${unread} unread update${unread === 1 ? '' : 's'}`}
+              </span>
+            </Link>
+          </li>
+        )}
+      </ul>
+    </SectionCard>
+  );
+}
 const LIST_LIMIT = 8;
 
 /**
@@ -112,6 +146,8 @@ export default function OverviewPage() {
         </div>
 
         <div className="min-w-0 space-y-4">
+          <CustomerQueuesCard />
+
           <SectionCard
             title="Your actions"
             action={

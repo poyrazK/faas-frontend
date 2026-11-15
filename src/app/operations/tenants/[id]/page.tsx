@@ -38,7 +38,7 @@ import { useTenant, type TenantData } from '@/components/operator/tenant/useTena
 import { EntityId } from '@/components/operator/EntityId';
 import { RowMenu } from '@/components/ui/RowMenu';
 import { chosenOrgSlug, workspaceTitle } from '@/lib/ops/tenantNames';
-import { CustomerViewPanel, DiagnosisPanel } from '@/components/operator/tenant/DiagnosisPanel';
+import { CustomerViewPanel, DiagnosisPanel, SignalHistoryPanel } from '@/components/operator/tenant/DiagnosisPanel';
 
 const TAB_LABELS: Record<TenantTab, { label: string; icon: IconName }> = {
   overview: { label: 'Overview', icon: 'overview' },
@@ -270,6 +270,10 @@ function OverviewTab({ accountId, data, currency, reload }: TabContext) {
   const myIncidents = incidents.data?.items.filter((item) => item.account_id === accountId) ?? [];
   const failed = attention.data?.deployments.filter((d) => d.status === 'failed') ?? [];
   const inFlight = attention.data?.deployments.filter((d) => d.status !== 'failed') ?? [];
+  // The diagnosis already lists failed deployments (7 days) with the reason,
+  // restrictions, domains and stuck signals; this card keeps what it lacks.
+  // apid builds without a diagnosis still get the failed-deployments row.
+  const diagnosed = !!t360?.diagnosis;
 
   return (
     <div className="space-y-5">
@@ -298,18 +302,21 @@ function OverviewTab({ accountId, data, currency, reload }: TabContext) {
 
       <DiagnosisPanel diagnosis={t360?.diagnosis} loading={!data} onChanged={reload} />
       <CustomerViewPanel accountId={accountId} />
+      <SignalHistoryPanel accountId={accountId} />
 
-      <SectionCard title="Needs attention">
+      <SectionCard title={diagnosed ? 'In flight and incidents' : 'Needs attention'}>
         <div className="divide-y divide-[var(--color-line)] text-xs">
-          <AttentionRow
-            icon="deployments"
-            label="Failed deployments"
-            state={attention}
-            count={failed.length}
-            tone={failed.length ? 'danger' : 'ok'}
-            href={tenantHref(accountId, 'deployments')}
-            detail={failed[0] ? `${failed[0].app_slug}: ${failed[0].error_code ?? failed[0].status} (${relativeTime(failed[0].created_at)})` : undefined}
-          />
+          {!diagnosed && (
+            <AttentionRow
+              icon="deployments"
+              label="Failed deployments"
+              state={attention}
+              count={failed.length}
+              tone={failed.length ? 'danger' : 'ok'}
+              href={tenantHref(accountId, 'deployments')}
+              detail={failed[0] ? `${failed[0].app_slug}: ${failed[0].error_code ?? failed[0].status} (${relativeTime(failed[0].created_at)})` : undefined}
+            />
+          )}
           <AttentionRow
             icon="refresh"
             label="Deployments in flight"

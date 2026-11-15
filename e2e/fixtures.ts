@@ -5,6 +5,7 @@ import { test as base, expect, type Page } from '@playwright/test';
 export const MOCK_URL = 'http://localhost:3199';
 export const ACCOUNT = '11111111-2222-4333-8444-555555555555';
 export const DEPLOYMENT = '7a1b2c3d-0000-4000-8000-000000000001';
+export const TICKET_OPEN = 'a1000000-0000-4000-8000-000000000001';
 export const RELEASE_NEW = 'a3f9c2d1e8b74c6f9d0e1a2b3c4d5e6f7a8b9c0d';
 export const TOTP = '123456';
 export const HOSTING_SITE = 'd0000000-0000-4000-8000-000000000001';

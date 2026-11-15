@@ -316,6 +316,16 @@ export interface AccountHealthSignal {
   since: string;
 }
 
+/** A refused API request as the customer sees it. @go api.AccountHealthRequest */
+export interface AccountHealthRequest {
+  occurred_at: string;
+  route: string;
+  code: string;
+  app_slug?: string;
+  request_id?: string;
+  trace_id?: string;
+}
+
 /** The customer's own account health page, as they see it. @go api.AccountHealth */
 export interface AccountHealth {
   generated_at: string;

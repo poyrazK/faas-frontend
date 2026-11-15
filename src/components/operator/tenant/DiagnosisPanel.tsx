@@ -6,7 +6,9 @@ import {
   ATTENTION_KIND_LABELS,
   CUSTOMER_VISIBLE_KINDS,
   diagnosisAttention,
+  DISMISS_OUTCOME_LABELS,
   kindLabel,
+  listAttention,
   RESTRICTION_LABELS,
   getTenantHealth,
   type ObsAttentionSignal,
@@ -18,6 +20,7 @@ import { Mono } from '@/components/ui/bits';
 import { SignalActions } from '@/components/operator/SignalActions';
 import { useKeyed } from '@/components/operator/tenant/shared';
 import { ApiError } from '@/lib/api';
+import { supportTicketHref } from '@/lib/routes';
 
 /* Why this account may not be working: the `diagnosis` section of the
    tenant 360 (apid ADR-20261112170000). Restrictions, stuck-customer signals,
@@ -255,4 +258,79 @@ export function CustomerViewPanel({ accountId }: { accountId: string }) {
       </div>
     </SectionCard>
   );
+}
+
+/* Signals this account had that are no longer open: what support did about
+   each (contacted with a ticket, dismissed with an outcome) or whether it
+   cleared on its own. */
+export function SignalHistoryPanel({ accountId }: { accountId: string }) {
+  const history = useKeyed(accountId, loadSignalHistory);
+  const items = history.data ?? [];
+  return (
+    <SectionCard title="Signal history">
+      <div className="px-4 py-3 text-xs">
+        {history.error && !history.data ? (
+          <p className="text-[var(--color-danger)]">{history.error.message || 'Could not load signal history.'}</p>
+        ) : !history.data ? (
+          <p className="text-[var(--color-ink-muted)]">Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="text-[var(--color-ink-muted)]">No past signals.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="text-[var(--color-ink-muted)]">
+                <tr>
+                  <th className="py-1 pr-3 font-normal">Signal</th>
+                  <th className="py-1 pr-3 font-normal">Subject</th>
+                  <th className="py-1 pr-3 font-normal">What happened</th>
+                  <th className="py-1 pr-3 font-normal">By</th>
+                  <th className="py-1 font-normal">When</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-line)]">
+                {items.map((s) => (
+                  <tr key={s.id}>
+                    <td className="py-1.5 pr-3">{kindLabel(ATTENTION_KIND_LABELS, s.kind)}</td>
+                    <td className="py-1.5 pr-3">
+                      <Mono>{s.subject}</Mono>
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      {signalOutcome(s)}
+                      {s.ticket_id && (
+                        <Link href={supportTicketHref(s.ticket_id)} className="ml-2 underline">
+                          ticket
+                        </Link>
+                      )}
+                      {s.dismiss_reason && <div className="text-[var(--color-ink-muted)]">{s.dismiss_reason}</div>}
+                    </td>
+                    <td className="py-1.5 pr-3">{s.dismissed_by ? <Mono>{s.dismissed_by.slice(0, 8)}</Mono> : '—'}</td>
+                    <td className="py-1.5 whitespace-nowrap text-[var(--color-ink-muted)]">
+                      {relativeTime(s.dismissed_at ?? s.resolved_at ?? s.last_seen_at)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+const SIGNAL_HISTORY_PER_STATE = 25;
+
+/** Dismissed and resolved signals of one account, most recent first. */
+export async function loadSignalHistory(accountId: string): Promise<ObsAttentionSignal[]> {
+  const [dismissed, resolved] = await Promise.all(
+    (['dismissed', 'resolved'] as const).map((state) => listAttention({ accountId, state, limit: SIGNAL_HISTORY_PER_STATE })),
+  );
+  const when = (s: ObsAttentionSignal) => Date.parse(s.dismissed_at ?? s.resolved_at ?? s.last_seen_at) || 0;
+  return [...dismissed.items, ...resolved.items].sort((a, b) => when(b) - when(a));
+}
+
+function signalOutcome(s: ObsAttentionSignal): string {
+  if (s.state === 'resolved') return s.outcome === 'contacted' ? 'Contacted, then cleared' : 'Cleared on its own';
+  if (s.outcome === 'contacted') return 'Contacted';
+  return s.outcome ? `Dismissed: ${DISMISS_OUTCOME_LABELS[s.outcome] ?? s.outcome.replaceAll('_', ' ')}` : 'Dismissed';
 }
