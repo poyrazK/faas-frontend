@@ -3,7 +3,14 @@ import {
   ATTENTION_KINDS,
   ATTENTION_KIND_LABELS,
   attentionQuery,
+  contactCustomer,
   diagnosisAttention,
+  DISMISS_OUTCOME_LABELS,
+  DISMISS_OUTCOMES,
+  dismissSignal,
+  getAttentionSummary,
+  getContactDraft,
+  getTenantHealth,
   kindLabel,
   listAttention,
   lookupAccount,
@@ -87,5 +94,48 @@ describe('diagnosisAttention', () => {
       domain_issues: [{ domain: 'www.shop.example', problem: 'certificate issuance failed' }],
     };
     expect(diagnosisAttention(d)).toBe(4);
+  });
+});
+
+describe('signal actions', () => {
+  let calls: { url: string; init?: RequestInit }[];
+  beforeEach(() => {
+    calls = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ signal: { id: 7, state: 'dismissed' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+  });
+
+  it('dismisses with the outcome, drops a blank note and sends the idempotency key', async () => {
+    await dismissSignal(7, 'false_positive', '   ', { idempotencyKey: 'k-1' });
+    expect(calls[0].url).toBe('/v1/admin/obs/attention/7/dismiss');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ outcome: 'false_positive' });
+    expect(new Headers(calls[0].init?.headers).get('Idempotency-Key')).toBe('k-1');
+  });
+
+  it('contacts with the edited draft', async () => {
+    await contactCustomer(7, 'Subject', 'deployment', 'Body', { idempotencyKey: 'k-2' });
+    expect(calls[0].url).toBe('/v1/admin/obs/attention/7/contact');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ subject: 'Subject', category: 'deployment', body: 'Body' });
+  });
+
+  it('reads the draft, the summary and the customer view', async () => {
+    await getContactDraft(7);
+    await getAttentionSummary();
+    await getTenantHealth('a/b');
+    expect(calls.map((c) => c.url)).toEqual([
+      '/v1/admin/obs/attention/7/contact-draft',
+      '/v1/admin/obs/attention/summary',
+      '/v1/admin/obs/tenants/a%2Fb/health',
+    ]);
+  });
+
+  it('labels every dismiss outcome', () => {
+    for (const o of DISMISS_OUTCOMES) expect(DISMISS_OUTCOME_LABELS[o]).toBeTruthy();
   });
 });

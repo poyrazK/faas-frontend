@@ -1,4 +1,4 @@
-import { ACCOUNT, expect, test } from './fixtures';
+import { ACCOUNT, expect, stepUp, test } from './fixtures';
 
 /*
  * Account visibility (apid ADR-20261112170000, ADR-20261113123000): find the
@@ -40,4 +40,40 @@ test('stuck customers lists open signals and filters by state', async ({ page })
 
   await page.getByRole('combobox').nth(1).selectOption('dismissed');
   await expect(page.getByRole('row').filter({ hasText: 'Burst of refused requests' })).toContainText('false positive');
+});
+
+test('operators dismiss a signal with an outcome and see outcome rates', async ({ page }) => {
+  await page.goto('/attention');
+  await expect(page.getByText('Outcomes, last 30 days')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Deploys keep failing' }).filter({ hasText: '12%' })).toContainText('1 h 30 min');
+
+  const row = page.getByRole('row').filter({ hasText: 'billing-api' });
+  await row.getByRole('button', { name: 'Dismiss' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Dismiss signal' });
+  await dialog.getByLabel('Outcome').selectOption('already_in_touch');
+  await dialog.getByLabel('Note (optional)').fill('emailed them yesterday');
+  await dialog.getByRole('button', { name: 'Dismiss' }).click();
+  await stepUp(page);
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('1 signal on 1 account')).toBeVisible();
+});
+
+test('operators contact a stuck customer from the draft', async ({ page }) => {
+  await page.goto('/attention');
+  const row = page.getByRole('row').filter({ hasText: 'checkout-api' });
+  await row.getByRole('button', { name: 'Contact' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Contact customer' });
+  await expect(dialog.getByLabel('Subject')).toHaveValue(/checkout-api keeps running out of memory/);
+  await dialog.getByLabel('Message').fill('We saw checkout-api run out of memory. Want help sizing it?');
+  await dialog.getByRole('button', { name: 'Send and open ticket' }).click();
+  await stepUp(page);
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('row').filter({ hasText: 'checkout-api' })).toHaveCount(0);
+});
+
+test('the tenant overview shows what the customer sees', async ({ page }) => {
+  await page.goto(`/tenants/${ACCOUNT}`);
+  const panel = page.locator('section, div').filter({ has: page.getByRole('heading', { name: 'What the customer sees', exact: true }) }).first();
+  await expect(panel).toContainText('A payment failed');
+  await expect(panel).toContainText('checkout-api keeps running out of memory');
 });

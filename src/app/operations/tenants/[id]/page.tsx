@@ -38,7 +38,7 @@ import { useTenant, type TenantData } from '@/components/operator/tenant/useTena
 import { EntityId } from '@/components/operator/EntityId';
 import { RowMenu } from '@/components/ui/RowMenu';
 import { chosenOrgSlug, workspaceTitle } from '@/lib/ops/tenantNames';
-import { DiagnosisPanel } from '@/components/operator/tenant/DiagnosisPanel';
+import { CustomerViewPanel, DiagnosisPanel } from '@/components/operator/tenant/DiagnosisPanel';
 
 const TAB_LABELS: Record<TenantTab, { label: string; icon: IconName }> = {
   overview: { label: 'Overview', icon: 'overview' },
@@ -99,7 +99,7 @@ function Workspace({ accountId }: { accountId: string }) {
     setAmount(initialActionAmount(next));
     setAction(next);
   };
-  const ctx: TabContext = { accountId, data, currency, startAction, includePii };
+  const ctx: TabContext = { accountId, data, currency, startAction, includePii, reload: tenant.reload };
 
   return (
     <div>
@@ -253,11 +253,13 @@ interface TabContext {
   currency?: string;
   includePii: boolean;
   startAction: (action: TenantAction) => void;
+  /** Reload the account, activity and 360. */
+  reload: () => void;
 }
 
 /* ─────────────────────────────── Overview ──────────────────────────────── */
 
-function OverviewTab({ accountId, data, currency }: TabContext) {
+function OverviewTab({ accountId, data, currency, reload }: TabContext) {
   const detail = data?.detail;
   const t360 = data?.tenant360;
   // Deployment and job lists are audited as operator views, so they load on
@@ -294,7 +296,8 @@ function OverviewTab({ accountId, data, currency }: TabContext) {
         />
       </div>
 
-      <DiagnosisPanel diagnosis={t360?.diagnosis} loading={!data} />
+      <DiagnosisPanel diagnosis={t360?.diagnosis} loading={!data} onChanged={reload} />
+      <CustomerViewPanel accountId={accountId} />
 
       <SectionCard title="Needs attention">
         <div className="divide-y divide-[var(--color-line)] text-xs">

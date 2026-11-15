@@ -8,19 +8,32 @@ import {
   diagnosisAttention,
   kindLabel,
   RESTRICTION_LABELS,
+  getTenantHealth,
   type ObsAttentionSignal,
   type ObsTenantDiagnosis,
 } from '@/lib/ops/accountHealth';
 import { relativeTime } from '@/lib/format';
 import { SectionCard } from '@/components/ui/Panels';
 import { Mono } from '@/components/ui/bits';
+import { SignalActions } from '@/components/operator/SignalActions';
+import { useKeyed } from '@/components/operator/tenant/shared';
+import { ApiError } from '@/lib/api';
 
 /* Why this account may not be working: the `diagnosis` section of the
    tenant 360 (apid ADR-20261112170000). Restrictions, stuck-customer signals,
    failed deployments, custom-domain problems and the API requests the
    customer was refused. Sections apid could not read are named, so an empty
    list never reads as "fine". */
-export function DiagnosisPanel({ diagnosis, loading }: { diagnosis?: ObsTenantDiagnosis | null; loading?: boolean }) {
+export function DiagnosisPanel({
+  diagnosis,
+  loading,
+  onChanged,
+}: {
+  diagnosis?: ObsTenantDiagnosis | null;
+  loading?: boolean;
+  /** Called after a signal is contacted or dismissed. */
+  onChanged?: () => void;
+}) {
   if (!diagnosis) {
     return (
       <SectionCard title="Diagnosis">
@@ -65,7 +78,7 @@ export function DiagnosisPanel({ diagnosis, loading }: { diagnosis?: ObsTenantDi
 
         <Block title="May be stuck" empty="No signals." action={<Link href="/attention" className="text-[11px] underline">All stuck customers</Link>}>
           {signals.map((s) => (
-            <SignalRow key={s.id} signal={s} />
+            <SignalRow key={s.id} signal={s} onChanged={onChanged} />
           ))}
         </Block>
 
@@ -168,9 +181,9 @@ function Block({
   );
 }
 
-export function SignalRow({ signal: s }: { signal: ObsAttentionSignal }) {
+export function SignalRow({ signal: s, onChanged }: { signal: ObsAttentionSignal; onChanged?: () => void }) {
   return (
-    <li>
+    <li className="flex flex-wrap items-center gap-y-1">
       <span className={`badge ${s.state === 'open' ? 'badge-warning' : 'badge-neutral'}`}>
         {kindLabel(ATTENTION_KIND_LABELS, s.kind)}
       </span>
@@ -188,6 +201,58 @@ export function SignalRow({ signal: s }: { signal: ObsAttentionSignal }) {
           customer sees this
         </span>
       )}
+      {onChanged && (
+        <span className="ml-auto">
+          <SignalActions signal={s} onDone={onChanged} />
+        </span>
+      )}
     </li>
+  );
+}
+
+/* What the customer reads on their own account health page right now
+   (GET /v1/admin/obs/tenants/{id}/health, apid ADR-20261115120000), so a
+   reply can refer to exactly what they see. */
+export function CustomerViewPanel({ accountId }: { accountId: string }) {
+  const health = useKeyed(accountId, getTenantHealth);
+  const missing = health.error instanceof ApiError && health.error.status === 404 && !health.data;
+  const h = health.data;
+  return (
+    <SectionCard
+      title={<h2 className="card-title">What the customer sees</h2>}
+      action={h && <span className="text-[11px] text-[var(--color-ink-muted)]">their account health page</span>}
+    >
+      <div className="px-4 py-3 text-xs">
+        {missing ? (
+          <p className="text-[var(--color-ink-muted)]">This apid build cannot show the customer&apos;s view yet.</p>
+        ) : health.error && !h ? (
+          <p className="text-[var(--color-danger)]">{health.error.message || 'Could not load the customer view.'}</p>
+        ) : !h ? (
+          <p className="text-[var(--color-ink-muted)]">Loading…</p>
+        ) : (
+          <div className="space-y-2">
+            <p>
+              {h.attention === 0
+                ? '"Nothing needs your attention."'
+                : `"${h.attention} ${h.attention === 1 ? 'thing needs' : 'things need'} your attention."`}
+            </p>
+            {[...h.restrictions.map((r) => ({ key: `r-${r.kind}`, title: r.title, detail: r.detail, action: r.action })),
+              ...(h.signals ?? []).map((s) => ({ key: `s-${s.kind}-${s.subject}`, title: s.title, detail: s.detail, action: s.action }))].map((item) => (
+              <div key={item.key} className="rounded border border-[var(--color-line)] px-3 py-2">
+                <div className="font-medium">{item.title}</div>
+                <div className="text-[var(--color-ink-muted)]">{item.detail}</div>
+                {item.action && <div className="mt-0.5 text-[var(--color-ink-muted)]">Button: {item.action}</div>}
+              </div>
+            ))}
+            {h.unavailable && h.unavailable.length > 0 && (
+              <p className="text-[var(--color-warning)]">They also see that some checks could not be loaded: {h.unavailable.join(', ')}.</p>
+            )}
+            <p className="text-[var(--color-ink-muted)]">
+              Failed deployments, domain problems and refused requests appear on their page as in the Diagnosis above.
+            </p>
+          </div>
+        )}
+      </div>
+    </SectionCard>
   );
 }

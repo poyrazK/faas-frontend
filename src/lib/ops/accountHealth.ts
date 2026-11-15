@@ -9,7 +9,7 @@
      GET /v1/admin/obs/attention           stuck-customer signals
    ========================================================================== */
 
-import { request } from '@/lib/api';
+import { request, writeHeaders, type OperatorWrite } from '@/lib/api';
 
 /** @go api.ObsLookupMatch */
 export interface ObsLookupMatch {
@@ -218,3 +218,113 @@ export function diagnosisAttention(d: ObsTenantDiagnosis | undefined | null): nu
   const open = (d.attention_signals ?? []).filter((s) => s.state === 'open').length;
   return (d.restrictions?.length ?? 0) + open + (d.failed_deployments?.length ?? 0) + (d.domain_issues?.length ?? 0);
 }
+
+/* ── Signal actions and the customer's view (apid ADR-20261115120000) ── */
+
+/** @go api.ObsAttentionContactDraft */
+export interface ObsAttentionContactDraft {
+  subject: string;
+  category: string;
+  body: string;
+  categories: string[];
+  subject_max: number;
+  body_max: number;
+}
+
+/** @go api.ObsAttentionActionResponse */
+export interface ObsAttentionActionResponse {
+  signal: ObsAttentionSignal;
+  ticket_id?: string;
+}
+
+/** @go api.ObsAttentionKindSummary */
+export interface ObsAttentionKindSummary {
+  kind: string;
+  total: number;
+  open: number;
+  contacted: number;
+  false_positive: number;
+  other_dismissed: number;
+  resolved_on_own: number;
+  /** -1 when nobody acted on any signal of this kind. */
+  false_positive_percent: number;
+  median_act_seconds?: number;
+}
+
+/** @go api.ObsAttentionSummaryResponse */
+export interface ObsAttentionSummaryResponse {
+  window_days: number;
+  items: ObsAttentionKindSummary[];
+}
+
+/** Outcomes staff pick when dismissing (apid's AttentionDismissOutcomes). */
+export const DISMISS_OUTCOMES = ['platform_issue', 'already_in_touch', 'not_needed', 'false_positive'] as const;
+export const DISMISS_OUTCOME_LABELS: Record<string, string> = {
+  platform_issue: 'Platform issue, not the customer',
+  already_in_touch: 'Already in touch',
+  not_needed: 'No action needed',
+  false_positive: 'False positive',
+};
+
+/** apid's AttentionDismissReasonMax. */
+export const DISMISS_NOTE_MAX = 200;
+
+export const getAttentionSummary = () =>
+  request<ObsAttentionSummaryResponse>('/v1/admin/obs/attention/summary', { cache: 'no-store' });
+
+export const getContactDraft = (id: number) =>
+  request<ObsAttentionContactDraft>(`/v1/admin/obs/attention/${id}/contact-draft`, { cache: 'no-store' });
+
+/** @goBody api.ObsAttentionDismissRequest */
+export const dismissSignal = (id: number, outcome: string, note: string, opts?: OperatorWrite) =>
+  request<ObsAttentionActionResponse>(`/v1/admin/obs/attention/${id}/dismiss`, {
+    method: 'POST',
+    headers: writeHeaders(opts),
+    body: JSON.stringify({ outcome, note: note.trim() || undefined }),
+  });
+
+/**
+ * Opens a ticket in the customer's personal support scope with this message
+ * first. The idempotency key is also the ticket's, so a retry replays it.
+ * @goBody api.ObsAttentionContactRequest
+ */
+export const contactCustomer = (id: number, subject: string, category: string, body: string, opts?: OperatorWrite) =>
+  request<ObsAttentionActionResponse>(`/v1/admin/obs/attention/${id}/contact`, {
+    method: 'POST',
+    headers: writeHeaders(opts),
+    body: JSON.stringify({ subject, category, body }),
+  });
+
+/** @go api.AccountHealthRestriction */
+export interface AccountHealthRestriction {
+  kind: string;
+  title: string;
+  detail: string;
+  action?: string;
+  action_url?: string;
+  since?: string;
+}
+
+/** @go api.AccountHealthSignal */
+export interface AccountHealthSignal {
+  kind: string;
+  subject: string;
+  title: string;
+  detail: string;
+  action?: string;
+  action_url?: string;
+  since: string;
+}
+
+/** The customer's own account health page, as they see it. @go api.AccountHealth */
+export interface AccountHealth {
+  generated_at: string;
+  attention: number;
+  restrictions: AccountHealthRestriction[];
+  /** Absent from apid builds before ADR-20261114190002. */
+  signals?: AccountHealthSignal[];
+  unavailable?: string[];
+}
+
+export const getTenantHealth = (accountId: string) =>
+  request<AccountHealth>(`/v1/admin/obs/tenants/${encodeURIComponent(accountId)}/health`, { cache: 'no-store' });

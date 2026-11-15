@@ -48,6 +48,8 @@ function freshState() {
     configVersion: 3,
     suspended: false,
     oidc: true,
+    signals: [attentionSignal(1, ACCOUNT, 'app_oom', 'checkout-api', 'open'), attentionSignal(2, ACCOUNT2, 'deploy_failing', 'billing-api', 'open'),
+      attentionSignal(3, ACCOUNT2, 'refused_burst', 'api_key_revoked', 'dismissed')],
     hostingEnabled: true,
     analytics: true,
     retention: true,
@@ -424,8 +426,39 @@ function route(method, path, query, body) {
           domain_issues: [{ domain: 'shop.customer.test', app_slug: 'checkout-api', problem: 'certificate issuance failed', cert_status: 'failed', cert_last_error: 'CAA record forbids issuance' }],
           customer_errors: { window_hours: 24, total: 3, by_code: [{ code: 'api_key_revoked', count: 3, last_at: ago(5) }],
             recent: [{ occurred_at: ago(5), route: 'GET /v1/apps', code: 'api_key_revoked', request_id: 'req-123', trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' }] },
-          attention_signals: [attentionSignal(1, ACCOUNT, 'app_oom', 'checkout-api', 'open')] } } };
+          attention_signals: state.signals.filter((sig) => sig.account_id === ACCOUNT) } } };
     }
+    case key === 'GET /v1/admin/obs/attention/summary':
+      return { status: 200, body: { window_days: 30, items: [
+        { kind: 'deploy_failing', total: 12, open: 3, contacted: 5, false_positive: 1, other_dismissed: 2, resolved_on_own: 1, false_positive_percent: 12, median_act_seconds: 5400 },
+        { kind: 'app_oom', total: 4, open: 4, contacted: 0, false_positive: 0, other_dismissed: 0, resolved_on_own: 0, false_positive_percent: -1 },
+      ] } };
+    case /^GET \/v1\/admin\/obs\/attention\/\d+\/contact-draft$/.test(key): {
+      const sig = state.signals.find((x) => String(x.id) === path.split('/')[5]);
+      if (!sig) return problem(404, 'not_found', 'Signal not found', 'no attention signal has this id');
+      if (sig.state !== 'open') return problem(409, 'conflict', 'Signal not open', 'This signal was already handled or resolved.');
+      return { status: 200, body: { subject: `Your app ${sig.subject} keeps running out of memory`, category: 'deployment',
+        body: `We noticed ${sig.subject} was stopped for exceeding its memory limit. Reply here and we will help.`,
+        categories: ['deployment', 'billing', 'account', 'incident', 'other'], subject_max: 200, body_max: 10000 } };
+    }
+    case /^POST \/v1\/admin\/obs\/attention\/\d+\/(dismiss|contact)$/.test(key): {
+      const sig = state.signals.find((x) => String(x.id) === path.split('/')[5]);
+      if (!sig) return problem(404, 'not_found', 'Signal not found', 'no attention signal has this id');
+      if (sig.state !== 'open') return problem(409, 'conflict', 'Signal not open', 'This signal was already handled or resolved.');
+      const contact = path.endsWith('/contact');
+      if (!contact && !['platform_issue', 'already_in_touch', 'not_needed', 'false_positive'].includes(body?.outcome)) {
+        return problem(400, 'validation_failed', 'Invalid input', 'Pick an outcome.');
+      }
+      Object.assign(sig, { state: 'dismissed', dismissed_at: now(), outcome: contact ? 'contacted' : body.outcome,
+        dismiss_reason: contact ? '' : (body.note || ''), ...(contact ? { ticket_id: 't0000000-0000-4000-8000-000000000042' } : {}) });
+      return { status: 200, body: { signal: sig, ...(contact ? { ticket_id: sig.ticket_id } : {}) } };
+    }
+    case /^GET \/v1\/admin\/obs\/tenants\/[^/]+\/health$/.test(key):
+      return { status: 200, body: { generated_at: now(), attention: 2,
+        restrictions: [{ kind: 'account_past_due', title: 'A payment failed', detail: 'Update your payment method before the grace period ends to keep your apps running.', action: 'Update payment method', action_url: '/dashboard/billing' }],
+        signals: state.signals.filter((sig) => sig.account_id === ACCOUNT && sig.state === 'open' && sig.kind === 'app_oom')
+          .map((sig) => ({ kind: sig.kind, subject: sig.subject, title: `${sig.subject} keeps running out of memory`, detail: 'It was stopped for exceeding its memory limit 3 times in the last 24 hours.', action: 'Compare plans', action_url: '/dashboard/billing', since: sig.first_seen_at })),
+        failed_deployments: [], domain_issues: [], refused_requests: { window_hours: 24, total: 0, by_code: [], recent: [] } } };
     case key === 'GET /v1/admin/obs/lookup': {
       const q = (query.get('q') || '').trim();
       const matches = q === 'ada@customer.test' ? [{ kind: 'account', account_id: ACCOUNT, detail: 'email' }]
@@ -434,8 +467,7 @@ function route(method, path, query, body) {
       return { status: 200, body: { query: q, matches } };
     }
     case key === 'GET /v1/admin/obs/attention': {
-      const all = [attentionSignal(1, ACCOUNT, 'app_oom', 'checkout-api', 'open'), attentionSignal(2, ACCOUNT2, 'deploy_failing', 'billing-api', 'open'),
-        attentionSignal(3, ACCOUNT2, 'refused_burst', 'api_key_revoked', 'dismissed')];
+      const all = state.signals;
       const st = query.get('state');
       const items = all.filter((s) => (!query.get('kind') || s.kind === query.get('kind'))
         && (!st ? s.state !== 'resolved' : s.state === st) && (!query.get('account_id') || s.account_id === query.get('account_id')));

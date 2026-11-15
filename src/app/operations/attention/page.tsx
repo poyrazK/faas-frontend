@@ -6,8 +6,10 @@ import {
   ATTENTION_KINDS,
   ATTENTION_STATES,
   CUSTOMER_VISIBLE_KINDS,
+  getAttentionSummary,
   kindLabel,
   listAttention,
+  type ObsAttentionSummaryResponse,
   type AttentionState,
   type ObsAttentionSignal,
 } from '@/lib/ops/accountHealth';
@@ -17,6 +19,7 @@ import { FilterSelect, Mono, PageHeader } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
 import { TenantLink } from '@/components/operator/TenantLink';
+import { SignalActions } from '@/components/operator/SignalActions';
 
 /* ==========================================================================
    Customers who may be stuck (apid ADR-20261113123000, ADR-20261113180000):
@@ -38,6 +41,11 @@ export default function AttentionPage() {
   const [kind, setKind] = useState('');
   const [state, setState] = useState<AttentionState>('open');
   const { data, loading, error, reload } = useAsync(() => listAttention({ kind: kind || undefined, state }), [kind, state]);
+  const summary = useAsync(() => getAttentionSummary(), []);
+  const refresh = () => {
+    reload();
+    summary.reload();
+  };
   const items = data?.items ?? [];
   const accounts = new Set(items.map((s) => s.account_id)).size;
 
@@ -58,7 +66,7 @@ export default function AttentionPage() {
               onChange={(v) => setState(v as AttentionState)}
               options={ATTENTION_STATES.map((s) => ({ value: s, label: STATE_LABELS[s] }))}
             />
-            <button onClick={reload} className="btn btn-secondary btn-sm">
+            <button onClick={refresh} className="btn btn-secondary btn-sm">
               <Icon name="refresh" size={14} />
               Refresh
             </button>
@@ -90,22 +98,86 @@ export default function AttentionPage() {
                   <th className="px-4 py-2">Count</th>
                   <th className="px-4 py-2">Since</th>
                   <th className="px-4 py-2">State</th>
+                  <th className="px-4 py-2" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-line)]">
                 {items.map((s) => (
-                  <SignalTableRow key={s.id} signal={s} />
+                  <SignalTableRow key={s.id} signal={s} onChanged={refresh} />
                 ))}
               </tbody>
             </table>
           </div>
         )}
       </SectionCard>
+
+      <OutcomeSummary state={summary} />
     </div>
   );
 }
 
-function SignalTableRow({ signal: s }: { signal: ObsAttentionSignal }) {
+/* What support did about each kind: the evidence for changing a threshold. */
+function OutcomeSummary({ state }: { state: { data: ObsAttentionSummaryResponse | null; error: Error | null; loading: boolean } }) {
+  const days = state.data?.window_days ?? 30;
+  return (
+    <SectionCard title={`Outcomes, last ${days} days`} className="mt-6">
+      {state.error && !state.data ? (
+        <p className="p-4 text-xs text-[var(--color-ink-muted)]">
+          The outcome summary is not available{state.error.message ? ` (${state.error.message})` : ''}.
+        </p>
+      ) : !state.data ? (
+        <p className="p-4 text-xs text-[var(--color-ink-muted)]">Loading…</p>
+      ) : state.data.items.length === 0 ? (
+        <p className="p-4 text-xs text-[var(--color-ink-muted)]">No signals in this period.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="border-b border-[var(--color-line)] text-[var(--color-ink-muted)]">
+              <tr>
+                <th className="px-4 py-2">Kind</th>
+                <th className="px-4 py-2">Signals</th>
+                <th className="px-4 py-2">Still open</th>
+                <th className="px-4 py-2">Contacted</th>
+                <th className="px-4 py-2">False positive</th>
+                <th className="px-4 py-2">Other dismissals</th>
+                <th className="px-4 py-2">Resolved on own</th>
+                <th className="px-4 py-2">Median time to act</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-line)]">
+              {state.data.items.map((k) => (
+                <tr key={k.kind}>
+                  <td className="px-4 py-2">{kindLabel(ATTENTION_KIND_LABELS, k.kind)}</td>
+                  <td className="px-4 py-2 font-mono">{k.total}</td>
+                  <td className="px-4 py-2 font-mono">{k.open}</td>
+                  <td className="px-4 py-2 font-mono">{k.contacted}</td>
+                  <td className="px-4 py-2 font-mono">
+                    {k.false_positive}
+                    {k.false_positive_percent >= 0 && <span className="ml-1 text-[var(--color-ink-muted)]">({k.false_positive_percent}%)</span>}
+                  </td>
+                  <td className="px-4 py-2 font-mono">{k.other_dismissed}</td>
+                  <td className="px-4 py-2 font-mono">{k.resolved_on_own}</td>
+                  <td className="px-4 py-2">{formatSeconds(k.median_act_seconds)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+function formatSeconds(seconds?: number): string {
+  if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) return '—';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} h ${minutes % 60} min`;
+  return `${Math.round(hours / 24)} days`;
+}
+
+function SignalTableRow({ signal: s, onChanged }: { signal: ObsAttentionSignal; onChanged: () => void }) {
   return (
     <tr className="align-top hover:bg-[var(--color-surface-subtle)]">
       <td className="px-4 py-2 font-mono">
@@ -133,6 +205,10 @@ function SignalTableRow({ signal: s }: { signal: ObsAttentionSignal }) {
         </span>
         {s.outcome && <span className="ml-2 text-[var(--color-ink-muted)]">{s.outcome.replaceAll('_', ' ')}</span>}
         {s.dismiss_reason && <div className="mt-0.5 text-[var(--color-ink-muted)]">{s.dismiss_reason}</div>}
+        {s.ticket_id && <div className="mt-0.5 font-mono text-[var(--color-ink-muted)]">ticket {s.ticket_id}</div>}
+      </td>
+      <td className="px-4 py-2 text-right">
+        <SignalActions signal={s} onDone={onChanged} />
       </td>
     </tr>
   );
