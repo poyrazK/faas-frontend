@@ -77,6 +77,11 @@ function freshState() {
 
 let state = freshState();
 
+function attentionSignal(id, accountId, kind, subject, state) {
+  return { id, account_id: accountId, kind, subject, state, observed: 3, detail: kind === 'app_oom' ? 'OOM-killed 3 times; peak 512 MB of a 512 MB plan' : '',
+    first_seen_at: ago(90), last_seen_at: ago(5), ...(state === 'dismissed' ? { dismissed_at: ago(10), outcome: 'false_positive' } : {}) };
+}
+
 const tenantRow = (id, email, plan, status, apps) => ({
   account_id: id, plan, status, is_personal: true, created_at: ago(60 * 24 * 40), mfa_enrolled: plan !== 'free',
   apps_count: apps, deployments_live_count: Math.max(0, apps - 1), email,
@@ -412,7 +417,29 @@ function route(method, path, query, body) {
       return { status: 200, body: { ...detail,
         usage: { month: '2026-10', used_gb_hours: 212.5, included_gb_hours: 250, overage_gb_hours: 0, overage_cents: 0, used_cpu_hours: 40, used_egress_gb: 3.2, used_ingress_gb: 1.1, cold_boots: 37, requests: 1840221,
           apps: [{ app_id: 'app-1', app_slug: 'checkout-api', mb_seconds: 720000000, cpu_usec: 1, requests: 1800000, tx_bytes: 2e9, net_tx_bytes: 1e9, net_rx_bytes: 1e9, cold_boots: 30 }] },
-        billing: { current_month_overage_cents: 0, active_credits_cents: 2500, invoices: [{ id: 'in_123', provider: 'polar', number: 'INV-0042', status: 'paid', currency: 'eur', period_start: ago(60 * 24 * 31), period_end: ago(60 * 24), total_cents: 2900, amount_paid_cents: 2900 }] } } };
+        billing: { current_month_overage_cents: 0, active_credits_cents: 2500, invoices: [{ id: 'in_123', provider: 'polar', number: 'INV-0042', status: 'paid', currency: 'eur', period_start: ago(60 * 24 * 31), period_end: ago(60 * 24), total_cents: 2900, amount_paid_cents: 2900 }] },
+        diagnosis: { generated_at: now(), healthy_domains: 1, enabled_flags: [],
+          restrictions: [{ kind: 'account_past_due', since: ago(60 * 24) }],
+          failed_deployments: [{ deployment_id: 'dep-9', app_id: 'app-1', app_slug: 'checkout-api', status: 'failed', error_code: 'build_failed', error: 'npm ci exited 1', hint: 'Pin the Node version in package.json', created_at: ago(40) }],
+          domain_issues: [{ domain: 'shop.customer.test', app_slug: 'checkout-api', problem: 'certificate issuance failed', cert_status: 'failed', cert_last_error: 'CAA record forbids issuance' }],
+          customer_errors: { window_hours: 24, total: 3, by_code: [{ code: 'api_key_revoked', count: 3, last_at: ago(5) }],
+            recent: [{ occurred_at: ago(5), route: 'GET /v1/apps', code: 'api_key_revoked', request_id: 'req-123', trace_id: '4bf92f3577b34da6a3ce929d0e0e4736' }] },
+          attention_signals: [attentionSignal(1, ACCOUNT, 'app_oom', 'checkout-api', 'open')] } } };
+    }
+    case key === 'GET /v1/admin/obs/lookup': {
+      const q = (query.get('q') || '').trim();
+      const matches = q === 'ada@customer.test' ? [{ kind: 'account', account_id: ACCOUNT, detail: 'email' }]
+        : q === 'checkout-api' ? [{ kind: 'app', account_id: ACCOUNT, app_id: 'app-1', app_slug: 'checkout-api', detail: 'app slug' }]
+        : [];
+      return { status: 200, body: { query: q, matches } };
+    }
+    case key === 'GET /v1/admin/obs/attention': {
+      const all = [attentionSignal(1, ACCOUNT, 'app_oom', 'checkout-api', 'open'), attentionSignal(2, ACCOUNT2, 'deploy_failing', 'billing-api', 'open'),
+        attentionSignal(3, ACCOUNT2, 'refused_burst', 'api_key_revoked', 'dismissed')];
+      const st = query.get('state');
+      const items = all.filter((s) => (!query.get('kind') || s.kind === query.get('kind'))
+        && (!st ? s.state !== 'resolved' : s.state === st) && (!query.get('account_id') || s.account_id === query.get('account_id')));
+      return { status: 200, body: { items, limit: Number(query.get('limit') || 200) } };
     }
     case /^GET \/v1\/admin\/obs\/apps\/[^/]+$/.test(key):
       return { status: 200, body: { app: { id: path.split('/').pop(), account_id: ACCOUNT, slug: 'checkout-api', type: 'service', runtime: 'node22', status: 'active', max_concurrency: 10, min_instances: 0 },

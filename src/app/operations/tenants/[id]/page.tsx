@@ -38,6 +38,7 @@ import { useTenant, type TenantData } from '@/components/operator/tenant/useTena
 import { EntityId } from '@/components/operator/EntityId';
 import { RowMenu } from '@/components/ui/RowMenu';
 import { chosenOrgSlug, workspaceTitle } from '@/lib/ops/tenantNames';
+import { DiagnosisPanel } from '@/components/operator/tenant/DiagnosisPanel';
 
 const TAB_LABELS: Record<TenantTab, { label: string; icon: IconName }> = {
   overview: { label: 'Overview', icon: 'overview' },
@@ -292,6 +293,8 @@ function OverviewTab({ accountId, data, currency }: TabContext) {
           sub={t360 ? `${formatCents(t360.billing.current_month_overage_cents, currency)} overage this month` : 'Billing unavailable'}
         />
       </div>
+
+      <DiagnosisPanel diagnosis={t360?.diagnosis} loading={!data} />
 
       <SectionCard title="Needs attention">
         <div className="divide-y divide-[var(--color-line)] text-xs">

@@ -12,6 +12,8 @@
    step-up, handled by the transport below.
    ========================================================================== */
 
+import type { ObsTenantDiagnosis } from '@/lib/ops/accountHealth';
+
 /* ────────────────────────────── Models ─────────────────────────────────── */
 
 export type Plan = 'free' | 'hobby' | 'pro' | 'scale';
@@ -663,6 +665,8 @@ export interface ObsTenantDetailResponse {
 export interface ObsTenant360Response extends ObsTenantDetailResponse {
   usage: ObsTenantUsage;
   billing: ObsTenantBilling;
+  /** Why the account may not be working (apid ADR-20261112170000). Absent from apid builds before it. */
+  diagnosis?: ObsTenantDiagnosis;
 }
 
 /** @go api.ObsTenantUsage */

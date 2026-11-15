@@ -35,6 +35,7 @@ export const OPS_ROUTES: readonly OpsRoute[] = [
   { slug: 'controls', label: 'Emergency controls', icon: 'bolt', group: 'On call' },
   { slug: 'tenants', label: 'Tenants', icon: 'user', group: 'Customers' },
   { slug: 'lookup', label: 'Support lookup', icon: 'traces', group: 'Customers' },
+  { slug: 'attention', label: 'Stuck customers', icon: 'inbox', group: 'Customers' },
   { slug: 'repairs', label: 'Data repairs', icon: 'databases', group: 'Customers' },
   { slug: 'metering', label: 'Metering', icon: 'usage', group: 'Customers' },
   { slug: 'audit-log', label: 'Audit trail', icon: 'logs', group: 'Investigate' },
