@@ -16,7 +16,7 @@ import { indexGoTypes, parseRoutes } from './go.mjs';
 import { readConsole } from './ts.mjs';
 import { compareContract, suggestGoTypes } from './compare.mjs';
 
-const GO_DIRS = ['pkg/api', 'pkg/apid/apidserver', 'pkg/state', 'pkg/platformflags'];
+const GO_DIRS = ['pkg/api', 'pkg/apid/apidserver', 'pkg/apid/support', 'pkg/state', 'pkg/platformflags'];
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);

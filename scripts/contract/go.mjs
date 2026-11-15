@@ -76,7 +76,8 @@ function parseStructBody(lines) {
       continue;
     }
     if (parts.length >= 2) {
-      const names = head.slice(0, head.indexOf(parts[parts.length - 1])).split(',').map((s) => s.trim()).filter(Boolean);
+      // lastIndexOf: a field may share its type's name (`Episode Episode`).
+      const names = head.slice(0, head.lastIndexOf(parts[parts.length - 1])).split(',').map((s) => s.trim()).filter(Boolean);
       const goType = parts[parts.length - 1];
       for (const raw of names) {
         const name = raw.split(/\s+/)[0];

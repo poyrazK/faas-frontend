@@ -35,6 +35,7 @@ jobs:
           sparse-checkout: |
             pkg/api
             pkg/apid/apidserver
+            pkg/apid/support
             pkg/state
             pkg/platformflags
 

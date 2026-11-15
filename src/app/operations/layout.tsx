@@ -14,6 +14,7 @@ import { StepUpProvider } from '@/components/operator/StepUpProvider';
 import { OperatorIntentsProvider, isTerminalIntent, useOperatorIntents } from '@/components/operator/OperatorIntents';
 import { JumpBox } from '@/components/operator/JumpBox';
 import { SessionsDialog } from '@/components/operator/SessionsDialog';
+import { formatStuck, useCustomerQueues } from '@/lib/ops/customerQueues';
 
 /** Which folded sidebar sections the operator opened (per browser). */
 const NAV_OPEN_KEY = 'gregale.ops.nav.open';
@@ -52,6 +53,8 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
   const [accessError, setAccessError] = useState<string | null>(null);
   const [controlPlane, setControlPlane] = useState<'checking' | 'online' | 'degraded'>('checking');
   const onLogin = isLoginPath(pathname);
+  // Sidebar counts for the customer queues; only once the operator is let in.
+  const queues = useCustomerQueues(!onLogin && !!account && access === 'granted');
 
   useEffect(() => {
     if (!loading && !account && !onLogin) {
@@ -172,6 +175,10 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
   }
 
   const railW = collapsed ? 60 : 228;
+  const badges: Record<string, string | undefined> = {
+    attention: queues.stuck && queues.stuck.signals > 0 ? formatStuck(queues.stuck) : undefined,
+    support: queues.unread ? String(queues.unread) : undefined,
+  };
 
   const toggleGroup = (group: OpsGroup) =>
     setOpenGroups((current) => {
@@ -224,6 +231,11 @@ function OperationsShell({ children }: { children: React.ReactNode }) {
                       >
                         <Icon name={route.icon} size={16} />
                         {!compact && <span>{route.label}</span>}
+                        {!compact && badges[route.slug] && (
+                          <span className="badge badge-neutral ml-auto" aria-label={`${badges[route.slug]} waiting`}>
+                            {badges[route.slug]}
+                          </span>
+                        )}
                       </Link>
                     );
                   })}

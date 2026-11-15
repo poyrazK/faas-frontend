@@ -19,6 +19,8 @@ import {
   type ObsWakeTimeline,
 } from '@/lib/ops/support';
 import { relativeTime } from '@/lib/format';
+import { LOOKUP_QUERY_MAX, lookupAccount } from '@/lib/ops/accountHealth';
+import { AccountLookupResults } from '@/components/operator/AccountLookup';
 import { CopyButton, Mono, PageHeader } from '@/components/ui/bits';
 import { SectionCard } from '@/components/ui/Panels';
 import { Icon } from '@/components/ui/Icons';
@@ -29,6 +31,9 @@ import { useKeyed } from '@/components/operator/tenant/shared';
 /* ==========================================================================
    Support lookup: paste an ID from a customer ticket or a log line and see
    what the platform recorded for it.
+     ?q=<anything>     the account behind an email, app slug, URL, account /
+                       app / deployment ID, or a refused request's request
+                       or trace ID (GET /v1/admin/obs/lookup)
      ?trace=<32 hex>   operator intents + events sharing one OTel trace id
      ?wake=<wake id>   every event of one wake, oldest first
    Both can be open at once; IDs found in payloads link across.
@@ -47,6 +52,11 @@ function SupportLookup() {
   const router = useRouter();
   const traceParam = normalizeTraceId(params.get('trace') ?? '');
   const wakeParam = normalizeWakeId(params.get('wake') ?? '');
+  const queryParam = (params.get('q') ?? '').trim().slice(0, LOOKUP_QUERY_MAX);
+  const [queryInput, setQueryInput] = useState(queryParam);
+  useEffect(() => {
+    queueMicrotask(() => setQueryInput(queryParam));
+  }, [queryParam]);
 
   const [traceInput, setTraceInput] = useState(traceParam);
   const [wakeInput, setWakeInput] = useState(wakeParam);
@@ -62,19 +72,22 @@ function SupportLookup() {
   const traceValid = TRACE_ID_PATTERN.test(traceParam);
   const wakeValid = WAKE_ID_PATTERN.test(wakeParam);
 
-  const navigate = (next: { trace?: string; wake?: string }) => {
+  const navigate = (next: { q?: string; trace?: string; wake?: string }) => {
     const q = new URLSearchParams();
+    if (next.q) q.set('q', next.q);
     if (next.trace) q.set('trace', next.trace);
     if (next.wake) q.set('wake', next.wake);
     const query = q.toString();
     router.push(`/lookup${query ? `?${query}` : ''}`);
   };
 
+  const account = useKeyed(queryParam || null, lookupAccount);
   const trace = useKeyed(traceValid ? traceParam : null, (id) => getTraceLookup(id));
   const wake = useKeyed(wakeValid ? wakeParam : null, getWakeTimeline);
 
-  const openTrace = (id: string) => navigate({ trace: id, wake: wakeParam });
-  const openWake = (id: string) => navigate({ trace: traceParam, wake: id });
+  const openTrace = (id: string) => navigate({ q: queryParam, trace: id, wake: wakeParam });
+  const openWake = (id: string) => navigate({ q: queryParam, trace: traceParam, wake: id });
+  const queryDraft = queryInput.trim().slice(0, LOOKUP_QUERY_MAX);
 
   const traceDraft = normalizeTraceId(traceInput);
   const wakeDraft = normalizeWakeId(wakeInput);
@@ -83,15 +96,43 @@ function SupportLookup() {
     <div>
       <PageHeader
         title="Support lookup"
-        subtitle="Follow a trace or wake ID from a ticket, a log line or an error response."
+        subtitle="Find the account behind anything a customer quotes, or follow a trace or wake ID."
       />
+
+      <form
+        className="card mb-4 p-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (queryDraft) navigate({ q: queryDraft, trace: traceParam, wake: wakeParam });
+        }}
+      >
+        <label className="label" htmlFor="lookup-account">
+          Find the account
+        </label>
+        <div className="flex gap-2">
+          <input
+            id="lookup-account"
+            className="field field-sm font-mono"
+            value={queryInput}
+            maxLength={LOOKUP_QUERY_MAX}
+            onChange={(event) => setQueryInput(event.target.value)}
+            placeholder="Email, app slug, app or domain URL, account/app/deployment ID, request or trace ID"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button type="submit" className="btn btn-primary btn-sm" disabled={!queryDraft}>
+            <Icon name="search" size={14} />
+            Find
+          </button>
+        </div>
+      </form>
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <form
           className="card p-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (TRACE_ID_PATTERN.test(traceDraft)) navigate({ trace: traceDraft, wake: wakeParam });
+            if (TRACE_ID_PATTERN.test(traceDraft)) navigate({ q: queryParam, trace: traceDraft, wake: wakeParam });
           }}
         >
           <label className="label" htmlFor="lookup-trace">
@@ -121,7 +162,7 @@ function SupportLookup() {
           className="card p-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (WAKE_ID_PATTERN.test(wakeDraft)) navigate({ trace: traceParam, wake: wakeDraft });
+            if (WAKE_ID_PATTERN.test(wakeDraft)) navigate({ q: queryParam, trace: traceParam, wake: wakeDraft });
           }}
         >
           <label className="label" htmlFor="lookup-wake">
@@ -148,13 +189,24 @@ function SupportLookup() {
         </form>
       </div>
 
-      {!traceParam && !wakeParam && (
+      {!queryParam && !traceParam && !wakeParam && (
         <div className="card p-8 text-center text-sm text-[var(--color-ink-muted)]">
-          Enter a trace ID or a wake ID to see its timeline.
+          Paste what the customer sent to find their account, or a trace or wake ID to see its timeline.
         </div>
       )}
 
       <div className="space-y-6">
+        {queryParam && (
+          <LookupSection
+            title="Account"
+            id={queryParam}
+            invalid={null}
+            state={account}
+            notFound="Nothing matched."
+            onClose={() => navigate({ trace: traceParam, wake: wakeParam })}
+            render={(data) => <AccountLookupResults data={data} onOpenTrace={openTrace} />}
+          />
+        )}
         {traceParam && (
           <LookupSection
             title="Trace"
@@ -162,7 +214,7 @@ function SupportLookup() {
             invalid={!traceValid ? 'This is not a trace ID (32 lowercase hex characters).' : null}
             state={trace}
             notFound="No operator intent or platform event carries this trace ID."
-            onClose={() => navigate({ wake: wakeParam })}
+            onClose={() => navigate({ q: queryParam, wake: wakeParam })}
             render={(data) => <TraceView data={data} onOpenWake={openWake} onOpenTrace={openTrace} />}
           />
         )}
@@ -173,7 +225,7 @@ function SupportLookup() {
             invalid={!wakeValid ? 'This is not a wake ID (8–64 letters, digits or dashes).' : null}
             state={wake}
             notFound="No events are recorded for this wake ID."
-            onClose={() => navigate({ trace: traceParam })}
+            onClose={() => navigate({ q: queryParam, trace: traceParam })}
             render={(data) => <WakeView data={data} onOpenTrace={openTrace} />}
           />
         )}
