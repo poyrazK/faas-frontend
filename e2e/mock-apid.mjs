@@ -601,8 +601,12 @@ function route(method, path, query, body) {
       const name = path.split('/')[5];
       return { status: 200, body: { node: { id: 'n1', name, active: name !== 'node-c', vpcpus: 16, mem_mb: 65536, max_concurrency: 200, admission_ceiling_mb: 55705, instances_live: 2, instances_running: 2, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 512, admission_margin_mb: 55193, created_at: ago(1000) },
         apps: [{ id: 'app-1', slug: 'checkout-api', account_id: ACCOUNT, status: 'active', instances_live: 2, instances_running: 2, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 512, last_request_at: ago(1) }],
-        instances: [{ id: 'c0ffee00-0000-4000-8000-000000000001', app_id: 'app-1', app_slug: 'checkout-api', deployment_id: 'dep-1', state: 'running', ram_mb: 256, started_at: ago(30), last_request_at: ago(1) }],
-        drain: { total_instances: 2, live_instances: 2, running_instances: 2, waking_instances: 0, cold_booting_instances: 0, drain_safe: false, observed_at: now() } } };
+        instances: [
+          { id: 'c0ffee00-0000-4000-8000-000000000001', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, deployment_id: 'dep-1', state: 'running', ram_mb: 256, started_at: ago(30), last_request_at: ago(1) },
+          { id: 'c0ffee00-0000-4000-8000-000000000002', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, deployment_id: 'dep-1', state: 'running', ram_mb: 256, started_at: ago(20), last_request_at: ago(9) },
+          { id: 'c0ffee00-0000-4000-8000-000000000003', app_id: 'app-2', app_slug: 'billing-cron', account_id: ACCOUNT, deployment_id: 'dep-2', state: 'frozen', ram_mb: 256, started_at: ago(90), last_request_at: ago(60) },
+        ],
+        drain: { total_instances: 3, live_instances: 2, running_instances: 2, waking_instances: 0, cold_booting_instances: 0, drain_safe: false, observed_at: now() } } };
     }
     case /^POST \/v1\/admin\/ops\/nodes\/[^/]+\/(drain|force-drain|activate|retire)$/.test(key):
       return { status: 202, body: { ok: true, intent_id: queueIntent(`node_${path.split('/').pop()}`), status_url: '', expires_at: ago(-60), kind: 'node_drain', node: path.split('/')[5], previous_active: true, active: false, previous_lifecycle: 'active', requested_lifecycle: 'draining', live_instances: 2, forced: false, reason: query.get('reason'), preflight: { affected_apps: 1, affected_tenants: 1, total_instances: 2, live_instances: 2, live_ram_mb: 512, capacity_change_mb: -55705, reversible: true, disruption_warning: false } } };

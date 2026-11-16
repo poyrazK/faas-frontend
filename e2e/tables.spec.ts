@@ -57,3 +57,15 @@ test('a node row’s menu opens its heartbeats', async ({ page }) => {
   await expect(page).toHaveURL(/[?&]heartbeats=node-b/);
   await expect(page.getByRole('dialog', { name: /Heartbeats · node-b/ })).toBeVisible();
 });
+
+test('a node shows the instances running on it, and every VM it holds on request', async ({ page }) => {
+  await page.goto('/nodes?node=node-a');
+  const dialog = page.getByRole('dialog', { name: 'Node node-a' });
+  await expect(dialog.getByRole('heading', { name: 'Instances · 2 running of 3 on the node' })).toBeVisible();
+  const table = dialog.locator('section').filter({ has: page.getByRole('heading', { name: /^Instances/ }) });
+  await expect(table.getByRole('row')).toHaveCount(3);
+  await expect(table.getByText('frozen')).toHaveCount(0);
+  await table.getByRole('combobox').selectOption('all');
+  await expect(table.getByRole('row')).toHaveCount(4);
+  await expect(table.getByText('frozen')).toBeVisible();
+});
