@@ -23,6 +23,7 @@ import {
 } from '@/lib/ops/nodes';
 import { EnrollNodeDialog } from './EnrollNodeDialog';
 import { ReleaseConvergence } from './ReleaseConvergence';
+import { NodeInstances } from './NodeInstances';
 import { formatMegabytes, isRealTimestamp, REASON_SUGGESTIONS, WAKE_SLO_P50_MS } from '@/lib/operator';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { PageHeader } from '@/components/ui/bits';
@@ -33,7 +34,6 @@ import { relativeTime } from '@/lib/format';
 import { OperatorActionDialog } from '@/components/operator/OperatorActionDialog';
 import { useOperatorIntents } from '@/components/operator/OperatorIntents';
 import { CopyLinkButton, EntityId } from '@/components/operator/EntityId';
-import { InstanceActions } from '@/components/operator/InstanceActions';
 import { RowMenu, copyText, rowOpener } from '@/components/ui/RowMenu';
 import { useUrlParams } from '@/lib/useUrlState';
 import { pickParam } from '@/lib/urlState';
@@ -443,50 +443,11 @@ function ComputeNodes() {
               )}
             </section>
 
-            <section>
-              <h4 className="mb-2 font-semibold text-[var(--color-ink-soft)]">
-                Instances ({nodeDetail.instances.length})
-              </h4>
-              {nodeDetail.instances.length === 0 ? (
-                <div className="text-[var(--color-ink-muted)]">No instances are assigned to this node.</div>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
-                  <table className="dtable text-xs">
-                    <thead>
-                      <tr>
-                        <th>Instance</th>
-                        <th>App</th>
-                        <th>State</th>
-                        <th>RAM</th>
-                        <th>Last request</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {nodeDetail.instances.map((instance) => (
-                        <tr key={instance.id}>
-                          <td>
-                            <EntityId id={instance.id} kind="instance" />
-                          </td>
-                          <td>{instance.app_slug || <EntityId id={instance.app_id} kind="app" />}</td>
-                          <td>
-                            <span className="badge badge-neutral">{instance.state}</span>
-                          </td>
-                          <td className="font-mono">{formatMegabytes(instance.ram_mb)}</td>
-                          <td>{instance.last_request_at ? relativeTime(instance.last_request_at) : '—'}</td>
-                          <td>
-                            <InstanceActions
-                              instance={{ ...instance, node_name: instance.node_name || detailNode || undefined }}
-                              onDone={() => detailNode && void loadDetail(detailNode)}
-                            />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
+            <NodeInstances
+              instances={nodeDetail.instances}
+              nodeName={detailNode}
+              onChanged={() => detailNode && void loadDetail(detailNode)}
+            />
           </div>
         )}
       </Modal>
