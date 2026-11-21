@@ -575,7 +575,10 @@ function route(method, path, query, body) {
     }
     case /^GET \/v1\/admin\/obs\/apps\/[^/]+$/.test(key):
       return { status: 200, body: { app: { id: path.split('/').pop(), account_id: ACCOUNT, slug: 'checkout-api', type: 'service', runtime: 'node22', status: 'active', max_concurrency: 10, min_instances: 0 },
-        deployments: [], invocations: [],
+        deployments: [], invocations: [
+          { id: 'inv-1', app_id: 'app-1', app_slug: 'checkout-api', state: 'completed', source: 'queue', method: 'POST', path: '/jobs/resize', outcome: 'succeeded', attempts: 1, created_at: ago(3), instance_id: 'c0ffee00-0000-4000-8000-000000000001' },
+          { id: 'inv-2', app_id: 'app-1', app_slug: 'checkout-api', state: 'completed', source: 'queue', method: 'POST', path: '/jobs/other', outcome: 'succeeded', attempts: 1, created_at: ago(4), instance_id: 'c0ffee00-0000-4000-8000-000000000002' },
+        ],
         instances: [
           { id: 'c0ffee00-0000-4000-8000-000000000001', app_id: 'app-1', app_slug: 'checkout-api', deployment_id: 'dep-1', node_name: 'node-a', state: 'running', ram_mb: 256, started_at: ago(30), last_request_at: ago(1) },
           { id: 'c0ffee00-0000-4000-8000-000000000002', app_id: 'app-1', app_slug: 'checkout-api', deployment_id: 'dep-1', node_name: 'node-b', state: 'waking', ram_mb: 256, started_at: ago(1), last_request_at: ago(1) },
@@ -595,6 +598,29 @@ function route(method, path, query, body) {
         { id: 'n1', name: 'node-a', active: true, vpcpus: 16, mem_mb: 65536, max_concurrency: 200, admission_ceiling_mb: 55705, instances_live: 41, instances_running: 30, instances_waking: 1, instances_cold_booting: 0, ram_used_mb: 30210, admission_margin_mb: 25495, cpu_pct_60s: 37.5, overlay_ip: '10.8.0.2', last_heartbeat_at: ago(0.1), created_at: ago(60 * 24 * 90) },
         { id: 'n2', name: 'node-b', active: true, vpcpus: 16, mem_mb: 65536, max_concurrency: 200, admission_ceiling_mb: 55705, instances_live: 12, instances_running: 10, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 9100, admission_margin_mb: 46605, cpu_pct_60s: 12.1, overlay_ip: '10.8.0.3', last_heartbeat_at: ago(0.2), created_at: ago(60 * 24 * 60) },
         { id: 'n3', name: 'node-c', active: false, vpcpus: 16, mem_mb: 65536, max_concurrency: 200, admission_ceiling_mb: 55705, instances_live: 0, instances_running: 0, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 0, admission_margin_mb: 55705, last_heartbeat_at: '0001-01-01T00:00:00Z', created_at: ago(60 * 24 * 20) },
+      ] } };
+    /* ── Fleet instances (ADR-20261121161842) ── */
+    case key === 'GET /v1/admin/obs/instances': {
+      const fleet = [
+        { id: 'c0ffee00-0000-4000-8000-000000000001', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, deployment_id: DEPLOYMENT, node_id: 'n1', node_name: 'node-a', state: 'running', ram_mb: 256, started_at: ago(30), last_request_at: ago(1), wake_id: 'wake-0001-checkout' },
+        { id: 'c0ffee00-0000-4000-8000-000000000004', app_id: 'app-9', app_slug: 'blog', account_id: ACCOUNT2, deployment_id: 'dep-9', node_id: 'n2', node_name: 'node-b', state: 'running', ram_mb: 512, started_at: ago(90), last_request_at: ago(20) },
+        { id: 'c0ffee00-0000-4000-8000-000000000005', app_id: 'app-9', app_slug: 'blog', account_id: ACCOUNT2, deployment_id: 'dep-9', node_id: 'n2', node_name: 'node-b', state: 'frozen', ram_mb: 512, started_at: ago(200), last_request_at: ago(150) },
+      ];
+      const items = fleet.filter((i) => (query.get('state') === 'resident' || i.state === 'running')
+        && (!query.get('node') || i.node_name === query.get('node')) && (!query.get('account_id') || i.account_id === query.get('account_id'))
+        && (!query.get('app_id') || i.app_id === query.get('app_id')));
+      return { status: 200, body: { items, limit: 200, truncated: false } };
+    }
+    case /^GET \/v1\/admin\/obs\/instances\/[^/]+$/.test(key): {
+      const id = path.split('/').pop();
+      if (id !== 'c0ffee00-0000-4000-8000-000000000001') return problem(404, 'not_found', 'Instance not found', 'no instance has this id');
+      return { status: 200, body: { id, app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, deployment_id: DEPLOYMENT, node_id: 'n1', node_name: 'node-a', state: 'running', ram_mb: 256, started_at: ago(30), last_request_at: ago(1), wake_id: 'wake-0001-checkout' } };
+    }
+    case key === 'GET /v1/admin/obs/wakes/wake-0001-checkout':
+      return { status: 200, body: { wake_id: 'wake-0001-checkout', subject: 'checkout-api', truncated: false, events: [
+        { at: new Date(Date.now() - 30 * 60_000).toISOString(), kind: 'wake.requested' },
+        { at: new Date(Date.now() - 30 * 60_000 + 40).toISOString(), kind: 'wake.snapshot_restore_started' },
+        { at: new Date(Date.now() - 30 * 60_000 + 212).toISOString(), kind: 'wake.ready' },
       ] } };
     case key === 'GET /v1/admin/obs/nodes/wake-latency':
       return { status: 200, body: { window: '5m', as_of: now(), prometheus_available: true, fleet_p95_ms: 410, quantiles: [{ node_id: 'n1', node_name: 'node-a', p50_ms: 212, p95_ms: 410, p99_ms: 690, sample_count: 1240 }] } };

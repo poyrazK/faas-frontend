@@ -778,6 +778,8 @@ export interface ObsInvocationRow {
   last_error?: string;
   created_at: string;
   completed_at?: string;
+  /** The instance that ran it, once one claimed it. */
+  instance_id?: string;
 }
 
 /** @go api.ObsAuditActivityRow */
@@ -830,6 +832,8 @@ export interface ObsInstanceRow {
   started_at: string;
   last_request_at: string;
   parked_at?: string;
+  /** The wake that started the instance. */
+  wake_id?: string;
 }
 
 /** @go api.ObsAppDetail */

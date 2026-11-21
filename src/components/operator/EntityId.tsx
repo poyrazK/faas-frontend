@@ -13,6 +13,7 @@ import {
   tenantHref,
   traceHref,
   wakeHref,
+  instanceHref,
 } from '@/lib/routes';
 
 export type EntityKind =
@@ -37,6 +38,7 @@ const LINKS: Partial<Record<EntityKind, (id: string) => string>> = {
   incident: incidentHref,
   trace: traceHref,
   wake: wakeHref,
+  instance: instanceHref,
 };
 
 const NOUNS: Record<EntityKind, string> = {
