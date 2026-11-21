@@ -75,6 +75,8 @@ test('a tall dialog fits a short window and scrolls inside', async ({ page }) =>
   expect(box.y).toBeGreaterThanOrEqual(0);
   expect(box.y + box.height).toBeLessThanOrEqual(460);
   await expect(dialog.getByRole('button', { name: 'Close' })).toBeInViewport();
+  // Measure once the node detail has loaded, not the loading placeholder.
+  await expect(dialog.getByRole('heading', { name: /^Instances/ })).toBeVisible();
   const body = dialog.locator('[data-modal-body]');
-  expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect.poll(() => body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
 });

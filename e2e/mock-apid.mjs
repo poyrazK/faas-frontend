@@ -531,6 +531,7 @@ function route(method, path, query, body) {
       return { status: 200, body: { window_days: 30, items: [
         { kind: 'deploy_failing', total: 12, open: 3, contacted: 5, false_positive: 1, other_dismissed: 2, resolved_on_own: 1, false_positive_percent: 12, median_act_seconds: 5400 },
         { kind: 'app_oom', total: 4, open: 4, contacted: 0, false_positive: 0, other_dismissed: 0, resolved_on_own: 0, false_positive_percent: -1 },
+        { kind: 'crons_failing', total: 3, open: 0, contacted: 0, false_positive: 0, other_dismissed: 0, resolved_on_own: 1, no_outcome: 2, false_positive_percent: -1 },
       ] } };
     case /^GET \/v1\/admin\/obs\/attention\/\d+\/contact-draft$/.test(key): {
       const sig = state.signals.find((x) => String(x.id) === path.split('/')[5]);
@@ -600,10 +601,14 @@ function route(method, path, query, body) {
     case /^GET \/v1\/admin\/obs\/nodes\/[^/]+\/detail$/.test(key): {
       const name = path.split('/')[5];
       return { status: 200, body: { node: { id: 'n1', name, active: name !== 'node-c', vpcpus: 16, mem_mb: 65536, max_concurrency: 200, admission_ceiling_mb: 55705, instances_live: 2, instances_running: 2, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 512, admission_margin_mb: 55193, created_at: ago(1000) },
-        apps: [{ id: 'app-1', slug: 'checkout-api', account_id: ACCOUNT, status: 'active', instances_live: 2, instances_running: 2, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 512, last_request_at: ago(1) }],
+        apps: [
+          { id: 'app-1', slug: 'checkout-api', account_id: ACCOUNT, status: 'active', instances_live: 2, instances_running: 2, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 512, last_request_at: ago(1) },
+          { id: 'app-2', slug: 'billing-cron', account_id: ACCOUNT, status: 'active', instances_live: 1, instances_running: 0, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 256, last_request_at: ago(60) },
+          { id: 'app-3', slug: 'parked-site', account_id: ACCOUNT, status: 'active', instances_live: 0, instances_running: 0, instances_waking: 0, instances_cold_booting: 0, ram_used_mb: 0, last_request_at: '0001-01-01T00:00:00Z' },
+        ],
         instances: [
           { id: 'c0ffee00-0000-4000-8000-000000000001', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, deployment_id: 'dep-1', state: 'running', ram_mb: 256, started_at: ago(30), last_request_at: ago(1) },
-          { id: 'c0ffee00-0000-4000-8000-000000000002', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, deployment_id: 'dep-1', state: 'running', ram_mb: 256, started_at: ago(20), last_request_at: ago(9) },
+          { id: 'c0ffee00-0000-4000-8000-000000000002', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, deployment_id: 'dep-1', state: 'running', ram_mb: 256, started_at: ago(20), last_request_at: '0001-01-01T00:00:00Z' },
           { id: 'c0ffee00-0000-4000-8000-000000000003', app_id: 'app-2', app_slug: 'billing-cron', account_id: ACCOUNT, deployment_id: 'dep-2', state: 'frozen', ram_mb: 256, started_at: ago(90), last_request_at: ago(60) },
         ],
         drain: { total_instances: 3, live_instances: 2, running_instances: 2, waking_instances: 0, cold_booting_instances: 0, drain_safe: false, observed_at: now() } } };

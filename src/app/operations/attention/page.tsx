@@ -119,6 +119,8 @@ export default function AttentionPage() {
 /* What support did about each kind: the evidence for changing a threshold. */
 function OutcomeSummary({ state }: { state: { data: ObsAttentionSummaryResponse | null; error: Error | null; loading: boolean } }) {
   const days = state.data?.window_days ?? 30;
+  // Signals closed before outcomes existed get their own column, only when there are any.
+  const noOutcome = (state.data?.items ?? []).some((k) => (k.no_outcome ?? 0) > 0);
   return (
     <SectionCard title={`Outcomes, last ${days} days`} className="mt-6">
       {state.error && !state.data ? (
@@ -141,6 +143,7 @@ function OutcomeSummary({ state }: { state: { data: ObsAttentionSummaryResponse 
                 <th className="px-4 py-2">False positive</th>
                 <th className="px-4 py-2">Other dismissals</th>
                 <th className="px-4 py-2">Resolved on own</th>
+                {noOutcome && <th className="px-4 py-2">No outcome recorded</th>}
                 <th className="px-4 py-2">Median time to act</th>
               </tr>
             </thead>
@@ -157,6 +160,7 @@ function OutcomeSummary({ state }: { state: { data: ObsAttentionSummaryResponse 
                   </td>
                   <td className="px-4 py-2 font-mono">{k.other_dismissed}</td>
                   <td className="px-4 py-2 font-mono">{k.resolved_on_own}</td>
+                  {noOutcome && <td className="px-4 py-2 font-mono">{k.no_outcome ?? 0}</td>}
                   <td className="px-4 py-2">{formatSeconds(k.median_act_seconds)}</td>
                 </tr>
               ))}

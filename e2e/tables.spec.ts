@@ -69,3 +69,14 @@ test('a node shows the instances running on it, and every VM it holds on request
   await expect(table.getByRole('row')).toHaveCount(4);
   await expect(table.getByText('frozen')).toBeVisible();
 });
+
+test('a node lists apps with a VM first and never shows a zero date', async ({ page }) => {
+  await page.goto('/nodes?node=node-a');
+  const dialog = page.getByRole('dialog', { name: 'Node node-a' });
+  const apps = dialog.locator('section').filter({ has: page.getByRole('heading', { name: /^Apps/ }) });
+  await expect(apps.getByRole('heading', { name: 'Apps · 2 with a VM of 3 placed' })).toBeVisible();
+  await expect(apps.getByText('parked-site')).toHaveCount(0);
+  await apps.getByRole('button', { name: 'Show all 3 placed apps' }).click();
+  await expect(apps.getByText('parked-site')).toBeVisible();
+  await expect(dialog.getByText('1/1/1')).toHaveCount(0);
+});
