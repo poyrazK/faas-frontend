@@ -145,6 +145,7 @@ export const ATTENTION_KINDS = [
   'app_oom',
   'boot_failing',
   'jobs_failing',
+  'crons_failing',
   'domain_stuck',
   'refused_burst',
   'limit_pressure',
@@ -156,6 +157,7 @@ export const ATTENTION_KIND_LABELS: Record<string, string> = {
   app_oom: 'Out of memory',
   boot_failing: 'Fails to boot',
   jobs_failing: 'Scheduled job failing',
+  crons_failing: 'Cron keeps failing',
   domain_stuck: 'Domain not serving',
   refused_burst: 'Burst of refused requests',
   limit_pressure: 'Keeps hitting a plan limit',
@@ -163,7 +165,7 @@ export const ATTENTION_KIND_LABELS: Record<string, string> = {
 };
 
 /** Kinds the customer also sees on their account health page (apid ADR-20261114190002). */
-export const CUSTOMER_VISIBLE_KINDS: readonly string[] = ['deploy_failing', 'app_oom', 'jobs_failing', 'limit_pressure'];
+export const CUSTOMER_VISIBLE_KINDS: readonly string[] = ['deploy_failing', 'app_oom', 'jobs_failing', 'crons_failing', 'limit_pressure'];
 
 /** apid's AttentionListMax. */
 export const ATTENTION_LIST_MAX = 200;
@@ -246,6 +248,8 @@ export interface ObsAttentionKindSummary {
   false_positive: number;
   other_dismissed: number;
   resolved_on_own: number;
+  /** Closed with no recorded outcome (before outcomes existed); the counts sum to total. */
+  no_outcome?: number;
   /** -1 when nobody acted on any signal of this kind. */
   false_positive_percent: number;
   median_act_seconds?: number;

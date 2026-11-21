@@ -45,6 +45,9 @@ test('stuck customers lists open signals and filters by state', async ({ page })
 test('operators dismiss a signal with an outcome and see outcome rates', async ({ page }) => {
   await page.goto('/attention');
   await expect(page.getByText('Outcomes, last 30 days')).toBeVisible();
+  const cron = page.getByRole('row').filter({ hasText: 'Cron keeps failing' });
+  await expect(page.getByRole('columnheader', { name: 'No outcome recorded' })).toBeVisible();
+  await expect(cron.getByRole('cell').nth(7)).toHaveText('2');
   await expect(page.getByRole('row').filter({ hasText: 'Deploys keep failing' }).filter({ hasText: '12%' })).toContainText('1 h 30 min');
 
   const row = page.getByRole('row').filter({ hasText: 'billing-api' });

@@ -24,6 +24,7 @@ import {
 import { EnrollNodeDialog } from './EnrollNodeDialog';
 import { ReleaseConvergence } from './ReleaseConvergence';
 import { NodeInstances } from './NodeInstances';
+import { NodeApps } from './NodeApps';
 import { formatMegabytes, isRealTimestamp, REASON_SUGGESTIONS, WAKE_SLO_P50_MS } from '@/lib/operator';
 import { SnapshotFreshness } from '@/components/ui/SnapshotFreshness';
 import { PageHeader } from '@/components/ui/bits';
@@ -407,47 +408,14 @@ function ComputeNodes() {
 
             <EnrollmentSection enrollment={nodeEnrollment} />
 
-            <section>
-              <h4 className="mb-2 font-semibold text-[var(--color-ink-soft)]">Apps ({nodeDetail.apps.length})</h4>
-              {nodeDetail.apps.length === 0 ? (
-                <div className="text-[var(--color-ink-muted)]">No apps are placed on this node.</div>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border border-[var(--color-line)]">
-                  <table className="dtable text-xs">
-                    <thead>
-                      <tr>
-                        <th>App</th>
-                        <th>Account</th>
-                        <th>Instances</th>
-                        <th>RAM</th>
-                        <th>Last request</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {nodeDetail.apps.map((app) => (
-                        <tr key={app.id}>
-                          <td className="cell-primary">{app.slug}</td>
-                          <td>
-                            <EntityId id={app.account_id} kind="account" />
-                          </td>
-                          <td>
-                            {app.instances_live} live · {app.instances_running} running · {app.instances_cold_booting} cold
-                          </td>
-                          <td className="font-mono">{formatMegabytes(app.ram_used_mb)}</td>
-                          <td>{app.last_request_at ? relativeTime(app.last_request_at) : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
 
             <NodeInstances
               instances={nodeDetail.instances}
               nodeName={detailNode}
               onChanged={() => detailNode && void loadDetail(detailNode)}
             />
+
+            <NodeApps apps={nodeDetail.apps} />
           </div>
         )}
       </Modal>

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import type { ObsInstanceRow } from '@/lib/api';
-import { formatMegabytes } from '@/lib/operator';
+import { formatMegabytes, isRealTimestamp } from '@/lib/operator';
 import { relativeTime } from '@/lib/format';
 import { FilterSelect } from '@/components/ui/bits';
 import { EntityId } from '@/components/operator/EntityId';
@@ -17,7 +17,7 @@ export type InstanceView = 'running' | 'all';
 /** Instances for the view, most recent request first (never-used last). */
 export function visibleInstances(instances: ObsInstanceRow[], view: InstanceView): ObsInstanceRow[] {
   const rows = view === 'running' ? instances.filter((i) => i.state === 'running') : [...instances];
-  const at = (i: ObsInstanceRow) => (i.last_request_at ? Date.parse(i.last_request_at) || 0 : 0);
+  const at = (i: ObsInstanceRow) => (isRealTimestamp(i.last_request_at) ? Date.parse(i.last_request_at) : 0);
   return rows.sort((a, b) => at(b) - at(a));
 }
 
@@ -78,7 +78,7 @@ export function NodeInstances({
                     <span className={`badge ${instance.state === 'running' ? 'badge-success' : 'badge-neutral'}`}>{instance.state}</span>
                   </td>
                   <td className="font-mono">{formatMegabytes(instance.ram_mb)}</td>
-                  <td>{instance.last_request_at ? relativeTime(instance.last_request_at) : '—'}</td>
+                  <td>{isRealTimestamp(instance.last_request_at) ? relativeTime(instance.last_request_at) : '—'}</td>
                   <td>
                     <InstanceActions instance={{ ...instance, node_name: instance.node_name || nodeName || undefined }} onDone={onChanged} />
                   </td>
