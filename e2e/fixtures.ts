@@ -72,3 +72,5 @@ export async function openWorkload(page: Page) {
   await page.getByRole('button', { name: 'Workload', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: 'Workload · checkout-api' })).toBeVisible();
 }
+
+export const INSTANCE_RUNNING = 'c0ffee00-0000-4000-8000-000000000001';

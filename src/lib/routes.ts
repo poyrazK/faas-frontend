@@ -32,6 +32,7 @@ export const OPS_ROUTES: readonly OpsRoute[] = [
   { slug: 'deployments', label: 'Deployments', icon: 'deployments', group: 'On call' },
   { slug: 'jobs', label: 'Job runs', icon: 'queues', group: 'On call' },
   { slug: 'nodes', label: 'Compute nodes', icon: 'storage', group: 'On call' },
+  { slug: 'instances', label: 'Running instances', icon: 'workers', group: 'On call' },
   { slug: 'controls', label: 'Emergency controls', icon: 'bolt', group: 'On call' },
   { slug: 'tenants', label: 'Tenants', icon: 'user', group: 'Customers' },
   { slug: 'support', label: 'Support inbox', icon: 'help', group: 'Customers' },
@@ -119,4 +120,7 @@ export const wakeHref = (wakeId: string) => withQuery('/lookup', { wake: wakeId.
 export const appDeploymentsHref = (appId: string) => withQuery('/deployments', { app: appId.trim(), status: 'all' });
 
 /** One support ticket in the inbox (/support/<id>). */
+/** One instance: its wake, the app's invocations it ran, and actions (/instances/<id>). */
+export const instanceHref = (instanceId: string) => `/instances/${encodeURIComponent(instanceId.trim())}`;
+
 export const supportTicketHref = (ticketId: string) => `/support/${encodeURIComponent(ticketId.trim())}`;
