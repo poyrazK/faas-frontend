@@ -622,6 +622,42 @@ function route(method, path, query, body) {
         { at: new Date(Date.now() - 30 * 60_000 + 40).toISOString(), kind: 'wake.snapshot_restore_started' },
         { at: new Date(Date.now() - 30 * 60_000 + 212).toISOString(), kind: 'wake.ready' },
       ] } };
+    /* ── Fleet wake latency (ADR-20261121200409) ── */
+    case key === 'GET /v1/admin/obs/wake-latency': {
+      const window = query.get('window') || '1h';
+      if (!/^\d+[mh]$/.test(window)) return problem(400, 'validation', 'Bad window', 'window must be a duration from 1m to 24h, such as 1h');
+      const node = query.get('node') || '';
+      if (node && !['node-a', 'node-b', 'node-c'].includes(node)) return problem(404, 'not_found', 'Node not found', 'no compute node has this name');
+      const appOnly = query.get('app_id') || '';
+      const slow = [
+        { wake_id: 'wake-0009-blog-cold', instance_id: 'i-9', app_id: 'app-9', app_slug: 'blog', account_id: ACCOUNT2, node_id: 'n2', node_name: 'node-b', method: 'cold_boot', tier: 'cold_boot_fallback', cold_reason: 'no_snapshot', duration_ms: 2410, completed_at: ago(12), slow_phase: 'cold_boot/wait_ready', slow_phase_ms: 2100 },
+        { wake_id: 'wake-0001-checkout', instance_id: 'i-1', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, node_id: 'n1', node_name: 'node-a', method: 'restore', tier: 'warm', duration_ms: 512, completed_at: ago(30), slow_phase: 'restore/load_snapshot', slow_phase_ms: 330 },
+        { wake_id: 'wake-0002-checkout', instance_id: 'i-2', app_id: 'app-1', app_slug: 'checkout-api', account_id: ACCOUNT, node_id: 'n1', node_name: 'node-a', method: 'restore', tier: 'warm', duration_ms: 140, completed_at: ago(40) },
+      ].filter((w) => (!node || w.node_name === node) && (!appOnly || w.app_id === appOnly));
+      const restores = slow.filter((w) => w.method === 'restore');
+      const colds = slow.filter((w) => w.method === 'cold_boot');
+      return { status: 200, body: {
+        window, since: ago(60), as_of: ago(0), target_ms: 350,
+        totals: { wakes: slow.length, restores: restores.length, cold_boots: colds.length, thaws: 0, failures: node === 'node-b' || !node ? 1 : 0, fallbacks: 0, restores_over_target: restores.filter((w) => w.duration_ms > 350).length, platform_refreshes: 2 },
+        methods: [
+          ...(restores.length ? [{ method: 'restore', count: restores.length, p50_ms: 140, p95_ms: 512, p99_ms: 512, max_ms: 512, over_target: 1 }] : []),
+          ...(colds.length ? [{ method: 'cold_boot', count: colds.length, p50_ms: 2410, p95_ms: 2410, p99_ms: 2410, max_ms: 2410, over_target: 0 }] : []),
+        ],
+        nodes: [
+          ...(restores.length ? [{ node_id: 'n1', node_name: 'node-a', restores: restores.length, cold_boots: 0, thaws: 0, failures: 0, fallbacks: 0, restore_p50_ms: 140, restore_p95_ms: 512, restores_over_target: 1 }] : []),
+          ...(colds.length ? [{ node_id: 'n2', node_name: 'node-b', restores: 0, cold_boots: colds.length, thaws: 0, failures: 1, fallbacks: 0, restore_p50_ms: 0, restore_p95_ms: 0, restores_over_target: 0 }] : []),
+        ],
+        phases: slow.length ? [
+          { method: 'cold_boot', phase: 'wait_ready', samples: 1, p50_ms: 2100, p95_ms: 2100, max_ms: 2100 },
+          { method: 'restore', phase: 'load_snapshot', samples: 2, p50_ms: 80, p95_ms: 330, max_ms: 330 },
+          { method: 'schedd', phase: 'post_rpc_publish', samples: 3, p50_ms: 6, p95_ms: 14, max_ms: 14 },
+        ] : [],
+        cold_reasons: colds.length ? [{ reason: 'no_snapshot', count: colds.length }] : [],
+        failure_reasons: node === 'node-a' || appOnly ? [] : [{ reason: 'vmm_start_failed', count: 1 }],
+        slowest: slow,
+        cold_boot_apps: colds.length ? [{ app_id: 'app-9', app_slug: 'blog', account_id: ACCOUNT2, wakes: 1, restores: 0, cold_boots: 1, fallbacks: 0, top_cold_reason: 'no_snapshot', p95_ms: 2410 }] : [],
+      } };
+    }
     case key === 'GET /v1/admin/obs/nodes/wake-latency':
       return { status: 200, body: { window: '5m', as_of: now(), prometheus_available: true, fleet_p95_ms: 410, quantiles: [{ node_id: 'n1', node_name: 'node-a', p50_ms: 212, p95_ms: 410, p99_ms: 690, sample_count: 1240 }] } };
     case /^GET \/v1\/admin\/obs\/nodes\/[^/]+\/detail$/.test(key): {
