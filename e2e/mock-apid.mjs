@@ -622,6 +622,27 @@ function route(method, path, query, body) {
         { at: new Date(Date.now() - 30 * 60_000 + 40).toISOString(), kind: 'wake.snapshot_restore_started' },
         { at: new Date(Date.now() - 30 * 60_000 + 212).toISOString(), kind: 'wake.ready' },
       ] } };
+    /* ── Fleet snapshot health (ADR-20261122135018) ── */
+    case key === 'GET /v1/admin/obs/snapshot-health': {
+      const MB = 1024 * 1024;
+      const snap = (id, slug, account, snapMB, layerMB, extra = {}) => ({ id, deployment_id: `dep-${id}`, deployment_status: 'live', app_id: `app-${id}`, app_slug: slug, account_id: account,
+        tier: 'init', fc_version: '1.12.0', cpu_template: 'T2CL', cpu_model: 'icelake', stale: false, delete_pending: false,
+        snapshot_bytes: snapMB * MB, layer_bytes: layerMB * MB, footprint_bytes: (snapMB + layerMB) * MB, created_at: ago(60 * 5), ...extra });
+      return { status: 200, body: {
+        as_of: ago(0), target_mb: 130, warn_mb: 160, page_mb: 200, truncated: false,
+        totals: { live: 3, stale: 1, delete_pending: 0, live_bytes: 420 * MB, avg_bytes: 140 * MB, p95_bytes: 230 * MB, over_warn: 1, unsnapshotted: 2, not_cold_bootable: 1 },
+        tiers: [{ key: 'init', live: 2, stale: 1, avg_bytes: 160 * MB }, { key: 'warm', live: 1, stale: 0, avg_bytes: 100 * MB }],
+        fc_versions: [{ key: '1.12.0', live: 3, stale: 0, avg_bytes: 140 * MB }, { key: '1.11.0', live: 0, stale: 1, avg_bytes: 0 }],
+        cpu_templates: [{ key: 'T2CL/icelake', live: 3, stale: 1, avg_bytes: 140 * MB }],
+        largest: [snap('s1', 'checkout-api', ACCOUNT, 200, 30), snap('s2', 'blog', ACCOUNT2, 90, 0, { tier: 'warm' }), snap('s3', 'docs', ACCOUNT, 80, 20)],
+        recently_stale: [snap('s4', 'legacy-api', ACCOUNT2, 120, 0, { stale: true, fc_version: '1.11.0', stale_at: ago(90) })],
+        unsnapshotted: [
+          { deployment_id: 'dep-broken', app_id: 'app-broken', app_slug: 'broken-app', account_id: ACCOUNT2, cold_bootable: false, created_at: ago(30) },
+          { deployment_id: 'dep-legacy', app_id: 'app-s4', app_slug: 'legacy-api', account_id: ACCOUNT2, cold_bootable: true, created_at: ago(600), last_stale_at: ago(90) },
+        ],
+        unsnapshotted_truncated: false,
+      } };
+    }
     /* ── Fleet wake latency (ADR-20261121200409) ── */
     case key === 'GET /v1/admin/obs/wake-latency': {
       const window = query.get('window') || '1h';
