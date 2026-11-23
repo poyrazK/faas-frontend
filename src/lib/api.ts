@@ -221,6 +221,33 @@ export function needsEnrollment(err: unknown): boolean {
 }
 
 /**
+ * /v1/account/mfa/verify answers 409 mfa_required ("MFA setup incomplete")
+ * when the account has no confirmed authenticator. A new operator's session is
+ * mfa_pending, so its first gate is the generic mfa_required that offers a code
+ * prompt; this is how that prompt learns it has to switch to enrollment.
+ */
+export function isMfaSetupIncomplete(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 409 && err.code === 'mfa_required';
+}
+
+/**
+ * The words for a refused second-factor submission. /confirm checks the current
+ * password before the code, so its 401 can be either; /verify says when a right
+ * code was already spent.
+ */
+export function mfaFailureMessage(err: unknown): string {
+  if (!(err instanceof ApiError)) return (err as Error)?.message || 'Please try again.';
+  if (err.code === 'invalid_credentials') return 'Your password was not accepted. Type your current password and try again.';
+  if (err.code === 'mfa_invalid_code') {
+    return /already used/i.test(err.problem?.detail ?? '')
+      ? 'That code was already used. Wait for your authenticator app to show the next code.'
+      : 'That code did not match. Enter the current code from your authenticator app.';
+  }
+  if (err.status === 401) return 'That was not accepted. Check what you entered and try again.';
+  return err.message;
+}
+
+/**
  * Called when an authenticated request comes back 401 mid-session (expired or
  * revoked cookie). The shell signs the operator out locally and sends them to
  * the login page with a way back.
@@ -233,6 +260,9 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 
 /** Paths whose 401 is an expected answer, not an expired session. */
 const SESSION_PROBES = new Set(['/v1/account', '/v1/auth/logout', '/v1/auth/csrf']);
+
+/** 401s that refuse a submitted factor (password, TOTP or recovery code); the session itself is still live. */
+const FACTOR_REFUSALS = new Set(['invalid_credentials', 'mfa_invalid_code']);
 
 /** A request that has not answered by then is abandoned, so one hung call cannot freeze a page's polling. */
 export const REQUEST_TIMEOUT_MS = 20_000;
@@ -308,7 +338,7 @@ export async function request<T>(
       if (!res.ok) error = new ApiError(await readProblem(res), res.status, `Request failed (HTTP ${res.status})`);
     }
     if (!res.ok) {
-      if (error.status === 401 && !SESSION_PROBES.has(path.split('?')[0])) unauthorizedHandler?.();
+      if (error.status === 401 && !SESSION_PROBES.has(path.split('?')[0]) && !FACTOR_REFUSALS.has(error.code)) unauthorizedHandler?.();
       throw error;
     }
   }
@@ -493,16 +523,19 @@ export const enrollMfa = () =>
   request<MfaEnrollment>('/v1/account/mfa/enroll', { method: 'POST', body: JSON.stringify({}) });
 
 /**
- * POST /v1/account/mfa/confirm — proves the new authenticator works and
- * re-issues the session cookie as MFA-complete with a fresh step-up.
+ * POST /v1/account/mfa/confirm — proves the new authenticator works (and the
+ * current password, for accounts that have one) and re-issues the session cookie as MFA-complete with a fresh step-up.
  * @goBody api.MFAConfirmRequest
  */
-export async function confirmMfa(totp: string): Promise<void> {
+export async function confirmMfa(totp: string, currentPassword?: string): Promise<void> {
   const csrf_token = await issueCSRF('mfa_confirm');
+  // Accounts with a password must prove it to confirm (api.MFAConfirmRequest);
+  // OAuth-only accounts send none.
+  const current_password = currentPassword || undefined;
   await request<void>('/v1/account/mfa/confirm', {
     method: 'POST',
     headers: { 'Idempotency-Key': newIdempotencyKey() },
-    body: JSON.stringify({ totp, csrf_token }),
+    body: JSON.stringify({ totp, current_password, csrf_token }),
   }, 'none');
 }
 

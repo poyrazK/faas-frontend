@@ -1,4 +1,4 @@
-import { TOTP, expect, openWorkload, test } from './fixtures';
+import { PASSWORD, TOTP, expect, openWorkload, test } from './fixtures';
 
 test('an expired session returns to sign-in, keeping the page to come back to', async ({ page, mock }) => {
   await page.goto('/overview');
@@ -24,6 +24,33 @@ test('an operator without an authenticator enrolls one in place, and the action 
   await expect(enroll.getByRole('alert')).toHaveText('Save your recovery codes first; they are shown only once.');
 
   await enroll.getByLabel('I have stored these somewhere safe').check();
+  await enroll.getByRole('button', { name: 'Confirm and continue' }).click();
+  await expect(enroll.getByRole('alert')).toHaveText(/password was not accepted/);
+
+  await enroll.getByLabel('Current password').fill(PASSWORD);
+  await enroll.getByRole('button', { name: 'Confirm and continue' }).click();
+  await expect(enroll).toBeHidden();
+  await expect(page.getByText(/Force park queued for c0ffee00/)).toBeVisible();
+});
+
+test('a freshly signed-in operator with no authenticator is moved from the code prompt to setup', async ({ page, mock }) => {
+  await mock.set({ enrolled: false, pendingSession: true });
+  await openWorkload(page);
+  await page.getByRole('row').filter({ hasText: 'node-a' }).filter({ hasText: 'running' }).getByRole('button', { name: 'Park…' }).click();
+  const action = page.getByRole('dialog', { name: 'Force park: checkout-api' });
+  await action.getByRole('button', { name: 'stuck_instance' }).click();
+  await action.getByRole('button', { name: 'Force park', exact: true }).click();
+
+  // The generic mfa_required asks for a code; apid says setup is unfinished.
+  const prompt = page.getByRole('dialog', { name: "Confirm it's you" });
+  await prompt.getByLabel('Authenticator code').fill(TOTP);
+  await prompt.getByRole('button', { name: 'Verify' }).click();
+
+  const enroll = page.getByRole('dialog', { name: 'Set up your authenticator' });
+  await expect(enroll.getByText('JBSWY3DPEHPK3PXP')).toBeVisible();
+  await enroll.getByLabel('I have stored these somewhere safe').check();
+  await enroll.getByLabel('Current password').fill(PASSWORD);
+  await enroll.getByLabel('First code from the app').fill(TOTP);
   await enroll.getByRole('button', { name: 'Confirm and continue' }).click();
   await expect(enroll).toBeHidden();
   await expect(page.getByText(/Force park queued for c0ffee00/)).toBeVisible();

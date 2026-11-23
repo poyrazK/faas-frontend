@@ -7,6 +7,8 @@ import {
   getAccount,
   getObsOverview,
   logout,
+  isMfaSetupIncomplete,
+  mfaFailureMessage,
   needsEnrollment,
   probeOperatorAccess,
   REQUEST_TIMEOUT_MS,
@@ -14,6 +16,7 @@ import {
   setStepUpHandler,
   setUnauthorizedHandler,
   updateOperatorRuntimeConfig,
+  verifyMfa,
 } from './api';
 
 interface Call {
@@ -182,7 +185,33 @@ describe('on-call resilience', () => {
     await confirmMfa('123456');
     expect(calls[1].url).toBe('/v1/auth/csrf?action=mfa_confirm');
     expect(calls[2]).toMatchObject({ url: '/v1/account/mfa/confirm', method: 'POST', body: { totp: '123456', csrf_token: 'tok' } });
+    expect(calls[2].body).not.toHaveProperty('current_password');
     expect(calls[2].headers['Idempotency-Key']).toMatch(/.+/);
+
+    // Accounts with a password must prove it to confirm.
+    responses.push(json(200, { csrf_token: 'tok' }), json(200, {}));
+    await confirmMfa('654321', 'hunter2');
+    expect(calls[4]).toMatchObject({ url: '/v1/account/mfa/confirm', body: { totp: '654321', current_password: 'hunter2', csrf_token: 'tok' } });
+  });
+
+  it('does not treat a refused password or code as an ended session', async () => {
+    const expired = vi.fn();
+    setUnauthorizedHandler(expired);
+    responses.push(json(200, { csrf_token: 'tok' }), json(401, { title: 'Invalid credentials', status: 401, code: 'invalid_credentials' }));
+    await expect(confirmMfa('123456')).rejects.toMatchObject({ status: 401, code: 'invalid_credentials' });
+    responses.push(json(401, { title: 'Invalid code', status: 401, code: 'mfa_invalid_code' }));
+    await expect(verifyMfa('123456')).rejects.toMatchObject({ status: 401 });
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it('tells an unconfirmed authenticator and each refusal apart', () => {
+    const problem = (status: number, code: string, detail: string) => new ApiError({ title: 't', status, code, detail }, status, '');
+    expect(isMfaSetupIncomplete(problem(409, 'mfa_required', 'finish /v1/account/mfa/confirm before verifying or using recovery codes'))).toBe(true);
+    expect(isMfaSetupIncomplete(problem(403, 'mfa_required', 'complete /v1/account/mfa/enroll or /v1/account/mfa/verify'))).toBe(false);
+    expect(mfaFailureMessage(problem(401, 'invalid_credentials', 'invalid email or password'))).toMatch(/password was not accepted/);
+    expect(mfaFailureMessage(problem(401, 'mfa_invalid_code', 'the TOTP code did not match'))).toMatch(/did not match/);
+    expect(mfaFailureMessage(problem(401, 'mfa_invalid_code', 'this code was already used; wait for your authenticator app to show the next code'))).toMatch(/already used/);
+    expect(mfaFailureMessage(new ApiError(null, 401, 'Request failed (HTTP 401)'))).toMatch(/not accepted/);
   });
 });
 

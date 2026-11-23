@@ -21,6 +21,7 @@ import http from 'node:http';
 const PORT = Number(process.env.MOCK_APID_PORT || 3199);
 const LOG = process.env.MOCK_APID_LOG === '1';
 const TOTP = '123456';
+const PASSWORD = 'correct horse';
 const CSRF = 'csrf-mock';
 const ACCOUNT = '11111111-2222-4333-8444-555555555555';
 const ACCOUNT2 = '66666666-7777-4888-8999-aaaaaaaaaaaa';
@@ -46,6 +47,7 @@ const problem = (status, code, title, detail) => ({ status, body: { type: '', ti
 function freshState() {
   return {
     enrolled: true,
+    pendingSession: false,
     expired: false,
     steppedUpAt: 0,
     configVersion: 3,
@@ -359,7 +361,7 @@ function route(method, path, query, body) {
     return { status: 200, body: { ok: true } };
   }
   if (key === 'POST /__mock/state') {
-    for (const name of ['enrolled', 'expired', 'oidc', 'hostingEnabled', 'analytics', 'retention']) if (name in (body || {})) state[name] = Boolean(body[name]);
+    for (const name of ['enrolled', 'pendingSession', 'expired', 'oidc', 'hostingEnabled', 'analytics', 'retention']) if (name in (body || {})) state[name] = Boolean(body[name]);
     // Another operator changed the site, or its retention policy, after the page loaded.
     if ('siteRevision' in (body || {})) state.hosting.revision = Number(body.siteRevision);
     if ('retentionRevision' in (body || {})) state.hosting.retention.revision = Number(body.retentionRevision);
@@ -372,13 +374,21 @@ function route(method, path, query, body) {
   if (!state.hostingEnabled && /^\/v1\/internal\/hosting(\/|$)/.test(path)) return problem(404, 'not_found', 'Not found', 'no such API route');
   if (state.expired) return problem(401, 'session_expired', 'Session expired', 'the session is no longer valid');
   if (adminWrite && !state.enrolled) {
+    // A fresh sign-in is mfa_pending: RequireMFA answers before the operator
+    // enrollment gate and does not say "must enroll".
+    if (state.pendingSession) return problem(403, 'mfa_required', 'MFA required', 'complete /v1/account/mfa/enroll or /v1/account/mfa/verify to access this route');
     return problem(403, 'mfa_required', 'MFA required', 'platform operators must enroll an authenticator: complete /v1/account/mfa/enroll and /v1/account/mfa/confirm');
+  }
+  if (key === 'POST /v1/account/mfa/verify' && !state.enrolled) {
+    return problem(409, 'mfa_required', 'MFA setup incomplete', 'finish /v1/account/mfa/confirm before verifying or using recovery codes');
   }
   if (key === 'POST /v1/account/mfa/enroll') {
     if (state.enrolled) return problem(409, 'conflict', 'Already enrolled', 'an authenticator is already enrolled');
     return { status: 200, body: { otpauth_url: 'otpauth://totp/Gregale:operator@ops.test?secret=JBSWY3DPEHPK3PXP', secret: 'JBSWY3DPEHPK3PXP', qr_code_png_base64: PNG_1PX, recovery_codes: ['7KQ2-M9XP', 'R4TD-2WLN', 'H8VC-6QJZ', 'P3NB-K7FY'] } };
   }
   if (key === 'POST /v1/account/mfa/confirm') {
+    // apid checks the current password before the code (confirmMFAFirstFactor).
+    if (body?.current_password !== PASSWORD) return problem(401, 'invalid_credentials', 'Invalid credentials', 'invalid email or password');
     if (body?.totp !== TOTP || body?.csrf_token !== CSRF) return problem(401, 'mfa_invalid_code', 'Invalid code', 'the TOTP code did not match');
     state.enrolled = true;
     state.steppedUpAt = Date.now();

@@ -8,6 +8,7 @@ export const DEPLOYMENT = '7a1b2c3d-0000-4000-8000-000000000001';
 export const TICKET_OPEN = 'a1000000-0000-4000-8000-000000000001';
 export const RELEASE_NEW = 'a3f9c2d1e8b74c6f9d0e1a2b3c4d5e6f7a8b9c0d';
 export const TOTP = '123456';
+export const PASSWORD = 'correct horse';
 export const HOSTING_SITE = 'd0000000-0000-4000-8000-000000000001';
 export const HOSTING_RUN_EXPIRED = 'b2b00000-0000-4000-8000-000000000002';
 export const HOSTING_RUN_OK = 'b1a00000-0000-4000-8000-000000000001';
@@ -22,13 +23,14 @@ export interface MockRequest {
 
 interface Mock {
   /**
-   * Flips mock switches: {"enrolled": false} (no authenticator), {"expired": true} (session gone), {"oidc": false},
+   * Flips mock switches: {"enrolled": false} (no authenticator), {"pendingSession": true} (gates answer like a fresh mfa_pending sign-in), {"expired": true} (session gone), {"oidc": false},
    * {"hostingEnabled": false} (apid hides every hosting route), {"analytics": false} or {"retention": false} (hosting features off),
    * {"siteRevision": 9} or {"retentionRevision": 4}
    * (someone else changed the site or its retention policy).
    */
   set: (switches: {
     enrolled?: boolean;
+    pendingSession?: boolean;
     expired?: boolean;
     oidc?: boolean;
     hostingEnabled?: boolean;

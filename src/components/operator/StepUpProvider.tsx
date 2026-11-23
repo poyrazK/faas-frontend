@@ -5,6 +5,8 @@ import {
   ApiError,
   confirmMfa,
   enrollMfa,
+  isMfaSetupIncomplete,
+  mfaFailureMessage,
   needsEnrollment,
   recoverMfa,
   setStepUpHandler,
@@ -29,6 +31,7 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>('totp');
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [enrollment, setEnrollment] = useState<MfaEnrollment | null>(null);
@@ -43,10 +46,14 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
       setEnrollment(result);
       setSavedCodes(false);
       setCode('');
+      setPassword('');
       setMode('enroll');
     } catch (err) {
       // 409: an authenticator is already enrolled; a code is what's needed.
-      if (err instanceof ApiError && err.status === 409) setMode('totp');
+      if (err instanceof ApiError && err.status === 409) {
+        setMode('totp');
+        setError('An authenticator is already set up. Enter its current code.');
+      }
       else setError((err as Error).message);
     } finally {
       setBusy(false);
@@ -83,6 +90,7 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
     setOpen(false);
     setBusy(false);
     setCode('');
+    setPassword('');
     setEnrollment(null);
     current?.resolve(ok);
   }, []);
@@ -110,16 +118,17 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       if (mode === 'totp') await verifyMfa(digits);
-      else if (mode === 'enroll') await confirmMfa(digits);
+      else if (mode === 'enroll') await confirmMfa(digits, password);
       else await recoverMfa(code.trim().toUpperCase());
       settle(true);
     } catch (err) {
       setBusy(false);
-      setError(
-        err instanceof ApiError && err.status === 401
-          ? 'That code was not accepted. Wait for the next code and try again.'
-          : (err as Error).message,
-      );
+      // No confirmed authenticator yet: a code cannot pass /verify, so set one up.
+      if (mode !== 'enroll' && isMfaSetupIncomplete(err)) {
+        await startEnrollment();
+        return;
+      }
+      setError(mfaFailureMessage(err));
     }
   };
 
@@ -143,6 +152,22 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
               Operator changes need a fresh second factor (valid for five minutes). Your pending action resumes
               automatically once the code is accepted.
             </p>
+          )}
+
+          {mode === 'enroll' && enrollment && (
+            <label className="block">
+              <span className="label">Current password</span>
+              <input
+                type="password"
+                className="field"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <span className="mt-1 block text-xs text-[var(--color-ink-muted)]">
+                Leave empty only if you sign in without a password.
+              </span>
+            </label>
           )}
 
           {(mode !== 'enroll' || enrollment) && (
