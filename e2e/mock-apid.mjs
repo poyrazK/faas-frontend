@@ -632,6 +632,35 @@ function route(method, path, query, body) {
         { at: new Date(Date.now() - 30 * 60_000 + 40).toISOString(), kind: 'wake.snapshot_restore_started' },
         { at: new Date(Date.now() - 30 * 60_000 + 212).toISOString(), kind: 'wake.ready' },
       ] } };
+    /* ── Build queue (ADR-20261123163340) ── */
+    case key === 'GET /v1/admin/obs/build-queue': {
+      const b = (id, slug, account, kind, status, extra = {}) => ({ id, deployment_id: `dep-${id}`, app_id: `app-${id}`, app_slug: slug, account_id: account,
+        kind, status, source_bytes: 3 * 1024 * 1024, preemptions: 0, coalesced: false, enqueued_at: ago(60 * 20), wait_seconds: 0, duration_seconds: 0, ...extra });
+      return { status: 200, body: {
+        as_of: ago(0), window_seconds: 86400, build_timeout_seconds: 900, wait_warn_seconds: 300,
+        active_truncated: false, finished_truncated: false, slots_state: 'observed',
+        totals: { queued: 3, deferred: 1, held: 1, running: 2, oldest_wait_seconds: 1260, waiting_over_warn: 1, running_over_timeout: 1,
+          finished: 40, succeeded: 34, failed: 5, cancelled: 1, duration_p50_seconds: 95, duration_p95_seconds: 610,
+          wait_p50_seconds: 4, wait_p95_seconds: 140, cache_hits: 20, cache_misses: 15, cache_invalidated: 5, preempted: 2 },
+        kinds: [{ kind: 'railpack', queued: 1, running: 1, finished: 30, failed: 4, duration_p95_seconds: 640 }, { kind: 'dockerfile', queued: 1, running: 1, finished: 10, failed: 1, duration_p95_seconds: 300 }],
+        failures: [{ class: 'oom', count: 3 }, { class: 'timeout', count: 1 }, { class: 'unclassified', count: 1 }],
+        nodes: [
+          { node: 'fsn-2', running_builds: 2, observed: true, conflicting: false, limit: 3, reserved: 1, in_use: 3, active_reserved: 2, opportunistic: 1, active_borrowed: 1 },
+          { node: 'fsn-3', running_builds: 0, observed: true, conflicting: false, limit: 2, reserved: 1, in_use: 0, active_reserved: 0, opportunistic: 0, active_borrowed: 0 },
+          { node: 'fsn-4', running_builds: 0, observed: false, conflicting: true, limit: 0, reserved: 0, in_use: 0, active_reserved: 0, opportunistic: 0, active_borrowed: 0 },
+        ],
+        queued: [b('q1', 'stuck-api', ACCOUNT, 'railpack', 'queued', { wait_seconds: 1260 }), b('q2', 'blog', ACCOUNT2, 'dockerfile', 'queued', { wait_seconds: 30 }), b('q3', 'twin-api', ACCOUNT2, 'railpack', 'queued', { wait_seconds: 900, coalesced: true })],
+        running: [
+          b('r1', 'monorepo', ACCOUNT, 'railpack', 'running', { node: 'fsn-2', started_at: ago(1000), wait_seconds: 12, duration_seconds: 1000, preemptions: 1 }),
+          b('r2', 'docs', ACCOUNT2, 'dockerfile', 'running', { node: 'fsn-2', started_at: ago(60), wait_seconds: 3, duration_seconds: 60 }),
+        ],
+        slowest: [b('f1', 'ml-worker', ACCOUNT, 'railpack', 'failed', { failure_class: 'timeout', cache_status: 'miss', started_at: ago(4000), finished_at: ago(3100), wait_seconds: 5, duration_seconds: 900 })],
+        recent_failures: [
+          b('f2', 'big-node', ACCOUNT2, 'railpack', 'failed', { failure_class: 'oom', started_at: ago(700), finished_at: ago(400), wait_seconds: 2, duration_seconds: 300 }),
+          b('f1', 'ml-worker', ACCOUNT, 'railpack', 'failed', { failure_class: 'timeout', started_at: ago(4000), finished_at: ago(3100), wait_seconds: 5, duration_seconds: 900 }),
+        ],
+      } };
+    }
     /* ── Fleet snapshot health (ADR-20261122135018) ── */
     case key === 'GET /v1/admin/obs/snapshot-health': {
       const MB = 1024 * 1024;
