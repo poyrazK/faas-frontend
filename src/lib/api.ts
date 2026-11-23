@@ -243,6 +243,7 @@ export function mfaFailureMessage(err: unknown): string {
       ? 'That code was already used. Wait for your authenticator app to show the next code.'
       : 'That code did not match. Enter the current code from your authenticator app.';
   }
+  if (err.status === 401) return 'That was not accepted. Check what you entered and try again.';
   return err.message;
 }
 
@@ -259,6 +260,9 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 
 /** Paths whose 401 is an expected answer, not an expired session. */
 const SESSION_PROBES = new Set(['/v1/account', '/v1/auth/logout', '/v1/auth/csrf']);
+
+/** 401s that refuse a submitted factor (password, TOTP or recovery code); the session itself is still live. */
+const FACTOR_REFUSALS = new Set(['invalid_credentials', 'mfa_invalid_code']);
 
 /** A request that has not answered by then is abandoned, so one hung call cannot freeze a page's polling. */
 export const REQUEST_TIMEOUT_MS = 20_000;
@@ -334,7 +338,7 @@ export async function request<T>(
       if (!res.ok) error = new ApiError(await readProblem(res), res.status, `Request failed (HTTP ${res.status})`);
     }
     if (!res.ok) {
-      if (error.status === 401 && !SESSION_PROBES.has(path.split('?')[0])) unauthorizedHandler?.();
+      if (error.status === 401 && !SESSION_PROBES.has(path.split('?')[0]) && !FACTOR_REFUSALS.has(error.code)) unauthorizedHandler?.();
       throw error;
     }
   }

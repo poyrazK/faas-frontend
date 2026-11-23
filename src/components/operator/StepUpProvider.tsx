@@ -50,7 +50,10 @@ export function StepUpProvider({ children }: { children: React.ReactNode }) {
       setMode('enroll');
     } catch (err) {
       // 409: an authenticator is already enrolled; a code is what's needed.
-      if (err instanceof ApiError && err.status === 409) setMode('totp');
+      if (err instanceof ApiError && err.status === 409) {
+        setMode('totp');
+        setError('An authenticator is already set up. Enter its current code.');
+      }
       else setError((err as Error).message);
     } finally {
       setBusy(false);
