@@ -98,7 +98,7 @@ function Report({ r }: { r: ObsBuildQueueReport }) {
         <StatTile
           label="Queued"
           value={t.queued}
-          sub={`oldest ${t.queued ? formatAgeSeconds(t.oldest_wait_seconds) : '—'} · ${t.waiting_over_warn} over ${formatAgeSeconds(r.wait_warn_seconds)}${t.deferred ? ` · ${t.deferred} deferred` : ''}`}
+          sub={`oldest ${t.queued > t.held ? formatAgeSeconds(t.oldest_wait_seconds) : '—'} · ${t.waiting_over_warn} over ${formatAgeSeconds(r.wait_warn_seconds)}${t.held ? ` · ${t.held} held` : ''}${t.deferred ? ` · ${t.deferred} deferred` : ''}`}
         />
         <StatTile label="Running" value={t.running} sub={`${r.nodes.filter((n) => n.running_builds > 0).length} node(s) building`} />
         <StatTile
@@ -214,6 +214,7 @@ function Slots({ r }: { r: ObsBuildQueueReport }) {
                   <td>{n.observed ? n.limit : '—'}</td>
                   <td>
                     {n.observed && n.limit > 0 && n.in_use >= n.limit && <span className="badge badge-warning mr-2">full</span>}
+                    {n.conflicting && <span className="badge badge-danger mr-2">conflict</span>}
                     {slotSummary(n)}
                   </td>
                 </tr>
@@ -258,16 +259,14 @@ function BuildTable({ title, rows, r, empty, mode }: { title: string; rows: ObsB
                       <EntityId id={b.deployment_id} kind="deployment" />
                     )}
                     {b.preemptions > 0 && <span className="badge badge-neutral ml-2">preempted ×{b.preemptions}</span>}
-                    {b.coalesced && <span className="badge badge-neutral ml-2">coalesced</span>}
+                    {b.coalesced && <span className="badge badge-neutral ml-2">{mode === 'queued' ? 'held: identical build' : 'coalesced'}</span>}
                   </td>
                   <td>{b.account_id ? <EntityId id={b.account_id} kind="account" /> : '—'}</td>
                   <td className="font-mono">{b.kind}</td>
                   <td>
-                    {mode === 'queued' && b.not_before && new Date(b.not_before) > new Date(r.as_of) ? (
-                      <span className="badge badge-neutral">deferred {relativeTime(b.not_before)}</span>
-                    ) : (
-                      <span className={`badge badge-${mode === 'queued' ? waitTone(b.wait_seconds, r.wait_warn_seconds) : 'neutral'} font-mono`}>{formatAgeSeconds(b.wait_seconds)}</span>
-                    )}
+                    <span className={`badge badge-${mode === 'queued' && !b.coalesced ? waitTone(b.wait_seconds, r.wait_warn_seconds) : 'neutral'} font-mono`}>
+                      {formatAgeSeconds(b.wait_seconds)}
+                    </span>
                   </td>
                   {mode !== 'queued' && (
                     <td className="font-mono">

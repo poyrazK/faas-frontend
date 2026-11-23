@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildQueueQuery, cacheHitRate, failureLabel, isBuildQueueWindow, slotSummary, waitTone, windowLabel, type ObsBuilderNodeSlots } from './buildQueue';
 
 const node = (o: Partial<ObsBuilderNodeSlots>): ObsBuilderNodeSlots => ({
-  node: 'fsn-2', running_builds: 0, observed: true, limit: 2, reserved: 1, in_use: 0, active_reserved: 0, opportunistic: 0, active_borrowed: 0, ...o,
+  node: 'fsn-2', running_builds: 0, observed: true, conflicting: false, limit: 2, reserved: 1, in_use: 0, active_reserved: 0, opportunistic: 0, active_borrowed: 0, ...o,
 });
 
 describe('build queue helpers', () => {
@@ -31,5 +31,6 @@ describe('build queue helpers', () => {
     expect(slotSummary(node({ active_reserved: 2, opportunistic: 1, active_borrowed: 1 }))).toBe('1/1 reserved · 1 opportunistic · 1 borrowed');
     expect(slotSummary(node({}))).toBe('0/1 reserved');
     expect(slotSummary(node({ observed: false }))).toBe('no slot data');
+    expect(slotSummary(node({ observed: false, conflicting: true }))).toBe('conflicting builderd reports');
   });
 });

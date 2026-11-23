@@ -11,7 +11,9 @@ test('the build queue page shows waiting and running builds, slots per node and 
   const alert = page.getByRole('alert').filter({ hasText: 'build timeout' });
   await expect(alert).toContainText('1 build has run past the 15m 0s build timeout');
 
-  await expect(page.getByText('oldest 21m 0s · 1 over 5m 0s')).toBeVisible();
+  await expect(page.getByText('oldest 21m 0s · 1 over 5m 0s · 1 held · 1 deferred')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'twin-api' })).toContainText('held: identical build');
+  await expect(page.getByRole('row').filter({ hasText: 'fsn-4' })).toContainText('conflicting builderd reports');
 
   const node = page.getByRole('row').filter({ hasText: 'fsn-2' }).filter({ hasText: 'reserved' });
   await expect(node).toContainText('full');

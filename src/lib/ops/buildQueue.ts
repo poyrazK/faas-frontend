@@ -4,7 +4,8 @@
      GET /v1/admin/obs/build-queue?window=24h
 
    Waits run from enqueue (or a later not_before) to start, durations from
-   start to finish, both in seconds. Slot fields on a node row come from
+   start to finish, both in seconds. A requeued build's wait includes its
+   earlier attempts. Slot fields on a node row come from
    builderd's gauges and mean something only when `observed`.
    ========================================================================== */
 
@@ -13,8 +14,10 @@ import { request } from '@/lib/api';
 /** @go api.ObsBuildQueueTotals */
 export interface ObsBuildQueueTotals {
   queued: number;
-  /** Queued with a not_before still ahead: not waiting yet. */
+  /** Queued with a not_before still ahead: not waiting yet, and not listed. */
   deferred: number;
+  /** Queued behind an identical build (coalesced): in `queued`, but not in the oldest wait or the warn count. */
+  held: number;
   running: number;
   oldest_wait_seconds: number;
   waiting_over_warn: number;
@@ -54,6 +57,8 @@ export interface ObsBuilderNodeSlots {
   node: string;
   running_builds: number;
   observed: boolean;
+  /** More than one builderd target reported this node, so no slot figure is trusted. */
+  conflicting: boolean;
   limit: number;
   reserved: number;
   in_use: number;
@@ -150,6 +155,7 @@ export function waitTone(seconds: number, warn: number): 'neutral' | 'warning' |
 
 /** "1 of 2 reserved · 1 borrowed" style slot summary for a node. */
 export function slotSummary(n: ObsBuilderNodeSlots): string {
+  if (n.conflicting) return 'conflicting builderd reports';
   if (!n.observed) return 'no slot data';
   const parts = [`${Math.min(n.active_reserved, n.reserved)}/${n.reserved} reserved`];
   if (n.opportunistic) parts.push(`${n.opportunistic} opportunistic`);
