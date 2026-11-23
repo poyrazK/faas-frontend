@@ -632,6 +632,31 @@ function route(method, path, query, body) {
         { at: new Date(Date.now() - 30 * 60_000 + 40).toISOString(), kind: 'wake.snapshot_restore_started' },
         { at: new Date(Date.now() - 30 * 60_000 + 212).toISOString(), kind: 'wake.ready' },
       ] } };
+    /* ── Memory pressure (ADR-20261123190507) ── */
+    case key === 'GET /v1/admin/obs/memory-pressure': {
+      const n = (id, name, state, measured, booked, extra = {}) => ({ node_id: id, name, active: true, state, mem_mb: 65536, ceiling_mb: 47600,
+        booked_mb: booked, booked_limit_mb: 119000, measured_mb: measured, used_mb: measured - 500, measured_at: ago(2), measurement_age_seconds: 2,
+        running: 9, waking: 0, cold_booting: 0, frozen: 4, evictions: 0, frozen_parks: 0, oom_kills: 0, ...extra });
+      return { status: 200, body: {
+        as_of: ago(0), window_seconds: 86400, overcommit_percent: 250, eviction_target_percent: 90, measurement_stale_seconds: 30, truncated: false,
+        totals: { nodes: 3, nodes_over: 1, nodes_near: 0, nodes_stale: 1, ceiling_mb: 142800, measured_mb: 68000, booked_mb: 150000,
+          running: 18, frozen: 8, evictions: 3, frozen_parks: 2, oom_kills: 4, apps_affected: 3 },
+        nodes: [
+          n('n2', 'fsn-2', 'over', 48100, 98000, { evictions: 3, frozen_parks: 2, oom_kills: 1 }),
+          n('n4', 'fsn-4', 'stale', 30000, 40000, { measured_at: ago(300), measurement_age_seconds: 300 }),
+          n('n3', 'fsn-3', 'ok', 19900, 12000, { oom_kills: 3 }),
+        ],
+        reasons: [{ kind: 'oom_kill', reason: '', count: 4 }, { kind: 'eviction', reason: 'measured_memory', count: 3 }, { kind: 'frozen_park', reason: 'memory_pressure', count: 2 }],
+        apps: [
+          { app_id: 'app-big', app_slug: 'big-node', account_id: ACCOUNT2, plan: 'hobby', evictions: 0, frozen_parks: 0, oom_kills: 3, max_peak_mb: 640, plan_mb: 512, last_at: ago(120) },
+          { app_id: 'app-blog', app_slug: 'blog', account_id: ACCOUNT, plan: 'pro', evictions: 2, frozen_parks: 1, oom_kills: 0, last_at: ago(600) },
+        ],
+        events: [
+          { at: ago(120), kind: 'oom_kill', instance_id: 'ins-oom-1', app_id: 'app-big', app_slug: 'big-node', account_id: ACCOUNT2, plan: 'hobby', node_id: 'n3', node_name: 'fsn-3', ram_mb: 512, peak_mb: 640, plan_mb: 512, deployment_failed: true },
+          { at: ago(600), kind: 'eviction', reason: 'measured_memory', instance_id: 'ins-ev-1', app_id: 'app-blog', app_slug: 'blog', account_id: ACCOUNT, plan: 'pro', node_id: 'n2', node_name: 'fsn-2', ram_mb: 1024 },
+        ],
+      } };
+    }
     /* ── Build queue (ADR-20261123163340) ── */
     case key === 'GET /v1/admin/obs/build-queue': {
       const b = (id, slug, account, kind, status, extra = {}) => ({ id, deployment_id: `dep-${id}`, app_id: `app-${id}`, app_slug: slug, account_id: account,
