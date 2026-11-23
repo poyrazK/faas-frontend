@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eventLabel, isMemoryWindow, memoryWindowLabel, nodeStateTone, pctOf } from './memoryPressure';
+import { eventLabel, gradedMB, isMemoryWindow, memoryWindowLabel, nodeStateTone, pctOf } from './memoryPressure';
 
 describe('memory pressure helpers', () => {
   it('validates and labels windows', () => {
@@ -16,6 +16,9 @@ describe('memory pressure helpers', () => {
     expect(pctOf(48100, 47600)).toBe(101);
     expect(pctOf(undefined, 47600)).toBeNull();
     expect(pctOf(100, 0)).toBeNull();
+    expect(gradedMB({ used_mb: 49000, measured_mb: 40000 })).toBe(49000);
+    expect(gradedMB({ measured_mb: 40000 })).toBe(40000);
+    expect(gradedMB({})).toBeUndefined();
   });
 
   it('names events', () => {

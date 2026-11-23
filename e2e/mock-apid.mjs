@@ -635,11 +635,11 @@ function route(method, path, query, body) {
     /* ── Memory pressure (ADR-20261123190507) ── */
     case key === 'GET /v1/admin/obs/memory-pressure': {
       const n = (id, name, state, measured, booked, extra = {}) => ({ node_id: id, name, active: true, state, mem_mb: 65536, ceiling_mb: 47600,
-        booked_mb: booked, booked_limit_mb: 119000, measured_mb: measured, used_mb: measured - 500, measured_at: ago(2), measurement_age_seconds: 2,
+        booked_mb: booked, booked_limit_mb: 119000, measured_mb: measured - 2000, used_mb: measured, measured_at: ago(2), measurement_age_seconds: 2,
         running: 9, waking: 0, cold_booting: 0, frozen: 4, evictions: 0, frozen_parks: 0, oom_kills: 0, ...extra });
       return { status: 200, body: {
         as_of: ago(0), window_seconds: 86400, overcommit_percent: 250, eviction_target_percent: 90, measurement_stale_seconds: 30, truncated: false,
-        totals: { nodes: 3, nodes_over: 1, nodes_near: 0, nodes_stale: 1, ceiling_mb: 142800, measured_mb: 68000, booked_mb: 150000,
+        totals: { nodes: 3, nodes_over: 1, nodes_near: 0, nodes_stale: 1, ceiling_mb: 142800, measured_mb: 64000, used_mb: 68000, booked_mb: 150000,
           running: 18, frozen: 8, evictions: 3, frozen_parks: 2, oom_kills: 4, apps_affected: 3 },
         nodes: [
           n('n2', 'fsn-2', 'over', 48100, 98000, { evictions: 3, frozen_parks: 2, oom_kills: 1 }),

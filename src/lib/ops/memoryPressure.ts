@@ -13,6 +13,7 @@
 import { request } from '@/lib/api';
 
 /** @go api.ObsMemoryPressureTotals */
+/** measured_mb, used_mb and frozen cover only nodes with a fresh report. */
 export interface ObsMemoryPressureTotals {
   nodes: number;
   nodes_over: number;
@@ -20,6 +21,8 @@ export interface ObsMemoryPressureTotals {
   nodes_stale: number;
   ceiling_mb: number;
   measured_mb: number;
+  /** Σ of the memory each node is graded on (used, else measured). */
+  used_mb: number;
   booked_mb: number;
   running: number;
   frozen: number;
@@ -43,7 +46,7 @@ export interface ObsMemoryNode {
   measured_mb?: number;
   used_mb?: number;
   measured_at?: string;
-  measurement_age_seconds: number;
+  measurement_age_seconds?: number;
   running: number;
   waking: number;
   cold_booting: number;
@@ -133,6 +136,9 @@ export function nodeStateTone(state: string): 'danger' | 'warning' | 'neutral' |
       return 'neutral';
   }
 }
+
+/** The memory apid grades a node on: vmmd's used memory, else admission's measured charge. */
+export const gradedMB = (n: Pick<ObsMemoryNode, 'used_mb' | 'measured_mb'>): number | undefined => n.used_mb ?? n.measured_mb;
 
 /** Share of the ceiling, whole percent, or null when unknown. */
 export function pctOf(mb: number | null | undefined, ceiling: number): number | null {

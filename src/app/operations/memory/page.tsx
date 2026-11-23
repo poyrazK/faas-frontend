@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   eventLabel,
   getMemoryPressure,
+  gradedMB,
   isMemoryWindow,
   MEMORY_WINDOWS,
   memoryWindowLabel,
@@ -100,9 +101,9 @@ function Report({ r, win }: { r: ObsMemoryPressureReport; win: Parameters<typeof
       )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile
-          label="Measured memory"
-          value={t.ceiling_mb ? `${pctOf(t.measured_mb, t.ceiling_mb)}%` : '—'}
-          sub={`${formatMegabytes(t.measured_mb)} of ${formatMegabytes(t.ceiling_mb)} ceiling · ${t.nodes_over} over · ${t.nodes_near} near${t.nodes_stale ? ` · ${t.nodes_stale} stale` : ''}`}
+          label="Memory in use"
+          value={t.ceiling_mb ? `${pctOf(t.used_mb, t.ceiling_mb)}%` : '—'}
+          sub={`${formatMegabytes(t.used_mb)} of ${formatMegabytes(t.ceiling_mb)} ceiling · ${t.nodes_over} over · ${t.nodes_near} near${t.nodes_stale ? ` · ${t.nodes_stale} stale` : ''}`}
         />
         <StatTile label="Booked" value={formatMegabytes(t.booked_mb)} sub={`${t.running} running · ${t.frozen} frozen · cap ${r.overcommit_percent}% of ceiling`} />
         <StatTile
@@ -123,7 +124,8 @@ function Report({ r, win }: { r: ObsMemoryPressureReport; win: Parameters<typeof
                 <tr>
                   <th>Node</th>
                   <th>State</th>
-                  <th>Measured</th>
+                  <th title="vmmd's used memory, what measured eviction compares with the ceiling">In use</th>
+                  <th title="Admission's measured charge">Measured</th>
                   <th>Booked</th>
                   <th>Running / frozen</th>
                   <th>Evicted</th>
@@ -253,7 +255,8 @@ function Report({ r, win }: { r: ObsMemoryPressureReport; win: Parameters<typeof
 }
 
 function NodeRow({ n }: { n: ObsMemoryNode }) {
-  const measuredPct = pctOf(n.measured_mb, n.ceiling_mb);
+  const used = gradedMB(n);
+  const usedPct = pctOf(used, n.ceiling_mb);
   const bookedPct = pctOf(n.booked_mb, n.ceiling_mb);
   return (
     <tr>
@@ -266,7 +269,8 @@ function NodeRow({ n }: { n: ObsMemoryNode }) {
       <td>
         <span className={`badge badge-${nodeStateTone(n.state)}`}>{n.state}</span>
       </td>
-      <td className="font-mono">{n.measured_mb != null ? `${formatMegabytes(n.measured_mb)} · ${measuredPct}%` : '—'}</td>
+      <td className="font-mono">{used != null ? `${formatMegabytes(used)} · ${usedPct}%` : '—'}</td>
+      <td className="font-mono">{n.measured_mb != null ? formatMegabytes(n.measured_mb) : '—'}</td>
       <td className="font-mono">
         {formatMegabytes(n.booked_mb)} · {bookedPct}%
       </td>
