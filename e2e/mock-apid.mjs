@@ -632,6 +632,38 @@ function route(method, path, query, body) {
         { at: new Date(Date.now() - 30 * 60_000 + 40).toISOString(), kind: 'wake.snapshot_restore_started' },
         { at: new Date(Date.now() - 30 * 60_000 + 212).toISOString(), kind: 'wake.ready' },
       ] } };
+    /* ── Disk pressure (ADR-20261124150000) ── */
+    case key === 'GET /v1/admin/obs/disk-pressure': {
+      const GB = 1024 ** 3;
+      const fs = (node, role, mountpoint, size, avail, extra = {}) => ({ node, role, mountpoint, device: '/dev/nvme0n1p2', fstype: 'ext4',
+        size_bytes: size * GB, avail_bytes: avail * GB, free_percent: Math.round((avail / size) * 1000) / 10, state: 'ok', ...extra });
+      return { status: 200, body: {
+        as_of: ago(0), source: 'observed', failed_queries: [], critical_free_percent: 5, low_free_percent: 15, filling_free_percent: 25,
+        filling_horizon_hours: 4, inodes_low_free_percent: 10, growth_window_seconds: 21600, truncated: false,
+        totals: { nodes: 3, nodes_critical: 0, nodes_filling: 1, nodes_low: 1, nodes_inodes_low: 0, filesystems: 5,
+          jail_tmpfs_used_bytes: 2 * GB, guests_near_full: 2, guests_full: 1 },
+        nodes: [
+          { node: 'fsn-2', role: 'compute', state: 'filling', filesystems: 2, worst_mountpoint: '/srv/fc', worst_free_percent: 20,
+            jail_tmpfs_used_bytes: 0, journal_bytes: 3 * GB, guests_near_full: 2, guests_full: 1 },
+          { node: 'cp-1', role: 'control_plane', state: 'low', filesystems: 1, worst_mountpoint: '/', worst_free_percent: 10,
+            jail_tmpfs_used_bytes: 0, guests_near_full: 0, guests_full: 0 },
+          { node: 'fsn-3', role: 'compute', state: 'ok', filesystems: 2, worst_mountpoint: '/', worst_free_percent: 60,
+            jail_tmpfs_used_bytes: 2 * GB, journal_bytes: 1 * GB, guests_near_full: 0, guests_full: 0 },
+        ],
+        filesystems: [
+          fs('fsn-2', 'compute', '/srv/fc', 400, 80, { fstype: 'xfs', state: 'filling', hours_to_full: 2.5, inodes_free_percent: 92 }),
+          fs('cp-1', 'control_plane', '/', 50, 5, { state: 'low', inodes_free_percent: 70 }),
+          fs('fsn-2', 'compute', '/', 100, 60, { inodes_free_percent: 90 }),
+          fs('fsn-3', 'compute', '/', 100, 60, { inodes_free_percent: 80, hours_to_full: 100 }),
+          fs('fsn-3', 'compute', '/srv/fc/jail', 8, 6, { fstype: 'tmpfs', device: 'tmpfs', jail_tmpfs: true }),
+        ],
+        guests: [
+          { instance_id: 'ins-disk-1', app_id: 'app-blog', app_slug: 'blog', account_id: ACCOUNT, node: 'fsn-2',
+            used_bytes: 1.94 * GB, capacity_bytes: 2 * GB, used_percent: 97 },
+          { instance_id: 'ins-disk-2', node: 'fsn-2', used_bytes: 0, capacity_bytes: 0, used_percent: 88 },
+        ],
+      } };
+    }
     /* ── Gateway traffic (ADR-20261124093000) ── */
     case key === 'GET /v1/admin/obs/gateway-traffic': {
       return { status: 200, body: {
