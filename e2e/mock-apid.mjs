@@ -632,6 +632,37 @@ function route(method, path, query, body) {
         { at: new Date(Date.now() - 30 * 60_000 + 40).toISOString(), kind: 'wake.snapshot_restore_started' },
         { at: new Date(Date.now() - 30 * 60_000 + 212).toISOString(), kind: 'wake.ready' },
       ] } };
+    /* ── Gateway traffic (ADR-20261124093000) ── */
+    case key === 'GET /v1/admin/obs/gateway-traffic': {
+      return { status: 200, body: {
+        as_of: ago(0), window_seconds: 3600, source: 'partial', failed_queries: ['overload_by_node'],
+        totals: { nodes: 2, requests: 12840, status_2xx: 12100, status_3xx: 40, status_4xx: 520, status_5xx: 180, status_429: 90,
+          status_502: 20, status_503: 150, status_504: 10, error_rate_percent: 1.4, platform_errors: 160, platform_error_rate_percent: 1.25,
+          capacity_refusals: 60, wakes_admitted: 400, wake_app_queue_full: 12, wake_gateway_queue_full: 0, wake_queue_timeouts: 3,
+          held_now: 7, admission_leaders_now: 1 },
+        nodes: [
+          { node: 'fsn-2', requests: 9000, status_5xx: 170, error_rate_percent: 1.89, platform_errors: 155, capacity_refusals: 60, held_now: 7 },
+          { node: 'fsn-3', requests: 3840, status_5xx: 10, error_rate_percent: 0.26, platform_errors: 5, capacity_refusals: 0, held_now: 0 },
+        ],
+        statuses: [{ code: '200', count: 12100 }, { code: '304', count: 40 }, { code: '404', count: 430 }, { code: '429', count: 90 }, { code: '502', count: 20 }, { code: '503', count: 150 }, { code: '504', count: 10 }],
+        wake_admission: [
+          { plan: 'hobby', outcome: 'admitted', count: 400 },
+          { plan: 'hobby', outcome: 'app_queue_full', count: 12 },
+          { plan: 'free', outcome: 'queue_timeout', count: 3 },
+        ],
+        edge_rejections: [{ kind: 'limit', status: '429', count: 30 }, { kind: 'waf', status: '403', count: 4 }],
+        edge_refusals: [{ reason: 'request_rate', count: 8 }],
+        retry_exhausted: [],
+        apps: [
+          { app_id: 'app-blog', app_slug: 'blog', account_id: ACCOUNT, plan: 'hobby', requests: 1200, status_5xx: 150, status_502: 0, status_503: 150, status_504: 0,
+            error_rate_percent: 12.5, platform_errors: 150, capacity_refusals: 0, held_now: 7 },
+          { app_id: '-', unknown_host: true, requests: 0, status_5xx: 0, status_502: 0, status_503: 0, status_504: 0, error_rate_percent: 0,
+            platform_errors: 0, capacity_refusals: 0, held_now: 0 },
+          { app_id: 'app-api', app_slug: 'api', account_id: ACCOUNT2, plan: 'pro', requests: 900, status_5xx: 0, status_502: 0, status_503: 0, status_504: 0,
+            error_rate_percent: 0, platform_errors: 0, capacity_refusals: 60, held_now: 0 },
+        ],
+      } };
+    }
     /* ── Memory pressure (ADR-20261123190507) ── */
     case key === 'GET /v1/admin/obs/memory-pressure': {
       const n = (id, name, state, measured, booked, extra = {}) => ({ node_id: id, name, active: true, state, mem_mb: 65536, ceiling_mb: 47600,

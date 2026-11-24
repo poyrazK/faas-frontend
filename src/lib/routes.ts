@@ -37,6 +37,7 @@ export const OPS_ROUTES: readonly OpsRoute[] = [
   { slug: 'snapshots', label: 'Snapshot health', icon: 'storage', group: 'On call' },
   { slug: 'builds', label: 'Build queue', icon: 'workers', group: 'On call' },
   { slug: 'memory', label: 'Memory pressure', icon: 'metrics', group: 'On call' },
+  { slug: 'traffic', label: 'Gateway traffic', icon: 'globe', group: 'On call' },
   { slug: 'controls', label: 'Emergency controls', icon: 'bolt', group: 'On call' },
   { slug: 'tenants', label: 'Tenants', icon: 'user', group: 'Customers' },
   { slug: 'support', label: 'Support inbox', icon: 'help', group: 'Customers' },
