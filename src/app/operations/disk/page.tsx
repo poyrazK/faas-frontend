@@ -82,7 +82,7 @@ function Report({ r }: { r: ObsDiskPressureReport }) {
               <span className="font-mono">
                 {f.node}:{f.mountpoint}
               </span>{' '}
-              ({f.state === 'filling' ? `full in ${formatHoursToFull(f.hours_to_full)}` : `${f.free_percent}% free`})
+              ({f.state === 'filling' ? `full in ${formatHoursToFull(f.hours_to_full)}` : `${f.free_percent ?? '?'}% free`})
             </span>
           ))}
         </div>
@@ -91,7 +91,7 @@ function Report({ r }: { r: ObsDiskPressureReport }) {
         <StatTile
           label="Nodes"
           value={t.nodes}
-          sub={`${t.nodes_critical} critical · ${t.nodes_filling} filling · ${t.nodes_low} low · ${t.nodes_inodes_low} inodes low`}
+          sub={`${t.nodes_critical} critical · ${t.nodes_filling} filling · ${t.nodes_low} low · ${t.nodes_inodes_low} inodes low${t.nodes_unknown ? ` · ${t.nodes_unknown} no disk data` : ''}`}
         />
         <StatTile label="Filesystems" value={t.filesystems} sub={`low under ${r.low_free_percent}% free, critical under ${r.critical_free_percent}%`} />
         <StatTile label="Jail tmpfs in use" value={formatBytes(t.jail_tmpfs_used_bytes)} sub="RAM held until the node reboots" />
@@ -168,14 +168,12 @@ function Report({ r }: { r: ObsDiskPressureReport }) {
                     <td className="font-mono">{f.node}</td>
                     <td className="font-mono">
                       {f.mountpoint}
-                      {f.jail_tmpfs && <span className="badge badge-neutral ml-2">tmpfs · RAM</span>}
+                      {f.jail_tmpfs && <span className="badge badge-neutral ml-2">tmpfs</span>}
                     </td>
                     <td>
                       <span className={`badge badge-${diskStateTone(f.state)}`}>{diskStateLabel(f.state)}</span>
                     </td>
-                    <td className="font-mono">
-                      {formatBytes(f.avail_bytes)} · {f.free_percent}%
-                    </td>
+                    <td className="font-mono">{f.avail_bytes != null && f.free_percent != null ? `${formatBytes(f.avail_bytes)} · ${f.free_percent}%` : '—'}</td>
                     <td className="font-mono">{formatBytes(f.size_bytes)}</td>
                     <td>{f.inodes_free_percent != null ? `${f.inodes_free_percent}%` : '—'}</td>
                     <td>{formatHoursToFull(f.hours_to_full)}</td>

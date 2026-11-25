@@ -17,6 +17,9 @@ export interface ObsDiskTotals {
   nodes_filling: number;
   nodes_low: number;
   nodes_inodes_low: number;
+  /** Nodes none of whose disks were read. */
+  nodes_unknown: number;
+  /** Disk filesystems; the jail tmpfs is not counted. */
   filesystems: number;
   jail_tmpfs_used_bytes: number;
   guests_near_full: number;
@@ -28,7 +31,7 @@ export interface ObsDiskNode {
   node: string;
   /** compute, database or control_plane. */
   role: string;
-  /** critical, filling, low, inodes_low or ok. */
+  /** critical, filling, low, inodes_low, unknown (no disk read) or ok. */
   state: string;
   filesystems: number;
   worst_mountpoint?: string;
@@ -47,11 +50,13 @@ export interface ObsDiskFilesystem {
   device: string;
   fstype: string;
   size_bytes: number;
-  avail_bytes: number;
-  free_percent: number;
+  /** Absent when free space was not read (state unknown). */
+  avail_bytes?: number;
+  free_percent?: number;
   inodes_free_percent?: number;
   hours_to_full?: number;
   jail_tmpfs?: boolean;
+  /** critical, filling, low, inodes_low, ok, unknown, or ram (the jail tmpfs, not graded). */
   state: string;
 }
 
@@ -97,6 +102,8 @@ export function diskStateTone(state: string): 'danger' | 'warning' | 'success' |
     case 'low':
     case 'inodes_low':
       return 'warning';
+    case 'unknown':
+      return 'warning';
     case 'ok':
       return 'success';
     default:
@@ -109,6 +116,8 @@ const STATE_LABELS: Record<string, string> = {
   filling: 'Filling fast',
   low: 'Low',
   inodes_low: 'Inodes low',
+  unknown: 'No disk data',
+  ram: 'RAM',
   ok: 'OK',
 };
 
