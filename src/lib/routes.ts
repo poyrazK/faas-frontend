@@ -40,6 +40,7 @@ export const OPS_ROUTES: readonly OpsRoute[] = [
   { slug: 'traffic', label: 'Gateway traffic', icon: 'globe', group: 'On call' },
   { slug: 'disk', label: 'Disk pressure', icon: 'storage', group: 'On call' },
   { slug: 'control-plane', label: 'Control plane', icon: 'databases', group: 'On call' },
+  { slug: 'egress', label: 'Egress denials', icon: 'shield', group: 'On call' },
   { slug: 'controls', label: 'Emergency controls', icon: 'bolt', group: 'On call' },
   { slug: 'tenants', label: 'Tenants', icon: 'user', group: 'Customers' },
   { slug: 'support', label: 'Support inbox', icon: 'help', group: 'Customers' },

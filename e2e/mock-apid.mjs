@@ -703,6 +703,26 @@ function route(method, path, query, body) {
         host: { cpus: 12, load1: 0.44, mem_total_bytes: 33534414848, mem_available_bytes: 28269838336 },
       } };
     }
+    /* ── Egress denials (ADR-20261127100000) ── */
+    case key === 'GET /v1/admin/obs/egress': {
+      return { status: 200, body: {
+        as_of: ago(0), window_seconds: 86400, source: 'partial', failed_queries: ['dns_blocked'],
+        totals: { denied: 6143, denied_last_hour: 12, apps_denied: 13, new_destinations: 1913, abuse_recycles: 2, abuse_holds: 1,
+          cpu_abuse_signals: 3, dns_blocked: 0, scan_blocked: 1, scan_flagged: 0, flow_log_rows: 7398 },
+        classes: [{ key: 'unresolved', count: 3877 }, { key: 'rfc1918', count: 2226 }, { key: 'smtp', count: 40 }],
+        nodes: [{ key: 'bhs-3.faas', count: 5060 }, { key: 'bhs-2.faas', count: 1083 }],
+        apps: [
+          { app_id: 'app-miner', app_slug: 'miner-app', account_id: ACCOUNT2, denied: 40, classes: [{ key: 'smtp', count: 40 }], new_destinations: 380, abuse_recycles: 2 },
+          { app_id: 'app-blog', app_slug: 'blog', account_id: ACCOUNT, denied: 3779, classes: [{ key: 'unresolved', count: 3779 }], new_destinations: 0, abuse_recycles: 0 },
+        ],
+        recycles: [{ app_id: 'app-miner', app_slug: 'miner-app', account_id: ACCOUNT2, reason: 'fanout', count: 2 }],
+        holds: [{ key: 'egress_abuse', count: 1 }],
+        cpu_signals: [{ plan: 'free', action: 'throttle', count: 3 }],
+        dns_blocked: [],
+        scan_findings: [{ category: 'miner', action: 'block', count: 1 }],
+        denylist: [{ source: 'firewall', cidr: '203.0.113.0/24', count: 5 }],
+      } };
+    }
     /* ── Gateway traffic (ADR-20261124093000) ── */
     case key === 'GET /v1/admin/obs/gateway-traffic': {
       return { status: 200, body: {
