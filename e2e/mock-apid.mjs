@@ -667,6 +667,42 @@ function route(method, path, query, body) {
         ],
       } };
     }
+    /* ── Control-plane health (ADR-20261126120000) ── */
+    case key === 'GET /v1/admin/obs/control-plane': {
+      const check = (key, group, label, state, detail, extra = {}) => ({ key, group, label, state, detail, unit: 'seconds', ...extra });
+      return { status: 200, body: {
+        as_of: ago(0), source: 'observed', failed_queries: [], window_seconds: 3600, state: 'critical',
+        totals: { checks: 8, critical: 1, warning: 2, unknown: 0 },
+        checks: [
+          check('activity_collector', 'postgres', 'Postgres stats collector', 'ok', 'ran 40 s ago', { warn_at: 300 }),
+          check('connections', 'postgres', 'Postgres connections', 'warning', '150 of 185', { unit: 'percent', value: 81.1, warn_at: 75, critical_at: 90, alert: 'FaasPostgresConnectionsHigh' }),
+          check('oldest_transaction', 'postgres', 'Oldest open transaction', 'ok', '0 s', { warn_at: 600 }),
+          check('base_backup', 'backups', 'Postgres base backup pushed', 'ok', '7.0 h ago', { warn_at: 93600, at: ago(7 * 3600_000) }),
+          check('wal_archive', 'backups', 'Postgres WAL archived', 'warning', '20 min ago', { warn_at: 600, alert: 'PgWalArchiveStalled' }),
+          check('notification_outbox', 'delivery', 'Oldest undelivered notification', 'ok', '0 undelivered', { warn_at: 900 }),
+          check('db_pools', 'daemons', 'Daemon database pools', 'critical', 'acquires canceled: schedd@fsn-2', { unit: 'count', warn_at: 90, alert: 'FaasDBPoolStarved' }),
+          check('targets', 'daemons', 'Control-plane daemons scraped', 'ok', '12 of 12 up', { unit: 'count' }),
+        ],
+        postgres: { client_connections: 150, connection_capacity: 185, database_size_bytes: 3934272535, longest_query_seconds: 2,
+          oldest_transaction_seconds: 0, idle_in_transaction_max_seconds: 0, cache_hit_percent: 99.6, commits_per_second: 304.2,
+          rollback_percent: 3.5, temp_bytes: 7458264, collector_age_seconds: 40 },
+        backends: [{ application: 'faas-apid', state: 'idle', count: 10 }, { application: 'faas-meterd', state: 'idle', count: 5 }],
+        statements: [
+          { query_id: '813', query: 'with tracking as (select tracked_from from usage_month_totals_tracking) select $1', exec_seconds: 9.9, calls: 1371, mean_ms: 7.25 },
+          { query_id: '396', query: 'select count(*) from snapshots where app_id = $1', exec_seconds: 3.9 },
+        ],
+        pools: [
+          { pool: 'schedd', job: 'schedd', node: 'fsn-2', acquired: 16, idle: 0, max: 16, utilization_percent: 100, canceled_acquires: 4, mean_acquire_wait_ms: 12.5, state: 'critical' },
+          { pool: 'apid', job: 'apid', acquired: 1, idle: 11, max: 12, utilization_percent: 8.3, canceled_acquires: 0, mean_acquire_wait_ms: 0, state: 'ok' },
+        ],
+        notify_hubs: [
+          { hub: 'apid', job: 'apid', conns: 1, subscribers: 11, reconnects: 0, state: 'ok' },
+          { hub: 'schedd', job: 'schedd', node: 'fsn-3', conns: 0, subscribers: 6, reconnects: 3, state: 'warning' },
+        ],
+        targets: [{ job: 'apid', instance: '127.0.0.1:9091', up: true }],
+        host: { cpus: 12, load1: 0.44, mem_total_bytes: 33534414848, mem_available_bytes: 28269838336 },
+      } };
+    }
     /* ── Gateway traffic (ADR-20261124093000) ── */
     case key === 'GET /v1/admin/obs/gateway-traffic': {
       return { status: 200, body: {
